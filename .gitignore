@@ -21,4 +21,3 @@ n8n/data/
 artifacts/runtime/
 *.pem
 *.key
-
