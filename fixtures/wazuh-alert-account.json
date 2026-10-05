@@ -1,0 +1,43 @@
+{
+  "id": "WAZUH-W1-0001",
+  "timestamp": "2026-10-05T12:00:00Z",
+  "rule": {
+    "id": "5712",
+    "level": 12,
+    "description": "Repeated SSH authentication failures followed by success"
+  },
+  "agent": {
+    "id": "001",
+    "name": "linux-endpoint-01"
+  },
+  "decoder": {
+    "name": "sshd"
+  },
+  "data": {
+    "srcip": "203.0.113.66",
+    "dstuser": "analyst",
+    "failed_login_count": 12,
+    "success_after_fail": 1
+  },
+  "location": "/var/log/auth.log",
+  "normalized_incident": {
+    "incident_id": "WAZUH-W1-0001",
+    "asset_id": "linux-endpoint-01",
+    "start_time": "2026-10-05T12:00:00Z",
+    "end_time": "2026-10-05T12:00:00Z",
+    "family_hint": "account",
+    "features": {
+      "failed_login_count": 12.0,
+      "success_after_fail": 1.0
+    },
+    "evidence_sources": [
+      "wazuh",
+      "auth.log"
+    ],
+    "base_severity": 12,
+    "raw_refs": [
+      "wazuh-alert:WAZUH-W1-0001"
+    ],
+    "indicator": "203.0.113.66"
+  }
+}

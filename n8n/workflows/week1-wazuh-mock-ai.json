@@ -1,0 +1,82 @@
+{
+  "name": "Week 1 - Wazuh to Mock AI (SHADOW)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wazuh-alert",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "61e84d03-4d32-4591-b676-d3bfde3e5e55",
+      "name": "Wazuh Alert Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [-700, 100],
+      "webhookId": "week1-wazuh-alert"
+    },
+    {
+      "parameters": {
+        "jsCode": "const alert = $json.body ?? $json;\nconst ts = alert.timestamp;\nreturn [{ json: {\n  incident_id: alert.id,\n  asset_id: alert.agent?.name ?? 'unknown-asset',\n  start_time: ts,\n  end_time: ts,\n  family_hint: alert.decoder?.name === 'sshd' ? 'account' : 'unknown',\n  features: {\n    failed_login_count: Number(alert.data?.failed_login_count ?? 0),\n    success_after_fail: Number(alert.data?.success_after_fail ?? 0)\n  },\n  evidence_sources: ['wazuh', String(alert.location ?? 'unknown-log').split('/').pop()],\n  base_severity: Number(alert.rule?.level ?? 0),\n  raw_refs: [`wazuh-alert:${alert.id}`],\n  indicator: alert.data?.srcip ?? null\n}}];"
+      },
+      "id": "8a9fe113-d4ad-4127-9f76-24b43927578c",
+      "name": "Normalize Wazuh Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-450, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://api:8000/orchestrate/mock",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "0bc58d65-a5ac-41ca-8dc2-cbfde98b8773",
+      "name": "Call Mock AI API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-180, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "const decision = $json;\nreturn [{ json: {\n  status: 'notified',\n  notification: `[SHADOW] Incident ${decision.incident_id}: risk ${decision.risk.display}/10, class ${decision.prediction.predicted_class}`,\n  automation_state: decision.automation_state,\n  strong_action_allowed: false,\n  selected_playbook: decision.selected_playbook,\n  audit: decision.audit,\n  decision\n}}];"
+      },
+      "id": "d4a209a8-06be-4280-b506-633d6500fc34",
+      "name": "Build Shadow Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [100, 100]
+    }
+  ],
+  "connections": {
+    "Wazuh Alert Webhook": {
+      "main": [[{"node": "Normalize Wazuh Alert", "type": "main", "index": 0}]]
+    },
+    "Normalize Wazuh Alert": {
+      "main": [[{"node": "Call Mock AI API", "type": "main", "index": 0}]]
+    },
+    "Call Mock AI API": {
+      "main": [[{"node": "Build Shadow Notification", "type": "main", "index": 0}]]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  },
+  "versionId": "e53f7f7f-1a57-4927-9232-f999edbf174f",
+  "id": "week1WazuhMockAI",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}
