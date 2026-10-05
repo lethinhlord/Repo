@@ -1,0 +1,498 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "DATN AI SOAR Mock API",
+    "summary": "Week 1 contract-first mock inference and orchestration API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/predict": {
+      "post": {
+        "summary": "Predict",
+        "operationId": "predict_predict_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IncidentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PredictionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orchestrate/mock": {
+      "post": {
+        "summary": "Orchestrate Mock",
+        "operationId": "orchestrate_mock_orchestrate_mock_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IncidentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionRecord"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AuditRecord": {
+        "properties": {
+          "incident_id": {
+            "type": "string",
+            "title": "Incident Id"
+          },
+          "recorded_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Recorded At"
+          },
+          "workflow_revision": {
+            "type": "string",
+            "const": "week1-mock-v1",
+            "title": "Workflow Revision",
+            "default": "week1-mock-v1"
+          },
+          "outcome": {
+            "type": "string",
+            "const": "NOTIFIED",
+            "title": "Outcome",
+            "default": "NOTIFIED"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "incident_id",
+          "recorded_at"
+        ],
+        "title": "AuditRecord"
+      },
+      "DecisionRecord": {
+        "properties": {
+          "incident_id": {
+            "type": "string",
+            "title": "Incident Id"
+          },
+          "prediction": {
+            "$ref": "#/components/schemas/PredictionResponse"
+          },
+          "ti_context": {
+            "$ref": "#/components/schemas/ThreatIntelligenceContext"
+          },
+          "risk": {
+            "$ref": "#/components/schemas/RiskResult"
+          },
+          "automation_state": {
+            "type": "string",
+            "const": "SHADOW",
+            "title": "Automation State",
+            "default": "SHADOW"
+          },
+          "selected_playbook": {
+            "type": "string",
+            "const": "create_update_incident_notify",
+            "title": "Selected Playbook",
+            "default": "create_update_incident_notify"
+          },
+          "strong_action_allowed": {
+            "type": "boolean",
+            "const": false,
+            "title": "Strong Action Allowed",
+            "default": false
+          },
+          "rationale": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Rationale"
+          },
+          "audit": {
+            "$ref": "#/components/schemas/AuditRecord"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "incident_id",
+          "prediction",
+          "ti_context",
+          "risk",
+          "rationale",
+          "audit"
+        ],
+        "title": "DecisionRecord"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "ok",
+            "title": "Status",
+            "default": "ok"
+          },
+          "service": {
+            "type": "string",
+            "const": "datn-ai-soar-api",
+            "title": "Service",
+            "default": "datn-ai-soar-api"
+          },
+          "mode": {
+            "type": "string",
+            "const": "mock",
+            "title": "Mode",
+            "default": "mock"
+          },
+          "api_version": {
+            "type": "string",
+            "const": "1.0.0",
+            "title": "Api Version",
+            "default": "1.0.0"
+          },
+          "model_version": {
+            "type": "string",
+            "const": "mock-v1",
+            "title": "Model Version",
+            "default": "mock-v1"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "HealthResponse"
+      },
+      "IncidentRequest": {
+        "properties": {
+          "incident_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Incident Id"
+          },
+          "asset_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Asset Id"
+          },
+          "start_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Start Time"
+          },
+          "end_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "End Time"
+          },
+          "family_hint": {
+            "type": "string",
+            "enum": [
+              "account",
+              "c2",
+              "unknown"
+            ],
+            "title": "Family Hint",
+            "default": "unknown"
+          },
+          "features": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Features"
+          },
+          "evidence_sources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Evidence Sources"
+          },
+          "base_severity": {
+            "type": "integer",
+            "maximum": 15.0,
+            "minimum": 0.0,
+            "title": "Base Severity"
+          },
+          "raw_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Raw Refs"
+          },
+          "indicator": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Indicator"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "incident_id",
+          "asset_id",
+          "start_time",
+          "end_time",
+          "evidence_sources",
+          "base_severity"
+        ],
+        "title": "IncidentRequest"
+      },
+      "PredictionResponse": {
+        "properties": {
+          "model_version": {
+            "type": "string",
+            "const": "mock-v1",
+            "title": "Model Version",
+            "default": "mock-v1"
+          },
+          "predicted_class": {
+            "type": "string",
+            "enum": [
+              "malicious",
+              "benign"
+            ],
+            "title": "Predicted Class"
+          },
+          "malicious_probability": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Malicious Probability"
+          },
+          "family": {
+            "type": "string",
+            "enum": [
+              "account",
+              "c2",
+              "unknown"
+            ],
+            "title": "Family"
+          },
+          "threshold_revision": {
+            "type": "string",
+            "const": "mock-thr-v1",
+            "title": "Threshold Revision",
+            "default": "mock-thr-v1"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "predicted_class",
+          "malicious_probability",
+          "family"
+        ],
+        "title": "PredictionResponse"
+      },
+      "RiskResult": {
+        "properties": {
+          "policy_revision": {
+            "type": "string",
+            "const": "risk-week1-v1",
+            "title": "Policy Revision",
+            "default": "risk-week1-v1"
+          },
+          "internal": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Internal"
+          },
+          "display": {
+            "type": "number",
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "title": "Display"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "internal",
+          "display"
+        ],
+        "title": "RiskResult"
+      },
+      "ThreatIntelligenceContext": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "const": "mock-ti-v1",
+            "title": "Provider",
+            "default": "mock-ti-v1"
+          },
+          "indicator": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Indicator"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "MALICIOUS",
+              "CLEAN",
+              "UNKNOWN"
+            ],
+            "title": "Status"
+          },
+          "score": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Score"
+          },
+          "rationale": {
+            "type": "string",
+            "title": "Rationale"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "indicator",
+          "status",
+          "score",
+          "rationale"
+        ],
+        "title": "ThreatIntelligenceContext"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

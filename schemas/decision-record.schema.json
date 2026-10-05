@@ -1,0 +1,215 @@
+{
+  "$defs": {
+    "AuditRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "incident_id": {
+          "title": "Incident Id",
+          "type": "string"
+        },
+        "recorded_at": {
+          "format": "date-time",
+          "title": "Recorded At",
+          "type": "string"
+        },
+        "workflow_revision": {
+          "const": "week1-mock-v1",
+          "default": "week1-mock-v1",
+          "title": "Workflow Revision",
+          "type": "string"
+        },
+        "outcome": {
+          "const": "NOTIFIED",
+          "default": "NOTIFIED",
+          "title": "Outcome",
+          "type": "string"
+        }
+      },
+      "required": [
+        "incident_id",
+        "recorded_at"
+      ],
+      "title": "AuditRecord",
+      "type": "object"
+    },
+    "PredictionResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "model_version": {
+          "const": "mock-v1",
+          "default": "mock-v1",
+          "title": "Model Version",
+          "type": "string"
+        },
+        "predicted_class": {
+          "enum": [
+            "malicious",
+            "benign"
+          ],
+          "title": "Predicted Class",
+          "type": "string"
+        },
+        "malicious_probability": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Malicious Probability",
+          "type": "number"
+        },
+        "family": {
+          "enum": [
+            "account",
+            "c2",
+            "unknown"
+          ],
+          "title": "Family",
+          "type": "string"
+        },
+        "threshold_revision": {
+          "const": "mock-thr-v1",
+          "default": "mock-thr-v1",
+          "title": "Threshold Revision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "predicted_class",
+        "malicious_probability",
+        "family"
+      ],
+      "title": "PredictionResponse",
+      "type": "object"
+    },
+    "RiskResult": {
+      "additionalProperties": false,
+      "properties": {
+        "policy_revision": {
+          "const": "risk-week1-v1",
+          "default": "risk-week1-v1",
+          "title": "Policy Revision",
+          "type": "string"
+        },
+        "internal": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Internal",
+          "type": "number"
+        },
+        "display": {
+          "maximum": 10.0,
+          "minimum": 0.0,
+          "title": "Display",
+          "type": "number"
+        }
+      },
+      "required": [
+        "internal",
+        "display"
+      ],
+      "title": "RiskResult",
+      "type": "object"
+    },
+    "ThreatIntelligenceContext": {
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "const": "mock-ti-v1",
+          "default": "mock-ti-v1",
+          "title": "Provider",
+          "type": "string"
+        },
+        "indicator": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Indicator"
+        },
+        "status": {
+          "enum": [
+            "MALICIOUS",
+            "CLEAN",
+            "UNKNOWN"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "score": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Score",
+          "type": "number"
+        },
+        "rationale": {
+          "title": "Rationale",
+          "type": "string"
+        }
+      },
+      "required": [
+        "indicator",
+        "status",
+        "score",
+        "rationale"
+      ],
+      "title": "ThreatIntelligenceContext",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "incident_id": {
+      "title": "Incident Id",
+      "type": "string"
+    },
+    "prediction": {
+      "$ref": "#/$defs/PredictionResponse"
+    },
+    "ti_context": {
+      "$ref": "#/$defs/ThreatIntelligenceContext"
+    },
+    "risk": {
+      "$ref": "#/$defs/RiskResult"
+    },
+    "automation_state": {
+      "const": "SHADOW",
+      "default": "SHADOW",
+      "title": "Automation State",
+      "type": "string"
+    },
+    "selected_playbook": {
+      "const": "create_update_incident_notify",
+      "default": "create_update_incident_notify",
+      "title": "Selected Playbook",
+      "type": "string"
+    },
+    "strong_action_allowed": {
+      "const": false,
+      "default": false,
+      "title": "Strong Action Allowed",
+      "type": "boolean"
+    },
+    "rationale": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Rationale",
+      "type": "array"
+    },
+    "audit": {
+      "$ref": "#/$defs/AuditRecord"
+    }
+  },
+  "required": [
+    "incident_id",
+    "prediction",
+    "ti_context",
+    "risk",
+    "rationale",
+    "audit"
+  ],
+  "title": "DecisionRecord",
+  "type": "object"
+}
