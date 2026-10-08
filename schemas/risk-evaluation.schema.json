@@ -1,0 +1,61 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "policy_revision": {
+      "const": "risk-week2-v1",
+      "default": "risk-week2-v1",
+      "title": "Policy Revision",
+      "type": "string"
+    },
+    "internal": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Internal",
+      "type": "number"
+    },
+    "display": {
+      "maximum": 10.0,
+      "minimum": 0.0,
+      "title": "Display",
+      "type": "number"
+    },
+    "available_weight": {
+      "exclusiveMinimum": 0.0,
+      "maximum": 1.0,
+      "title": "Available Weight",
+      "type": "number"
+    },
+    "missing_signals": {
+      "items": {
+        "enum": [
+          "threat_intelligence",
+          "asset"
+        ],
+        "type": "string"
+      },
+      "title": "Missing Signals",
+      "type": "array"
+    },
+    "contributions": {
+      "additionalProperties": {
+        "type": "number"
+      },
+      "title": "Contributions",
+      "type": "object"
+    },
+    "review_required": {
+      "title": "Review Required",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "internal",
+    "display",
+    "available_weight",
+    "missing_signals",
+    "contributions",
+    "review_required"
+  ],
+  "title": "RiskEvaluation",
+  "type": "object"
+}

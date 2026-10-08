@@ -1,0 +1,14 @@
+{
+  "id": "WAZUH-W2-ACCOUNT-BENIGN-0001",
+  "timestamp": "2026-10-06T12:20:00Z",
+  "rule": {"id": "5710", "level": 3, "description": "Synthetic low-volume authentication failure"},
+  "agent": {"id": "001", "name": "WIN11-01"},
+  "decoder": {"name": "sshd"},
+  "data": {
+    "srcip": "198.51.100.10",
+    "dstuser": "analyst",
+    "failed_login_count": 2,
+    "success_after_fail": 0
+  },
+  "location": "/var/log/auth.log"
+}

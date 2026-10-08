@@ -1,0 +1,26 @@
+revision: asset-context-v1
+default:
+  role: unknown
+  criticality: null
+  protected: true
+assets:
+  WIN11-01:
+    role: workstation
+    criticality: 3
+    protected: false
+  WIN11-02:
+    role: workstation
+    criticality: 3
+    protected: false
+  linux-endpoint-01:
+    role: workstation
+    criticality: 3
+    protected: false
+  SOC-CORE:
+    role: security-platform
+    criticality: 5
+    protected: true
+  SOAR-AI:
+    role: security-platform
+    criticality: 5
+    protected: true

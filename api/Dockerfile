@@ -9,6 +9,7 @@ COPY requirements.lock /app/requirements.lock
 RUN pip install --no-cache-dir --upgrade -r /app/requirements.lock
 
 COPY api /app/api
+COPY ml /app/ml
 COPY config /app/config
 
 EXPOSE 8000

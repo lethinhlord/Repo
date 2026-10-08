@@ -1,0 +1,58 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "ai_probability": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Ai Probability",
+      "type": "number"
+    },
+    "observed_evidence": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Observed Evidence",
+      "type": "number"
+    },
+    "threat_intelligence_score": {
+      "anyOf": [
+        {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Threat Intelligence Score"
+    },
+    "asset_score": {
+      "anyOf": [
+        {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Asset Score"
+    },
+    "severity_score": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Severity Score",
+      "type": "number"
+    }
+  },
+  "required": [
+    "ai_probability",
+    "observed_evidence",
+    "severity_score"
+  ],
+  "title": "RiskEvaluationRequest",
+  "type": "object"
+}

@@ -1,0 +1,6 @@
+{
+  "id": "WAZUH-W2-MALFORMED-0001",
+  "timestamp": "not-a-timestamp",
+  "agent": {"id": "999", "name": "UNREGISTERED-HOST"},
+  "data": {"failed_login_count": -1}
+}

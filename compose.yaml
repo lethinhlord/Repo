@@ -3,10 +3,18 @@ services:
     build:
       context: .
       dockerfile: api/Dockerfile
-    image: datn-ai-soar-api:week1
+    image: datn-ai-soar-api:week2
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
+    environment:
+      VT_MODE: "${VT_MODE:-mock}"
+      VT_API_KEY: "${VT_API_KEY:-}"
+      VT_TIMEOUT_SECONDS: "${VT_TIMEOUT_SECONDS:-5}"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     healthcheck:
       test:
         - CMD
@@ -54,4 +62,4 @@ volumes:
 
 networks:
   soar:
-    name: datn-week1-soar
+    name: datn-week2-soar
