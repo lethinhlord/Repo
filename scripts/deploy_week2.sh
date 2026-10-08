@@ -15,7 +15,7 @@ fi
 
 docker compose config --quiet
 docker compose down --remove-orphans
-docker compose build --progress plain api
+docker compose --progress plain build api
 docker compose up -d api
 
 attempt=0
