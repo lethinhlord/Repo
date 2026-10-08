@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 mkdir -p evidence
 
 docker run --rm --mount "type=bind,src=$PWD,dst=/app" \
-  datn-ai-soar-api:week2 python -m pytest -q > evidence/week2-pytest.log
+  datn-ai-soar-api:week2 python -m pytest > evidence/week2-pytest.log
 cat evidence/week2-pytest.log
 docker run --rm --mount "type=bind,src=$PWD,dst=/app" \
   datn-ai-soar-api:week2 ruff check api ml tests scripts > evidence/week2-ruff.log

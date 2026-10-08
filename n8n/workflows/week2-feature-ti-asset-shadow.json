@@ -12,7 +12,7 @@
       "name": "Wazuh Alert Webhook v2",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2.1,
-      "position": [-1040, 80],
+      "position": [-500, -140],
       "webhookId": "week2-wazuh-alert"
     },
     {
@@ -29,7 +29,7 @@
       "name": "Extract Incident Features",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [-820, 80],
+      "position": [-340, -140],
       "onError": "continueRegularOutput"
     },
     {
@@ -46,7 +46,7 @@
       "name": "Call Mock AI",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [-590, 80],
+      "position": [-180, -140],
       "onError": "continueRegularOutput"
     },
     {
@@ -63,7 +63,7 @@
       "name": "Lookup Threat Intelligence",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [-360, 80],
+      "position": [-20, -140],
       "onError": "continueRegularOutput"
     },
     {
@@ -75,7 +75,7 @@
       "name": "Load Asset Context",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [-130, 80],
+      "position": [140, -140],
       "onError": "continueRegularOutput"
     },
     {
@@ -92,7 +92,7 @@
       "name": "Evaluate Risk",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [100, 80],
+      "position": [300, -140],
       "onError": "continueRegularOutput"
     },
     {
@@ -103,7 +103,7 @@
       "name": "Enforce Shadow Gate",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [330, 80]
+      "position": [300, 140]
     },
     {
       "parameters": {
@@ -125,7 +125,7 @@
       "name": "Decision Ready?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [560, 80]
+      "position": [140, 140]
     },
     {
       "parameters": {
@@ -135,7 +135,7 @@
       "name": "Build Shadow Notification",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [790, -30]
+      "position": [-20, 50]
     },
     {
       "parameters": {
@@ -145,7 +145,7 @@
       "name": "Build Degraded Review",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [790, 180]
+      "position": [-20, 230]
     },
     {
       "parameters": {
@@ -157,7 +157,7 @@
       "name": "Respond to Webhook",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
-      "position": [1030, 80]
+      "position": [-180, 140]
     }
   ],
   "connections": {
