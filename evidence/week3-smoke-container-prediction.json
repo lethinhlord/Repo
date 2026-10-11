@@ -1,0 +1,7 @@
+{
+  "model_version": "week3-20261011T120910Z",
+  "predicted_class": "malicious",
+  "malicious_probability": 0.9415390491485596,
+  "family": "account",
+  "threshold_revision": "week3-validation-v1"
+}

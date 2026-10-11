@@ -1,0 +1,8 @@
+{
+  "status": "ready",
+  "mode": "trained",
+  "model_version": "week3-20261011T120910Z",
+  "feature_schema_version": "features-v1",
+  "locked_test_status": "UNOPENED",
+  "detail": "Validated trained model package is active."
+}
