@@ -5,6 +5,7 @@ cd "$(dirname "$0")/.."
 
 python3 -m venv .venv-ml
 .venv-ml/bin/python -m pip install --upgrade pip
+.venv-ml/bin/python -m pip install --requirement requirements.lock
 .venv-ml/bin/python -m pip install --requirement requirements-ml.lock
 .venv-ml/bin/python - <<'PY'
 import sklearn

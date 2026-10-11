@@ -19,5 +19,8 @@ data/raw/
 data/processed/
 n8n/data/
 artifacts/runtime/
+ml/splits/*.txt
+ml/model-package/*
+!ml/model-package/README.md
 *.pem
 *.key

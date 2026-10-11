@@ -6,8 +6,12 @@ Week 1 establishes a reproducible development environment, Interface Contract v1
 a mock FastAPI inference service and the first n8n vertical slice. Week 2 adds a
 versioned fixture feature pipeline, incident-window aggregation, a fail-safe
 VirusTotal adapter, asset context, Risk v2 and a guarded n8n SHADOW workflow.
+Week 3 adds a leakage-safe, per-family training pipeline that benchmarks Logistic
+Regression, Random Forest and XGBoost, selects thresholds on validation data, and
+packages trained inference artifacts without opening the locked test.
 
-Start with `docs/week2-runbook.md`. The frozen Week 1 request/response rules are
+Start ML work with `docs/week3-model-training-runbook.md` and
+`docs/week3-data-contract.md`. The frozen Week 1 request/response rules are
 in `docs/interface-contract-v1.md`; machine-readable Week 1 and Week 2 schemas
 are under `schemas/`.
 

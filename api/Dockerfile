@@ -6,7 +6,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY requirements.lock /app/requirements.lock
-RUN pip install --no-cache-dir --upgrade -r /app/requirements.lock
+COPY requirements-ml.lock /app/requirements-ml.lock
+RUN pip install --no-cache-dir --upgrade \
+    -r /app/requirements.lock \
+    -r /app/requirements-ml.lock
 
 COPY api /app/api
 COPY ml /app/ml

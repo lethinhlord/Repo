@@ -125,11 +125,20 @@ class FeatureBatchResponse(StrictModel):
 
 
 class PredictionResponse(StrictModel):
-    model_version: Literal["mock-v1"] = "mock-v1"
+    model_version: str = Field(default="mock-v1", min_length=1, max_length=128)
     predicted_class: Literal["malicious", "benign"]
     malicious_probability: float = Field(ge=0.0, le=1.0)
     family: FamilyHint
-    threshold_revision: Literal["mock-thr-v1"] = "mock-thr-v1"
+    threshold_revision: str = Field(default="mock-thr-v1", min_length=1, max_length=128)
+
+
+class ModelReadinessResponse(StrictModel):
+    status: Literal["ready", "not_configured", "invalid"]
+    mode: Literal["trained", "mock"]
+    model_version: str
+    feature_schema_version: str
+    locked_test_status: str
+    detail: str
 
 
 class ThreatIntelligenceContext(StrictModel):
