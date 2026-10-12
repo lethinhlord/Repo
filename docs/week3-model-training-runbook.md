@@ -76,6 +76,34 @@ Do not inspect `data/processed/locked_test.jsonl`. The manifest must show
 
 ## 5. Train and select candidates
 
+### Option A: Google Colab (recommended when local resources are limited)
+
+Build the grouped partitions on the trusted Ubuntu VM first. Create a Colab staging
+folder in Google Drive:
+
+```text
+MyDrive/DATN/week3-data/processed/
+├── train.jsonl
+├── validation.jsonl
+└── dataset_manifest.json
+```
+
+Do not place `locked_test.jsonl`, raw telemetry, `.env`, credentials, or API keys in the
+staging folder. Open `notebooks/week3_train_colab.ipynb` from GitHub on branch
+`feature/week3-model-training`, then run the cells in order. The notebook performs EDA,
+checks split independence, runs Ruff and pytest, executes the trusted training module,
+and writes `model-package-week3.tar.gz` to:
+
+```text
+MyDrive/DATN/week3-results/
+```
+
+The notebook deliberately stops if a locked-test file is visible in either the Drive
+staging folder or the Colab checkout. Runtime, ML and notebook dependencies are pinned
+in `requirements.lock`, `requirements-ml.lock` and `requirements-notebook.lock`.
+
+### Option B: Ubuntu VM
+
 ```bash
 .venv-ml/bin/python -m ml.train --config ml/training_config.yaml \
   | tee evidence/week3-training.log
