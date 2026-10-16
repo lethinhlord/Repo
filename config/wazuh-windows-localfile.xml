@@ -1,0 +1,12 @@
+<!-- Insert these blocks inside <ossec_config> on WIN11-TARGET. -->
+<localfile>
+  <location>Microsoft-Windows-Sysmon/Operational</location>
+  <log_format>eventchannel</log_format>
+  <query>Event/System[(EventID=1 or EventID=3 or EventID=22)]</query>
+</localfile>
+
+<localfile>
+  <location>Security</location>
+  <log_format>eventchannel</log_format>
+  <query>Event/System[(EventID=4624 or EventID=4625)]</query>
+</localfile>

@@ -17,6 +17,10 @@ build/
 *.onnx
 data/raw/
 data/processed/
+evidence/scenario-runs/
+evidence/dataset-audit.json
+run-drafts/
+operator-logs/
 n8n/data/
 artifacts/runtime/
 ml/splits/*.txt

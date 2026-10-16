@@ -1,0 +1,5 @@
+<!-- Insert this block inside <ossec_config> on NET-SENSOR. -->
+<localfile>
+  <location>/var/log/suricata/eve.json</location>
+  <log_format>json</log_format>
+</localfile>

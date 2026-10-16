@@ -1,0 +1,22 @@
+revision: datn-process-taxonomy-v1
+rules:
+  - name: powershell-http-beacon
+    image_suffix: powershell.exe
+    command_contains_any:
+      - /beacon
+      - beacon.datn.test
+  - name: powershell7-http-beacon
+    image_suffix: pwsh.exe
+    command_contains_any:
+      - /beacon
+      - beacon.datn.test
+  - name: curl-http-beacon-or-stage
+    image_suffix: curl.exe
+    command_contains_any:
+      - /beacon
+      - /stage.bin
+  - name: powershell-staged-transfer
+    image_suffix: powershell.exe
+    command_contains_any:
+      - /stage.bin
+      - download.datn.test
