@@ -42,19 +42,21 @@ to [feature_schema.json](../ml/feature_schema.json).
 
 ## Collection minimum
 
-Before the first serious benchmark, collect at least five independent runs for each of
-the four strata:
+The grouped splitter has a technical floor of five groups, but this project does not
+declare the dataset ready until it has at least ten independent valid runs for each of
+the four strata. Twelve is the preferred target:
 
-| Family | Label | Minimum independent runs |
-|---|---:|---:|
-| account | benign | 5 |
-| account | malicious | 5 |
-| c2 | benign | 5 |
-| c2 | malicious | 5 |
+| Family | Label | Ready | Preferred target |
+|---|---:|---:|---:|
+| account | benign | 10 | 12 |
+| account | malicious | 10 | 12 |
+| c2 | benign | 10 | 12 |
+| c2 | malicious | 10 | 12 |
 
-This is only the technical minimum for a valid 5-fold grouped partition. More diverse
-runs are strongly preferred. Vary hosts, times, rates, destinations, and benign lookalike
-activity. Do not duplicate rows to satisfy the minimum.
+Use at least three scenario IDs in every stratum and keep the largest scenario at or
+below 40%. More diverse runs are strongly preferred. Vary times, rates, destinations and
+benign lookalike activity. Do not duplicate rows to satisfy the minimum. Enforce this
+policy with `scripts/audit_dataset.py` before building partitions.
 
 ## Split and locked-test policy
 

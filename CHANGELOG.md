@@ -11,6 +11,11 @@
 - n8n Week 2 SHADOW workflow with a degraded manual-review branch.
 - Week 2 contract exports, runbook, acceptance matrix and verification scripts.
 - Separately pinned scikit-learn 1.9.1 and XGBoost 3.4.1 for Week 3 preparation.
+- Fail-closed four-VM scenario collector with immutable run ground truth, attributed
+  Wazuh/Sysmon/Suricata evidence and SHA-256 integrity checks.
+- Dataset readiness auditor enforcing 10-run minimum, 12-run target, scenario diversity,
+  grouped-run boundaries and mandatory C2 Suricata evidence.
+- Versioned 16-scenario catalog and complete Vietnamese collection runbook.
 
 ### Security
 

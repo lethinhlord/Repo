@@ -1,0 +1,23 @@
+# Four-VM Data Collection Tasks
+
+- [x] Task 1: Collector RED tests
+  - Acceptance: tests cover account/C2 success and missing/rotated source failure.
+  - Verify: `.venv/Scripts/python -m pytest -q tests/test_scenario_collection.py` fails for missing implementation.
+- [x] Task 2: Collector implementation
+  - Acceptance: start/finalize/validate create strict, checksummed outputs atomically.
+  - Verify: focused collector tests pass.
+- [x] Task 3: Auditor RED tests
+  - Acceptance: tests cover four-stratum counts, shortage, diversity, evidence and leakage.
+  - Verify: `.venv/Scripts/python -m pytest -q tests/test_dataset_audit.py` fails for missing implementation.
+- [x] Task 4: Auditor implementation
+  - Acceptance: JSON/text report and exit status enforce 10/12 policy.
+  - Verify: focused auditor tests pass.
+- [x] Task 5: Configuration and scenario catalog
+  - Acceptance: source, taxonomy and four safe template files validate.
+  - Verify: configuration tests pass.
+- [x] Task 6: Complete Vietnamese operator runbook
+  - Acceptance: every command references an existing tool and every step has pre/post checks.
+  - Verify: manual trace against spec and archive failure modes.
+- [x] Task 7: Final verification
+  - Acceptance: full pytest and Ruff pass; generated 40-run dataset reports READY.
+  - Verify: record command outputs and review Git diff for secrets.

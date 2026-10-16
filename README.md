@@ -17,6 +17,24 @@ VALIDATION and the dataset manifest. The frozen Week 1 request/response rules ar
 in `docs/interface-contract-v1.md`; machine-readable Week 1 and Week 2 schemas
 are under `schemas/`.
 
+Real-lab collection uses the fail-closed four-VM workflow in
+`docs/scenario-collection-runbook.md`. Create a run draft from the controlled catalog,
+capture one independent run, validate its evidence, then audit all four strata:
+
+```bash
+.venv-ml/bin/python -m scripts.create_run_draft --scenario SCENARIO_ID \
+  --run-id UNIQUE_RUN_ID --operator OPERATOR
+.venv-ml/bin/python -m scripts.scenario_session start \
+  --draft run-drafts/UNIQUE_RUN_ID.yaml
+.venv-ml/bin/python -m scripts.scenario_session finalize --run-id UNIQUE_RUN_ID
+.venv-ml/bin/python -m scripts.scenario_session validate --run-id UNIQUE_RUN_ID
+.venv-ml/bin/python -m scripts.audit_dataset --minimum-runs 10 --target-runs 12
+```
+
+For the complete test, lint and readiness gate, run
+`./scripts/verify_collection_dataset.sh`; set `REQUIRE_TARGET=1` to require all 12 runs
+per stratum.
+
 On the Ubuntu VM, deployment and verification are reproducible with:
 
 ```bash
