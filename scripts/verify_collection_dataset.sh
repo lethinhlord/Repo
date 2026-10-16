@@ -21,6 +21,8 @@ if [ "${REQUIRE_TARGET:-0}" = "1" ]; then
   exec "$PYTHON" -m scripts.audit_dataset \
     --minimum-runs 10 \
     --target-runs 12 \
+    --minimum-scenarios 5 \
+    --maximum-scenario-share 0.30 \
     --require-target \
     --output evidence/dataset-audit.json
 fi
@@ -28,4 +30,6 @@ fi
 exec "$PYTHON" -m scripts.audit_dataset \
   --minimum-runs 10 \
   --target-runs 12 \
+  --minimum-scenarios 5 \
+  --maximum-scenario-share 0.30 \
   --output evidence/dataset-audit.json

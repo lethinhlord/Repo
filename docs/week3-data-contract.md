@@ -18,8 +18,11 @@ data/raw/
     └── incidents.jsonl
 ```
 
-`run_id` is the leakage boundary. Retries or minor variations derived from the same
-execution must retain the same `run_id`. A run cannot contain mixed families or labels.
+`run_id` is the atomic collection boundary: every real execution gets a new run ID and
+cannot contain mixed families, labels or scenarios. `scenario_id` is the partition
+boundary: all repeated executions of the same scenario stay in exactly one of TRAIN,
+VALIDATION or LOCKED TEST. This prevents the model from validating on a near-identical
+scenario template it already saw during training.
 
 Example `scenario_manifest.json`:
 
@@ -53,10 +56,11 @@ the four strata. Twelve is the preferred target:
 | c2 | benign | 10 | 12 |
 | c2 | malicious | 10 | 12 |
 
-Use at least three scenario IDs in every stratum and keep the largest scenario at or
-below 40%. More diverse runs are strongly preferred. Vary times, rates, destinations and
-benign lookalike activity. Do not duplicate rows to satisfy the minimum. Enforce this
-policy with `scripts/audit_dataset.py` before building partitions.
+Use all five scenario IDs in every stratum and keep the largest scenario at or below
+30%. At 10 runs the intended distribution is 2-2-2-2-2; at 12 it is 3-3-2-2-2.
+Vary collection times while preserving each scenario's declared behavior. Do not
+duplicate rows to satisfy the minimum. Enforce this policy with
+`scripts/audit_dataset.py` before building partitions.
 
 ## Split and locked-test policy
 
@@ -66,16 +70,17 @@ policy with `scripts/audit_dataset.py` before building partitions.
 - fold 3: VALIDATION (20%);
 - fold 4: LOCKED TEST (20%).
 
-The split is by `run_id`, never by event. Training reads only TRAIN and VALIDATION. The
-locked test remains unopened until Week 6 and can only be evaluated after a package is
-frozen with `python -m ml.freeze_model`.
+The split is grouped by `scenario_id`, never by event or individual run. Every run still
+remains atomic within its assigned scenario partition. Training reads only TRAIN and
+VALIDATION. The locked test remains unopened until Week 6 and can only be evaluated
+after a package is frozen with `python -m ml.freeze_model`.
 
 ## Leakage checklist
 
 - Ground truth is authored before the run and stored only in the manifest.
 - No Wazuh rule ID, Wazuh severity, TI result, asset criticality, or Risk score is a model
   feature.
-- The same incident ID and run ID may occur in only one partition.
+- The same incident ID, run ID and scenario ID may occur in only one partition.
 - Preprocessing is inside each estimator pipeline and fitted on TRAIN only.
 - Threshold and model selection use VALIDATION only.
 - LOCKED TEST never participates in model or threshold selection.

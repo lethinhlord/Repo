@@ -169,7 +169,7 @@ def test_audit_rejects_c2_run_without_suricata_evidence(tmp_path: Path) -> None:
     assert any("Suricata" in issue["message"] for issue in report["issues"])
 
 
-def test_audit_rejects_scenario_concentration_above_forty_percent(tmp_path: Path) -> None:
+def test_audit_rejects_scenario_concentration_above_thirty_percent(tmp_path: Path) -> None:
     populate(tmp_path, count=10)
     for index in range(6):
         manifest_path = tmp_path / f"data/raw/C2-BENIGN-{index:02d}/scenario_manifest.json"
@@ -193,7 +193,7 @@ def test_audit_rejects_scenario_concentration_above_forty_percent(tmp_path: Path
     )
 
     assert report["status"] == "NOT_READY"
-    assert any("40%" in issue["message"] for issue in report["issues"])
+    assert any("maximum is 30.0%" in issue["message"] for issue in report["issues"])
 
 
 def test_audit_rejects_duplicate_incident_ids_across_runs(tmp_path: Path) -> None:

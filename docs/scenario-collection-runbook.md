@@ -16,8 +16,10 @@ trước khi chạy, bằng chứng gốc và checksum. Không coi từng dòng 
 | c2-benign | 10 run hợp lệ | 12 |
 | c2-malicious | 10 run hợp lệ | 12 |
 
-Mỗi nhóm dùng đủ bốn kịch bản trong `config/scenario-catalog.yaml`; ở mốc 12 run,
-mỗi kịch bản chạy ba lần. Không nhân bản file để tăng số mẫu.
+Mỗi nhóm dùng đủ **năm** kịch bản trong `config/scenario-catalog.yaml`. Ở mốc 10,
+mỗi kịch bản chạy đúng hai lần. Ở mốc 12, chọn hai kịch bản khác nhau để chạy lần thứ
+ba; do đó không kịch bản nào vượt 25% số run của nhóm. Không nhân bản file để tăng số
+mẫu.
 
 ## 2. Kiến trúc 4 VM
 
@@ -53,7 +55,9 @@ khoản thật trong lab.
 
 Tài nguyên khởi điểm:
 
-- SOC-AI: 4 vCPU, 8 GB RAM, 80 GB disk.
+- SOC-AI: tối thiểu 4 vCPU, 8 GB RAM, 80 GB disk cho Wazuh all-in-one; khuyến nghị
+  12–16 GB RAM nếu chạy đồng thời Docker, n8n và API. Trong lúc thu dữ liệu nên dừng
+  dịch vụ Week 2 không cần thiết để tránh OOM và I/O contention.
 - Windows 11: 4 vCPU, 8 GB RAM, 80 GB disk.
 - NET-SENSOR: 2 vCPU, 4 GB RAM, 40 GB disk.
 - Kali: 2 vCPU, 4 GB RAM, 40 GB disk.
@@ -79,7 +83,12 @@ sudo apt update
 sudo apt full-upgrade -y
 sudo apt install -y open-vm-tools openssh-server curl git jq
 sudo systemctl enable --now ssh
+grep '^PRETTY_NAME=' /etc/os-release
 ```
+
+Hai VM Ubuntu phải hiện `Ubuntu 24.04 LTS`. Nếu đang là Ubuntu 26.04 hoặc một bản chưa
+nằm trong ma trận hỗ trợ hiện hành của Wazuh, dừng và cài lại 24.04; không cố cài Wazuh
+rồi dùng kết quả lỗi làm dữ liệu.
 
 Đặt hostname:
 
@@ -108,6 +117,8 @@ hostnamectl
 ip -br address
 timedatectl status
 sudo timedatectl set-timezone Asia/Ho_Chi_Minh
+sudo timedatectl set-ntp true
+timedatectl show -p NTPSynchronized --value
 ```
 
 Trên Windows PowerShell (Administrator):
@@ -146,8 +157,18 @@ Sau khi boot, dùng `ip -br link` trên Linux và `Get-NetAdapter` trên Windows
 
 ### 5.2 NET-SENSOR
 
-Tạo `/etc/netplan/60-datn-data.yaml` (thay đúng tên NIC; giữ cấu hình management đang
-hoạt động trong file netplan hiện hữu):
+Trước khi tạo file mới, sao lưu và kiểm tra các NIC dữ liệu chưa được khai báo ở file
+Netplan khác:
+
+```bash
+sudo cp -a /etc/netplan "/etc/netplan.backup.$(date -u +%Y%m%dT%H%M%SZ)"
+sudo netplan get
+sudo grep -R -nE 'ens37|ens38' /etc/netplan || true
+```
+
+Nếu `ens37`/`ens38` đã xuất hiện, sửa đúng file hiện hữu thay vì tạo khai báo trùng.
+Nếu chưa có, tạo `/etc/netplan/60-datn-data.yaml` (thay đúng tên NIC; giữ cấu hình
+management đang hoạt động trong file Netplan hiện hữu):
 
 ```yaml
 network:
@@ -167,7 +188,12 @@ Không đặt default gateway trên hai NIC dữ liệu. Kiểm tra trước khi
 sudo netplan generate
 sudo netplan try
 ip -br address
+ip route
 ```
+
+Sau `netplan try`, xác nhận default route vẫn chỉ đi qua NIC management/VMnet8 và hai
+NIC dữ liệu không có default route. Mất SSH hoặc xuất hiện hai default route thì từ chối
+apply và phục hồi bản sao lưu.
 
 Bật chuyển tiếp IPv4:
 
@@ -230,7 +256,13 @@ sudo systemctl is-active wazuh-manager wazuh-indexer wazuh-dashboard
 Lưu thông tin đăng nhập từ output cài đặt ở nơi riêng, không đưa mật khẩu vào repo hoặc
 ảnh báo cáo. Dashboard: `https://192.168.58.147`.
 
-Mở `/var/ossec/etc/ossec.conf`, trong khối `<global>` đặt:
+Sao lưu rồi mở `/var/ossec/etc/ossec.conf`; trong khối `<global>` đặt:
+
+```bash
+sudo cp -a /var/ossec/etc/ossec.conf \
+  "/var/ossec/etc/ossec.conf.bak.$(date -u +%Y%m%dT%H%M%SZ)"
+sudoedit /var/ossec/etc/ossec.conf
+```
 
 ```xml
 <logall>no</logall>
@@ -240,6 +272,7 @@ Mở `/var/ossec/etc/ossec.conf`, trong khối `<global>` đặt:
 Sau đó:
 
 ```bash
+sudo /var/ossec/bin/wazuh-analysisd -t
 sudo /var/ossec/bin/wazuh-control restart
 sudo systemctl is-active wazuh-manager
 sudo ls -ld /var/ossec/logs/archives
@@ -255,12 +288,21 @@ agent đã gửi dữ liệu, không tự tạo file rỗng để vượt kiểm
 ### 6.2 Repo, môi trường Python và Week 2 services
 
 ```bash
-cd /home/lethinh
-git clone --branch feature/week3-model-training \
-  https://github.com/lethinhlord/Repo.git datn-ai-soar
-cd /home/lethinh/datn-ai-soar
-git status --short
+LAB_USER="$(id -un)"
+PROJECT_ROOT="$HOME/datn-ai-soar"
+if [ -d "$PROJECT_ROOT/.git" ]; then
+  git -C "$PROJECT_ROOT" fetch --prune origin
+  git -C "$PROJECT_ROOT" switch feature/week3-model-training
+  git -C "$PROJECT_ROOT" pull --ff-only origin feature/week3-model-training
+else
+  git clone --branch feature/week3-model-training --single-branch \
+    https://github.com/lethinhlord/Repo.git "$PROJECT_ROOT"
+fi
+cd "$PROJECT_ROOT"
 git branch --show-current
+git status --short
+test "$(git rev-parse HEAD)" = \
+  "$(git rev-parse origin/feature/week3-model-training)"
 chmod +x scripts/bootstrap_ml.sh scripts/deploy_week2.sh scripts/verify_week2.sh
 ./scripts/bootstrap_ml.sh
 .venv-ml/bin/python -m pytest -q \
@@ -273,8 +315,14 @@ Kết quả chuẩn là toàn bộ test pass. Nếu cần API/n8n Week 2 trên c
 
 ```bash
 sudo apt install -y docker.io docker-compose-v2
-sudo usermod -aG docker lethinh
-newgrp docker
+sudo usermod -aG docker "$LAB_USER"
+```
+
+Thoát SSH, đăng nhập lại để group có hiệu lực, rồi:
+
+```bash
+cd "$HOME/datn-ai-soar"
+docker version
 ./scripts/deploy_week2.sh
 ./scripts/verify_week2.sh
 curl -fsS http://127.0.0.1:8000/ready | jq .
@@ -284,10 +332,15 @@ curl -fsS http://127.0.0.1:5678/healthz
 Cho user vận hành quyền đọc Archives rồi đăng nhập lại SSH:
 
 ```bash
-sudo usermod -aG wazuh lethinh
-id lethinh
-sudo -u lethinh test -r /var/ossec/logs/archives/archives.json
+LAB_USER="$(id -un)"
+sudo usermod -aG wazuh "$LAB_USER"
+id "$LAB_USER"
+sudo -u "$LAB_USER" test -r /var/ossec/logs/archives/archives.json
 ```
+
+Sau khi thêm group, thoát toàn bộ phiên SSH rồi đăng nhập lại. `git status --short` phải
+rỗng; nếu có thay đổi cục bộ, không `reset --hard`, không ghi đè mà phải bàn giao cho
+người phụ trách repo xử lý trước khi thu.
 
 Không đổi `config/collection-sources.yaml` nếu agent vẫn mang đúng hai tên
 `WIN11-TARGET` và `NET-SENSOR`.
@@ -344,6 +397,7 @@ traffic kiểm tra qua management (chưa dùng làm dữ liệu train), sau đó
 ```powershell
 Test-NetConnection 192.168.58.147 -Port 443
 Resolve-DnsName example.com
+Start-Process "$env:SystemRoot\System32\cmd.exe" -ArgumentList '/c whoami' -Wait
 1,3,22 | ForEach-Object {
   Get-WinEvent -FilterHashtable @{
     LogName='Microsoft-Windows-Sysmon/Operational'; Id=$_
@@ -366,10 +420,30 @@ msiexec.exe /i C:\DATN\wazuh-agent-4.14.9-1.msi /q `
   WAZUH_AGENT_NAME="WIN11-TARGET" /l*v C:\DATN\wazuh-agent-install.log
 ```
 
-Chèn hai block trong `config/wazuh-windows-localfile.xml` vào bên trong
-`<ossec_config>` của `C:\Program Files (x86)\ossec-agent\ossec.conf`, rồi:
+Wazuh Windows đã thu `Security` theo mặc định. **Không chèn thêm block Security thứ
+hai.** Sao lưu file, đếm block hiện có rồi chỉ chèn đúng một block Sysmon từ
+`config/wazuh-windows-localfile.xml` vào bên trong một khối `<ossec_config>`:
 
 ```powershell
+$conf = 'C:\Program Files (x86)\ossec-agent\ossec.conf'
+Copy-Item $conf "$conf.bak-$(Get-Date -Format yyyyMMdd-HHmmss)"
+(Select-String -Path $conf -SimpleMatch '<location>Security</location>').Count
+(Select-String -Path $conf -SimpleMatch `
+  '<location>Microsoft-Windows-Sysmon/Operational</location>').Count
+notepad.exe $conf
+```
+
+Trước khi sửa, Security phải có đúng một block; sau khi lưu, Sysmon cũng phải có đúng
+một block. Nếu count khác 1, dừng và phục hồi backup thay vì restart. Sau đó:
+
+```powershell
+$securityCount = (Select-String -Path $conf -SimpleMatch `
+  '<location>Security</location>').Count
+$sysmonCount = (Select-String -Path $conf -SimpleMatch `
+  '<location>Microsoft-Windows-Sysmon/Operational</location>').Count
+if ($securityCount -ne 1 -or $sysmonCount -ne 1) {
+  throw "ossec.conf must contain exactly one Security and one Sysmon localfile"
+}
 Restart-Service WazuhSvc
 Get-Service WazuhSvc
 Get-Content 'C:\Program Files (x86)\ossec-agent\ossec.log' -Tail 30
@@ -444,7 +518,9 @@ sudo systemctl is-active suricata
 sudo tail -n 5 /var/log/suricata/eve.json | jq -c .
 ```
 
-Ba SID local: 900001 HTTP beacon, 900002 DNS beacon, 900003 staged transfer. Nếu
+Ba SID local: 900001 HTTP beacon độc hại, 900002 DNS beacon độc hại và 900004 DNS
+canary hợp lệ. Hai kịch bản staged-transfer cố ý chỉ tạo flow/HTTP, không có local alert,
+để `suricata_alert_count` không trở thành feature làm lộ nhãn. Nếu
 `suricata -T` báo lỗi, dừng; không chạy collector bằng ruleset lỗi.
 
 ### 8.2 Wazuh Agent chuyển EVE JSON
@@ -461,14 +537,24 @@ sudo env WAZUH_MANAGER="192.168.58.147" WAZUH_AGENT_NAME="NET-SENSOR" \
   apt-get install -y wazuh-agent
 ```
 
-Chèn block trong `config/wazuh-suricata-localfile.xml` vào `<ossec_config>` của
-`/var/ossec/etc/ossec.conf`. Cho Wazuh đọc được EVE hiện tại và file tạo sau rotate:
+Sao lưu `/var/ossec/etc/ossec.conf`, đếm location EVE và chỉ chèn block trong
+`config/wazuh-suricata-localfile.xml` nếu count đang bằng 0. Sau khi chèn, count phải
+bằng đúng 1. Cho Wazuh đọc được EVE hiện tại và file tạo sau rotate:
 
 ```bash
 scp lethinh@192.168.58.147:/home/lethinh/datn-ai-soar/config/wazuh-suricata-localfile.xml /tmp/
+sudo cp -a /var/ossec/etc/ossec.conf \
+  "/var/ossec/etc/ossec.conf.bak.$(date -u +%Y%m%dT%H%M%SZ)"
+sudo grep -cF '<location>/var/log/suricata/eve.json</location>' \
+  /var/ossec/etc/ossec.conf || true
+sudoedit /var/ossec/etc/ossec.conf
+test "$(sudo grep -cF '<location>/var/log/suricata/eve.json</location>' \
+  /var/ossec/etc/ossec.conf)" -eq 1
 sudo setfacl -m u:wazuh:rx /var/log/suricata
 sudo setfacl -m u:wazuh:r /var/log/suricata/eve.json
 sudo setfacl -d -m u:wazuh:rx /var/log/suricata
+sudo /var/ossec/bin/wazuh-logcollector -t
+sudo /var/ossec/bin/wazuh-agentd -t
 sudo systemctl daemon-reload
 sudo systemctl enable --now wazuh-agent
 sudo -u wazuh test -r /var/log/suricata/eve.json
@@ -545,6 +631,8 @@ sudo systemctl is-active wazuh-manager
 sudo /var/ossec/bin/agent_control -l | grep -E 'WIN11-TARGET|NET-SENSOR'
 sudo test -s /var/ossec/logs/archives/archives.json
 df -h /var/ossec
+free -h
+timedatectl show -p NTPSynchronized --value
 cd /home/lethinh/datn-ai-soar
 git status --short
 .venv-ml/bin/python -m scripts.scenario_session --help
@@ -558,6 +646,7 @@ sudo systemctl is-active suricata wazuh-agent
 sudo suricata -T -c /etc/suricata/suricata.yaml
 sudo -u wazuh test -r /var/log/suricata/eve.json
 ip route
+timedatectl show -p NTPSynchronized --value
 ```
 
 Windows:
@@ -566,6 +655,8 @@ Windows:
 Get-Service Sysmon64,WazuhSvc
 Test-NetConnection 10.40.0.10 -Port 8080
 Resolve-DnsName www.datn.test -Server 10.40.0.10
+w32tm /resync
+w32tm /query /status
 ```
 
 Kali:
@@ -573,9 +664,13 @@ Kali:
 ```bash
 systemctl is-active datn-http-benign datn-http-beacon datn-http-stage dnsmasq
 ss -lntup | grep -E ':53|:8080|:8081|:9001'
+timedatectl show -p NTPSynchronized --value
 ```
 
-Nếu một lệnh không đạt, không bắt đầu run. Ghi lỗi, sửa, chạy lại toàn bộ preflight.
+Ba máy Linux phải trả về `yes` cho `NTPSynchronized`; Windows phải resync thành công và
+không dùng `Local CMOS Clock` làm source. Nếu một lệnh không đạt, không bắt đầu run.
+Ghi lỗi, sửa, chạy lại toàn bộ preflight. Nếu SOC-AI còn dưới 2 GB RAM available hoặc
+filesystem `/var/ossec` còn dưới 10 GB, dừng Docker/n8n/API hoặc tăng tài nguyên trước.
 
 ## 11. Quy trình chuẩn cho MỖI run
 
@@ -593,6 +688,8 @@ Ví dụ trên SOC-AI:
 
 ```bash
 cd /home/lethinh/datn-ai-soar
+date -u --iso-8601=seconds
+timedatectl show -p NTPSynchronized --value
 RUN_ID=C2-MALICIOUS-HTTP-BEACON-R01-20261016
 .venv-ml/bin/python -m scripts.create_run_draft \
   --scenario C2-MALICIOUS-HTTP-BEACON \
@@ -600,6 +697,10 @@ RUN_ID=C2-MALICIOUS-HTTP-BEACON-R01-20261016
   --operator Kien
 sed -n '1,120p' "run-drafts/$RUN_ID.yaml"
 ```
+
+Ngay trước khi tạo draft, ghi lại UTC và trạng thái đồng bộ trên bốn VM (Windows dùng
+`(Get-Date).ToUniversalTime().ToString("o")` và `w32tm /query /status`). Nếu đồng hồ lệch thấy rõ hoặc nguồn thời
+gian lỗi, không start. Metadata và event window phụ thuộc trực tiếp vào điều kiện này.
 
 Không sửa `family` hoặc `label` sau khi chạy. Nếu chọn sai, chưa start thì xóa draft và
 tạo lại; đã start thì dùng lệnh `abort`, không tái sử dụng `run_id`.
@@ -673,7 +774,7 @@ echo "audit_exit=$?"
 
 Trước khi đủ 10 mỗi nhóm, exit `1` và `NOT_READY` là đúng; báo cáo phải cho biết chính
 xác thiếu nhóm nào. Không được bỏ qua `RUN_INVALID`, `SURICATA_MISSING`, duplicate,
-checksum, thiếu diversity hoặc concentration >40%.
+checksum, thiếu đủ năm scenario hoặc concentration >30%.
 
 ### Bước 8 — Cleanup và khoảng nghỉ
 
@@ -689,7 +790,33 @@ Nếu thao tác sai giữa run:
 
 Sau đó cleanup, chờ pipeline yên, tạo run mới với ID mới.
 
-## 12. Câu lệnh thực thi C2 trên Windows
+## 12. Thực thi scenario trên Windows
+
+### 12.1 Account scenarios
+
+Chạy tại màn hình console của `WIN11-TARGET`, không qua tài khoản thật và chỉ sau khi
+collector đã `STARTED`. Trước từng run, dùng `net accounts` để xác nhận ngưỡng lockout
+cao hơn số lần sai của scenario; nếu không, thay policy lab có kiểm soát hoặc không chạy.
+
+| Scenario | Thao tác chính xác |
+|---|---|
+| `ACCOUNT-BENIGN-NORMAL-LOGON` | đăng xuất, đăng nhập `datn_benign` đúng một lần bằng mật khẩu đúng |
+| `ACCOUNT-BENIGN-TYPO-THEN-SUCCESS` | nhập sai đúng 1 lần, sau đó nhập đúng 1 lần |
+| `ACCOUNT-BENIGN-TWO-TYPOS-THEN-SUCCESS` | nhập sai đúng 2 lần, sau đó nhập đúng 1 lần |
+| `ACCOUNT-BENIGN-RUNAS` | tại CMD chạy `runas /user:.\\datn_benign "cmd /c whoami"`, nhập đúng mật khẩu một lần |
+| `ACCOUNT-BENIGN-THREE-TYPOS-THEN-SUCCESS` | nhập sai đúng 3 lần, sau đó nhập đúng 1 lần |
+| `ACCOUNT-MALICIOUS-REPEATED-FAILURES-3` | nhập sai đúng 3 lần cho `datn_attack`, không đăng nhập đúng |
+| `ACCOUNT-MALICIOUS-REPEATED-FAILURES-6` | nhập sai đúng 6 lần cho `datn_attack`, không đăng nhập đúng |
+| `ACCOUNT-MALICIOUS-REPEATED-FAILURES-10` | nhập sai đúng 10 lần cho `datn_attack`, không đăng nhập đúng |
+| `ACCOUNT-MALICIOUS-PASSWORD-SPRAY` | nhập sai đúng 1 lần lần lượt cho `datn_spray01`, `02`, `03` |
+| `ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS` | nhập sai đúng 5 lần cho `datn_attack`, sau đó nhập đúng 1 lần |
+
+Không tạo thêm lần thử ngoài bảng trong cùng cửa sổ. Kết thúc run benign/malicious có
+success thì sign out; run chỉ có failure thì quay lại desktop quản trị mà không đăng nhập
+đúng tài khoản decoy. Sau 90 giây mới finalize; quality gate sẽ đối chiếu chính xác số
+4624/4625 và thứ tự failure → success.
+
+### 12.2 C2 scenarios
 
 Chạy PowerShell thường trong `WIN11-TARGET`; chỉ chạy sau `start`.
 
@@ -715,7 +842,7 @@ Get-FileHash $env:TEMP\payload-benign.txt -Algorithm SHA256
 ```powershell
 $gaps = @(10,35,20)
 for ($i=0; $i -lt 4; $i++) {
-  curl.exe -s -o NUL http://10.40.0.10:8080/api-status
+  curl.exe -s -o NUL http://10.40.0.10:8080/api/status
   if ($i -lt 3) { Start-Sleep -Seconds $gaps[$i] }
 }
 ```
@@ -725,8 +852,18 @@ for ($i=0; $i -lt 4; $i++) {
 ```powershell
 $gaps = @(7,23,11)
 for ($i=0; $i -lt 4; $i++) {
-  Resolve-DnsName www.datn.test -Server 10.40.0.10
+  $name = "b{0:D2}.www.datn.test" -f ($i + 1)
+  Resolve-DnsName $name -Server 10.40.0.10
   if ($i -lt 3) { Start-Sleep -Seconds $gaps[$i] }
+}
+```
+
+### C2-BENIGN-API-BURST
+
+```powershell
+1..6 | ForEach-Object {
+  curl.exe -s -o NUL http://10.40.0.10:8080/api/status
+  if ($_ -lt 6) { Start-Sleep -Seconds 2 }
 }
 ```
 
@@ -766,28 +903,42 @@ curl.exe http://10.40.0.10:9001/stage.bin -o $env:TEMP\stage.bin
 Get-FileHash $env:TEMP\stage.bin -Algorithm SHA256
 ```
 
+### C2-MALICIOUS-STAGED-TRANSFER-RETRY
+
+```powershell
+1..3 | ForEach-Object {
+  $out = Join-Path $env:TEMP ("stage-{0:D2}.bin" -f $_)
+  curl.exe http://10.40.0.10:9001/stage.bin -o $out
+  if ($_ -lt 3) { Start-Sleep -Seconds 20 }
+}
+Get-FileHash $env:TEMP\stage-*.bin -Algorithm SHA256
+```
+
 Cleanup:
 
 ```powershell
 Remove-Item $env:TEMP\payload-benign.txt -ErrorAction SilentlyContinue
 Remove-Item $env:TEMP\stage.bin -ErrorAction SilentlyContinue
+Remove-Item $env:TEMP\stage-*.bin -ErrorAction SilentlyContinue
 Get-Process curl,powershell,pwsh -ErrorAction SilentlyContinue
 ```
 
 Đây là mô phỏng traffic an toàn trong lab, không tạo reverse shell, persistence, mã độc
 hoặc kết nối ra Internet.
 
-## 13. Lịch 12 run mỗi nhóm
+## 13. Lịch 10–12 run mỗi nhóm
 
-Với mỗi nhóm, chạy S1, S2, S3, S4, rồi lặp lại ba vòng. Catalog đã sắp bốn scenario
-theo thứ tự. Tổng 48 mẫu. Nếu dừng ở 10, phân bố nên là 3-3-2-2; không để một scenario
-chiếm hơn 40%.
+Catalog có đúng năm scenario cho mỗi nhóm. Ở mốc tối thiểu 10, chạy mỗi scenario hai
+lần: phân bố `2-2-2-2-2`. Ở mốc mục tiêu 12, chọn hai scenario khác nhau theo vòng
+luân phiên và chạy thêm một lần: phân bố `3-3-2-2-2`. Tổng toàn bộ là 40 run ở mốc
+READY hoặc 48 run ở mốc TARGET_MET; tỷ lệ lớn nhất lần lượt là 20% hoặc 25%.
 
 Không chạy toàn bộ benign rồi mới malicious. Dùng lịch xen kẽ:
 
 1. account-benign S1, c2-malicious S1, account-malicious S1, c2-benign S1;
-2. đổi S1 thành S2, rồi S3, S4;
-3. lặp vòng hai và vòng ba ở thời điểm khác, sau cleanup/preflight.
+2. đổi S1 thành S2, rồi S3, S4, S5;
+3. lặp vòng thứ hai ở thời điểm khác, sau cleanup/preflight;
+4. nếu cần đủ 12, chọn hai scenario khác nhau trong từng nhóm cho vòng thứ ba.
 
 Mỗi lần lặp phải là thực thi mới, không copy thư mục run cũ.
 
@@ -817,27 +968,43 @@ grep -n 'locked_test_status' data/processed/dataset_manifest.json
 ```
 
 Không mở hoặc upload nội dung `data/processed/locked_test.jsonl` hoặc `ml/splits/test.txt`
-để xem kết quả trước Week 6. Chỉ đưa ba file sau lên thư mục Drive mà notebook cấu hình:
+để xem kết quả trước Week 6. Tạo checksum ngay trên SOC-AI:
+
+```bash
+cd data/processed
+sha256sum train.jsonl validation.jsonl dataset_manifest.json \
+  | tee colab-upload.sha256
+sha256sum --check colab-upload.sha256
+cd ../..
+```
+
+Chỉ đưa bốn file sau lên đúng thư mục Google Drive
+`MyDrive/DATN/week3-data/processed/` mà notebook cấu hình:
 
 ```text
 data/processed/train.jsonl
 data/processed/validation.jsonl
 data/processed/dataset_manifest.json
+data/processed/colab-upload.sha256
 ```
 
-Sau khi upload, đối chiếu SHA-256 ở SOC-AI và Colab trước khi train.
+Không đổi tên file hoặc tạo thêm tầng `processed/processed`. Notebook tự từ chối nếu
+thiếu file, checksum sai, `group_key` không phải `scenario_id`, scenario xuất hiện ở cả
+TRAIN và VALIDATION, hoặc phát hiện `locked_test.jsonl`.
 
 ## 15. Xử lý lỗi
 
 | Lỗi | Nguyên nhân thường gặp | Xử lý bắt buộc |
 |---|---|---|
 | `no Wazuh Archive bytes` | agent chưa gửi hoặc chờ chưa đủ | abort, sửa agent, chạy ID mới |
+| `does not end with a complete JSON line` | Wazuh đang ghi dở dòng cuối | không sửa Archives; chờ 5–10 giây rồi finalize lại cùng run |
 | `rotated or truncated` | Archives rotate trong run | abort, tránh giờ rotate, chạy ID mới |
 | `no attributable Windows...` | sai agent/account/process/IP/port/DNS | đối chiếu draft với lệnh thật, chạy mới |
 | `no attributable Suricata...` | traffic đi tắt hoặc EVE chưa forward | kiểm tra route, interface, ACL, Wazuh Agent |
 | checksum mismatch | file evidence/generated bị sửa | loại run; không sửa checksum để hợp thức hóa |
-| concentration >40% | lặp một scenario quá nhiều | thu thêm scenario khác; không copy mẫu |
+| concentration >30% | lặp một scenario quá nhiều | thu thêm scenario khác; không copy mẫu |
 | duplicate incident/run | tái sử dụng dữ liệu hoặc ID | loại bản trùng và chạy mới |
+| `FEATURE_LABEL_SEPARATION` | alert count phân tách hoàn hảo nhãn C2 | thu đủ benign alert 900004 và malicious staged-transfer không alert |
 | audit `NOT_READY` | thiếu hoặc có run invalid | đọc `ISSUES` và `shortage`, xử lý đúng nhóm |
 
 Không dùng lệnh sửa trực tiếp `incidents.jsonl`, `scenario_manifest.json` hoặc
@@ -874,9 +1041,9 @@ Chỉ bàn giao khi tất cả đều đúng:
 - [ ] EVE flow/DNS/HTTP và alert local tồn tại trong Archives.
 - [ ] mỗi run có ground truth trước hoạt động, evidence, metadata, checksum.
 - [ ] 10–12 run hợp lệ cho mỗi trong bốn nhóm.
-- [ ] ít nhất 3 scenario/nhóm; không scenario nào >40%.
+- [ ] đủ 5 scenario/nhóm; không scenario nào >30%.
 - [ ] auditor báo 0 invalid; build dataset thành công.
-- [ ] dataset manifest ghi `group_key=run_id`, locked test `UNOPENED`.
+- [ ] dataset manifest ghi `group_key=scenario_id`, locked test `UNOPENED`.
 - [ ] ảnh minh chứng không lộ bí mật.
 
 Mốc 10–12 run/nhóm đủ cho benchmark đồ án và kiểm thử pipeline, nhưng vẫn là dataset
@@ -942,6 +1109,8 @@ có payload chưa được rà soát.
 - Wazuh Windows/Linux agent: https://documentation.wazuh.com/current/installation-guide/
 - Wazuh Archives: https://documentation.wazuh.com/current/user-manual/manager/event-logging.html
 - Wazuh localfile: https://documentation.wazuh.com/current/user-manual/reference/ossec-conf/localfile.html
+- Wazuh kiểm tra cấu hình: https://documentation.wazuh.com/current/user-manual/reference/ossec-conf/verifying-configuration.html
+- Wazuh Windows default channels: https://documentation.wazuh.com/current/user-manual/capabilities/log-data-collection/configuration.html
 - Microsoft Sysmon: https://learn.microsoft.com/sysinternals/downloads/sysmon
 - Suricata EVE JSON: https://docs.suricata.io/en/latest/output/eve/eve-json-output.html
 - Atomic Red Team: https://www.atomicredteam.io/docs/invoke-atomicredteam

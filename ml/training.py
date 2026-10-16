@@ -40,10 +40,13 @@ def leakage_audit(
 ) -> dict[str, Any]:
     train_runs = {row["run_id"] for row in train_rows}
     validation_runs = {row["run_id"] for row in validation_rows}
+    train_scenarios = {row["scenario_id"] for row in train_rows}
+    validation_scenarios = {row["scenario_id"] for row in validation_rows}
     train_incidents = {row["incident_id"] for row in train_rows}
     validation_incidents = {row["incident_id"] for row in validation_rows}
     checks = {
         "run_overlap": sorted(train_runs & validation_runs),
+        "scenario_overlap": sorted(train_scenarios & validation_scenarios),
         "incident_overlap": sorted(train_incidents & validation_incidents),
         "exact_row_overlap": sorted(_partition_hash(train_rows) & _partition_hash(validation_rows)),
         "forbidden_training_fields": sorted(

@@ -13,10 +13,11 @@ metrics must never be presented as model quality.
 
 ## 1. Verify the environment
 
-Run in the Ubuntu VM from `/home/lethinh/datn-ai-soar`:
+Run in the Ubuntu VM from the checked-out repository (example
+`$HOME/datn-ai-soar`):
 
 ```bash
-cd /home/lethinh/datn-ai-soar
+cd "$HOME/datn-ai-soar"
 python3 --version
 .venv-ml/bin/python -c "import sklearn, xgboost; print(sklearn.__version__, xgboost.__version__)"
 git status --short
@@ -32,7 +33,7 @@ bash scripts/bootstrap_ml.sh
 ## 2. Run the non-scientific pipeline smoke test
 
 ```bash
-cd /home/lethinh/datn-ai-soar
+cd "$HOME/datn-ai-soar"
 bash scripts/verify_week3_model.sh | tee evidence/week3-model-smoke.log
 ```
 

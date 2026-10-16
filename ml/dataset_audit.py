@@ -184,7 +184,7 @@ def audit_dataset(
     minimum_runs: int = 10,
     target_runs: int = 12,
     minimum_scenarios: int = 5,
-    maximum_scenario_share: float = 0.40,
+    maximum_scenario_share: float = 0.30,
 ) -> dict[str, Any]:
     if minimum_runs < 5:
         raise ValueError("minimum_runs must be at least 5 for the configured grouped split")
@@ -347,7 +347,8 @@ def audit_dataset(
             _issue(
                 issues,
                 "SCENARIO_CONCENTRATION",
-                f"{name} largest scenario share is {largest_share:.1%}; maximum is 40%",
+                f"{name} largest scenario share is {largest_share:.1%}; "
+                f"maximum is {maximum_scenario_share:.1%}",
             )
 
     error_count = sum(issue["severity"] == "ERROR" for issue in issues)
@@ -362,7 +363,10 @@ def audit_dataset(
     return {
         "audit_version": "dataset-audit-v1",
         "status": status,
-        "minimum_policy": f">={minimum_runs} valid independent runs per family/label",
+        "minimum_policy": (
+            f">={minimum_runs} valid independent runs and >={minimum_scenarios} "
+            "scenario groups per family/label"
+        ),
         "target_policy": f">={target_runs} valid independent runs per family/label",
         "collection_unit": "run_id",
         "split_group_key": "scenario_id",

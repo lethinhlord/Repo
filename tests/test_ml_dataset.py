@@ -110,6 +110,13 @@ def test_scenario_grouped_split_rejects_fewer_scenarios_than_folds() -> None:
         )
 
 
+def test_grouped_split_rejects_unknown_group_key() -> None:
+    rows = [record("account-0-0", "account", 0)]
+
+    with pytest.raises(DatasetError, match="group_key must be run_id or scenario_id"):
+        assign_grouped_folds(rows, number_of_folds=5, random_seed=42, group_key="host")
+
+
 def test_leakage_audit_rejects_run_overlap() -> None:
     train = [record("same-run", "account", 0).as_dict()]
     validation = [record("same-run", "account", 0, 1).as_dict()]
@@ -118,3 +125,30 @@ def test_leakage_audit_rejects_run_overlap() -> None:
 
     assert result["passed"] is False
     assert result["checks"]["run_overlap"] == ["same-run"]
+
+
+def test_leakage_audit_rejects_scenario_overlap_across_distinct_runs() -> None:
+    train = [
+        record(
+            "train-run",
+            "account",
+            0,
+            scenario_id="ACCOUNT-BENIGN-NORMAL-LOGON",
+        ).as_dict()
+    ]
+    validation = [
+        record(
+            "validation-run",
+            "account",
+            0,
+            scenario_id="ACCOUNT-BENIGN-NORMAL-LOGON",
+        ).as_dict()
+    ]
+
+    result = leakage_audit(train, validation)
+
+    assert result["passed"] is False
+    assert result["checks"]["run_overlap"] == []
+    assert result["checks"]["scenario_overlap"] == [
+        "ACCOUNT-BENIGN-NORMAL-LOGON"
+    ]

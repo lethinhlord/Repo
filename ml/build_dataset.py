@@ -29,6 +29,8 @@ def build_dataset(config_path: Path) -> dict[str, object]:
     number_of_folds = int(config["split"]["number_of_folds"])
     minimum_groups = int(data_config["minimum_groups_per_family_label"])
     group_key = str(data_config.get("group_key", "run_id"))
+    if group_key not in {"run_id", "scenario_id"}:
+        raise ValueError("data.group_key must be run_id or scenario_id")
     group_strata = {
         getattr(record, group_key): f"{record.family}:{record.label}"
         for record in records

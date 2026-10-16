@@ -12,12 +12,15 @@ def generate(output_dir: Path, *, random_seed: int = 42) -> None:
     started = datetime(2026, 10, 1, 0, 0, tzinfo=UTC)
     for family in ("account", "c2"):
         for label_name, label in (("benign", 0), ("malicious", 1)):
-            for run_number in range(8):
+            for run_number in range(10):
                 run_id = f"SMOKE-{family.upper()}-{label_name.upper()}-{run_number:02d}"
+                scenario_number = run_number % 5
                 run_dir = output_dir / run_id
                 run_dir.mkdir(parents=True, exist_ok=True)
                 manifest = {
-                    "scenario_id": f"SMOKE-{family.upper()}-{label_name.upper()}",
+                    "scenario_id": (
+                        f"SMOKE-{family.upper()}-{label_name.upper()}-S{scenario_number:02d}"
+                    ),
                     "run_id": run_id,
                     "family": family,
                     "label": label_name,

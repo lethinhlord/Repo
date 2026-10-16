@@ -44,6 +44,18 @@ def test_sysmon_configuration_enables_required_event_families() -> None:
     assert {"ProcessCreate", "NetworkConnect", "DnsQuery"} <= enabled
 
 
+def test_windows_wazuh_snippet_adds_sysmon_without_duplicate_security_channel() -> None:
+    snippet = (
+        PROJECT_ROOT / "config/wazuh-windows-localfile.xml"
+    ).read_text(encoding="utf-8")
+
+    wrapped = ElementTree.fromstring(f"<ossec_config>{snippet}</ossec_config>")
+    locations = [node.findtext("location") for node in wrapped.findall("localfile")]
+
+    assert locations == ["Microsoft-Windows-Sysmon/Operational"]
+    assert "<location>Security</location>" not in snippet
+
+
 def test_suricata_lab_rules_use_unique_local_signature_ids() -> None:
     lines = [
         line.strip()

@@ -8,6 +8,7 @@ data:
   splits_dir: artifacts/runtime/smoke-data/splits
   manifest_name: scenario_manifest.json
   records_name: incidents.jsonl
+  group_key: scenario_id
   minimum_groups_per_family_label: 5
 split:
   train_folds: [0, 1, 2]

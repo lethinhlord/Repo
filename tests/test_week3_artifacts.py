@@ -38,6 +38,15 @@ def test_training_config_preserves_60_20_20_grouped_split() -> None:
     }
 
 
+def test_smoke_training_uses_the_same_scenario_group_boundary() -> None:
+    config = yaml.safe_load(
+        (ROOT / "config/training-smoke.yaml").read_text(encoding="utf-8")
+    )
+
+    assert config["data"]["group_key"] == "scenario_id"
+    assert config["data"]["minimum_groups_per_family_label"] == 5
+
+
 def test_feature_schema_excludes_context_and_ground_truth() -> None:
     schema = json.loads((ROOT / "ml/feature_schema.json").read_text(encoding="utf-8"))
 
