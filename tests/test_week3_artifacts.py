@@ -24,6 +24,7 @@ def test_training_config_preserves_60_20_20_grouped_split() -> None:
     config = yaml.safe_load((ROOT / "ml/training_config.yaml").read_text(encoding="utf-8"))
 
     assert config["random_seed"] == 42
+    assert config["data"]["group_key"] == "scenario_id"
     assert config["split"] == {
         "train_folds": [0, 1, 2],
         "validation_folds": [3],

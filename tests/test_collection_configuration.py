@@ -60,7 +60,7 @@ def test_suricata_lab_rules_use_unique_local_signature_ids() -> None:
     assert not any("sid:900003" in line for line in lines)
 
 
-def test_scenario_catalog_covers_four_strata_with_four_scenarios_each() -> None:
+def test_scenario_catalog_covers_four_strata_with_five_scenarios_each() -> None:
     catalog = ScenarioCatalog.model_validate(
         yaml.safe_load(
             (PROJECT_ROOT / "config/scenario-catalog.yaml").read_text(encoding="utf-8")
@@ -78,7 +78,7 @@ def test_scenario_catalog_covers_four_strata_with_four_scenarios_each() -> None:
         "c2:benign",
         "c2:malicious",
     }
-    assert all(len(set(ids)) == 4 for ids in strata.values())
+    assert all(len(set(ids)) == 5 for ids in strata.values())
 
 
 def test_scenario_catalog_has_enforceable_quality_gates_and_alert_overlap() -> None:

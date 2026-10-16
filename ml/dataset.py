@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
@@ -194,16 +195,39 @@ def discover_records(raw_dir: Path, manifest_name: str, records_name: str) -> li
 
 
 def assign_grouped_folds(
-    records: list[DatasetRecord], *, number_of_folds: int, random_seed: int
+    records: list[DatasetRecord],
+    *,
+    number_of_folds: int,
+    random_seed: int,
+    group_key: str = "run_id",
 ) -> dict[str, int]:
-    group_rows: dict[str, DatasetRecord] = {}
+    if group_key not in {"run_id", "scenario_id"}:
+        raise DatasetError("group_key must be run_id or scenario_id")
+
+    run_rows: dict[str, DatasetRecord] = {}
     for record in records:
-        existing = group_rows.setdefault(record.run_id, record)
+        existing = run_rows.setdefault(record.run_id, record)
+        if (existing.family, existing.label, existing.scenario_id) != (
+            record.family,
+            record.label,
+            record.scenario_id,
+        ):
+            raise DatasetError(
+                f"run {record.run_id} contains mixed family, labels or scenarios"
+            )
+
+    group_rows: dict[str, DatasetRecord] = {}
+    for record in run_rows.values():
+        group_id = getattr(record, group_key)
+        existing = group_rows.setdefault(group_id, record)
         if (existing.family, existing.label) != (record.family, record.label):
-            raise DatasetError(f"run {record.run_id} contains mixed family or labels")
-    rows = sorted(group_rows.values(), key=lambda row: row.run_id)
+            raise DatasetError(
+                f"{group_key} group {group_id} contains mixed family or labels"
+            )
+
+    rows = sorted(group_rows.values(), key=lambda row: getattr(row, group_key))
     strata = [f"{row.family}:{row.label}" for row in rows]
-    groups = [row.run_id for row in rows]
+    groups = [getattr(row, group_key) for row in rows]
     counts: dict[str, int] = {}
     for stratum in strata:
         counts[stratum] = counts.get(stratum, 0) + 1
@@ -211,20 +235,42 @@ def assign_grouped_folds(
     if sparse:
         raise DatasetError(
             "grouped stratification requires at least "
-            f"{number_of_folds} independent runs per family/label; found {sparse}"
+            f"{number_of_folds} independent {group_key} groups per family/label; "
+            f"found {sparse}"
         )
+
+    if group_key == "scenario_id":
+        fold_by_group: dict[str, int] = {}
+        groups_by_stratum: dict[str, list[str]] = {}
+        for row in rows:
+            stratum = f"{row.family}:{row.label}"
+            groups_by_stratum.setdefault(stratum, []).append(row.scenario_id)
+        for stratum, stratum_groups in sorted(groups_by_stratum.items()):
+            seed_bytes = hashlib.sha256(f"{random_seed}:{stratum}".encode()).digest()
+            generator = random.Random(int.from_bytes(seed_bytes[:8], "big"))
+            ordered = sorted(stratum_groups)
+            generator.shuffle(ordered)
+            for index, group_id in enumerate(ordered):
+                fold_by_group[group_id] = index % number_of_folds
+        return {
+            run_id: fold_by_group[record.scenario_id]
+            for run_id, record in run_rows.items()
+        }
 
     splitter = StratifiedGroupKFold(
         n_splits=number_of_folds,
         shuffle=True,
         random_state=random_seed,
     )
-    fold_by_run: dict[str, int] = {}
+    fold_by_group: dict[str, int] = {}
     dummy_x = [[0.0]] * len(rows)
     for fold, (_, held_out) in enumerate(splitter.split(dummy_x, strata, groups)):
         for index in held_out:
-            fold_by_run[rows[index].run_id] = fold
-    return fold_by_run
+            fold_by_group[rows[index].run_id] = fold
+    return {
+        run_id: fold_by_group[record.run_id]
+        for run_id, record in run_rows.items()
+    }
 
 
 def dataset_hash(records: Iterable[DatasetRecord]) -> str:

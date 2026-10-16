@@ -183,7 +183,7 @@ def audit_dataset(
     *,
     minimum_runs: int = 10,
     target_runs: int = 12,
-    minimum_scenarios: int = 3,
+    minimum_scenarios: int = 5,
     maximum_scenario_share: float = 0.40,
 ) -> dict[str, Any]:
     if minimum_runs < 5:
@@ -285,6 +285,31 @@ def audit_dataset(
     valid = {
         run_id: value for run_id, value in candidates.items() if run_id not in invalid_runs
     }
+    c2_alert_values: dict[str, list[float]] = {"benign": [], "malicious": []}
+    for manifest, incidents in valid.values():
+        if manifest.family != "c2":
+            continue
+        for incident in incidents:
+            value = incident.features.get("suricata_alert_count")
+            if value is not None:
+                c2_alert_values[manifest.label].append(float(value))
+    benign_alerts = c2_alert_values["benign"]
+    malicious_alerts = c2_alert_values["malicious"]
+    if benign_alerts and malicious_alerts:
+        benign_range = (min(benign_alerts), max(benign_alerts))
+        malicious_range = (min(malicious_alerts), max(malicious_alerts))
+        separated = (
+            benign_range[1] < malicious_range[0]
+            or malicious_range[1] < benign_range[0]
+        )
+        if separated:
+            _issue(
+                issues,
+                "FEATURE_LABEL_SEPARATION",
+                "suricata_alert_count perfectly separates C2 labels; collect a benign "
+                "alerting scenario and a malicious non-alerting scenario before training "
+                f"(benign={benign_range}, malicious={malicious_range})",
+            )
     stratum_runs: dict[str, list[ScenarioManifest]] = {name: [] for name in STRATA}
     for manifest, _ in valid.values():
         stratum_runs[f"{manifest.family}:{manifest.label}"].append(manifest)
@@ -339,7 +364,8 @@ def audit_dataset(
         "status": status,
         "minimum_policy": f">={minimum_runs} valid independent runs per family/label",
         "target_policy": f">={target_runs} valid independent runs per family/label",
-        "group_key": "run_id",
+        "collection_unit": "run_id",
+        "split_group_key": "scenario_id",
         "raw_event_rows_are_independent_samples": False,
         "discovered_runs": len(candidates),
         "total_valid_runs": len(valid),

@@ -28,20 +28,24 @@ def build_dataset(config_path: Path) -> dict[str, object]:
     validate_feature_contract(records, schema)
     number_of_folds = int(config["split"]["number_of_folds"])
     minimum_groups = int(data_config["minimum_groups_per_family_label"])
-    run_strata = {
-        record.run_id: f"{record.family}:{record.label}" for record in records
+    group_key = str(data_config.get("group_key", "run_id"))
+    group_strata = {
+        getattr(record, group_key): f"{record.family}:{record.label}"
+        for record in records
     }
-    stratum_counts = Counter(run_strata.values())
+    stratum_counts = Counter(group_strata.values())
     sparse = {name: count for name, count in stratum_counts.items() if count < minimum_groups}
     if sparse:
         raise ValueError(
-            f"each family/label requires at least {minimum_groups} independent runs; "
+            f"each family/label requires at least {minimum_groups} independent "
+            f"{group_key} groups; "
             f"found {sparse}"
         )
     folds = assign_grouped_folds(
         records,
         number_of_folds=number_of_folds,
         random_seed=int(config["random_seed"]),
+        group_key=group_key,
     )
     split_folds = {
         "train": set(config["split"]["train_folds"]),
@@ -74,7 +78,7 @@ def build_dataset(config_path: Path) -> dict[str, object]:
     manifest = {
         "dataset_hash_sha256": dataset_hash(records),
         "feature_schema_version": schema["version"],
-        "group_key": "run_id",
+        "group_key": group_key,
         "locked_test_status": "UNOPENED",
         "partition_counts": Counter(partition_by_run.values()),
         "record_counts": Counter(partition_by_run[record.run_id] for record in records),

@@ -85,6 +85,27 @@ scenarios:
     cleanup_steps:
       - Close the spawned command window.
 
+  - scenario_id: ACCOUNT-BENIGN-THREE-TYPOS-THEN-SUCCESS
+    family: account
+    label: benign
+    expected_behavior: Three accidental password typos followed by a successful interactive logon.
+    attribution:
+      account_names: [datn_benign]
+    quality_gates:
+      min_account_failures: 3
+      max_account_failures: 3
+      min_account_successes: 1
+      require_success_after_failure: true
+    preconditions:
+      - The account lockout threshold is greater than three attempts.
+      - Security log auditing for Logon/Logoff is enabled.
+    execution_steps:
+      - Enter three incorrect passwords for datn_benign, then enter the correct password once.
+    expected_observables:
+      - Three events 4625 followed by event 4624 for datn_benign.
+    cleanup_steps:
+      - Sign out and return WIN11-TARGET to the clean lab desktop.
+
   - scenario_id: ACCOUNT-MALICIOUS-REPEATED-FAILURES-6
     family: account
     label: malicious
@@ -169,6 +190,27 @@ scenarios:
       - Five events 4625 followed by event 4624 for datn_attack.
     cleanup_steps:
       - Sign out of datn_attack and restore the clean snapshot if required.
+
+  - scenario_id: ACCOUNT-MALICIOUS-REPEATED-FAILURES-3
+    family: account
+    label: malicious
+    expected_behavior: Three controlled invalid attempts against a decoy account without a successful logon.
+    attribution:
+      account_names: [datn_attack]
+    quality_gates:
+      min_account_failures: 3
+      max_account_failures: 3
+      min_account_successes: 0
+      max_account_successes: 0
+    preconditions:
+      - The disposable local account datn_attack exists.
+      - The account lockout policy permits three attempts.
+    execution_steps:
+      - Submit three known-wrong passwords for datn_attack and do not enter a correct password.
+    expected_observables:
+      - Exactly three Security events 4625 and no 4624 for datn_attack in the run window.
+    cleanup_steps:
+      - Stop attempts and verify the account is not locked.
 
   - scenario_id: C2-BENIGN-HEALTH-POLL
     family: c2
@@ -264,6 +306,30 @@ scenarios:
     cleanup_steps:
       - Clear only the lab DNS cache with Clear-DnsClientCache if needed.
 
+  - scenario_id: C2-BENIGN-API-BURST
+    family: c2
+    label: benign
+    expected_behavior: Six approved API health requests in a short administrative burst.
+    attribution:
+      process_names: [curl.exe]
+      destination_ips: [10.40.0.10]
+      destination_ports: [8080]
+      command_contains_any: [/api/status]
+    quality_gates:
+      min_process_events: 6
+      min_network_events: 6
+      min_suricata_events: 6
+      forbidden_suricata_signature_ids: [900001, 900002]
+    preconditions:
+      - Kali serves /api/status on 10.40.0.10 port 8080.
+      - NET-SENSOR is recording EVE flow and HTTP events.
+    execution_steps:
+      - Send six curl.exe requests to /api/status at two-second intervals.
+    expected_observables:
+      - Six Sysmon process/network records and matching Suricata HTTP records without a DATN malicious SID.
+    cleanup_steps:
+      - Stop after exactly six requests.
+
   - scenario_id: C2-MALICIOUS-HTTP-BEACON
     family: c2
     label: malicious
@@ -357,3 +423,27 @@ scenarios:
       - Sysmon process/network evidence and Suricata HTTP or flow evidence without a DATN local alert.
     cleanup_steps:
       - Delete $env:TEMP\\stage.bin and verify no executable content was introduced.
+
+  - scenario_id: C2-MALICIOUS-STAGED-TRANSFER-RETRY
+    family: c2
+    label: malicious
+    expected_behavior: Three repeated downloads of a harmless staged marker simulate retry behavior without a signature alert.
+    attribution:
+      process_names: [curl.exe, powershell.exe, pwsh.exe]
+      destination_ips: [10.40.0.10]
+      destination_ports: [9001]
+      command_contains_any: [/stage.bin]
+    quality_gates:
+      min_process_events: 3
+      min_network_events: 3
+      min_suricata_events: 3
+      forbidden_suricata_signature_ids: [900001, 900002, 900004]
+    preconditions:
+      - Kali serves the harmless fixed stage.bin marker on 10.40.0.10 port 9001.
+      - No DATN local signature targets stage.bin.
+    execution_steps:
+      - Download stage.bin three times to distinct temporary names with 20-second intervals.
+    expected_observables:
+      - Three Sysmon process/network records and matching Suricata HTTP or flow evidence without a DATN local alert.
+    cleanup_steps:
+      - Delete all three temporary marker files.

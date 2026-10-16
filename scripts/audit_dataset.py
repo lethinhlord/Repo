@@ -15,7 +15,7 @@ def main() -> int:
     )
     parser.add_argument("--minimum-runs", type=int, default=10)
     parser.add_argument("--target-runs", type=int, default=12)
-    parser.add_argument("--minimum-scenarios", type=int, default=3)
+    parser.add_argument("--minimum-scenarios", type=int, default=5)
     parser.add_argument("--maximum-scenario-share", type=float, default=0.40)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--require-target", action="store_true")

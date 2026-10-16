@@ -107,7 +107,7 @@ def populate(root: Path, count: int = 10) -> None:
                     family=family,
                     label=label,
                     index=index,
-                    scenario_slot=(index % 4) + 1,
+                    scenario_slot=(index % 5) + 1,
                 )
 
 
@@ -251,3 +251,36 @@ def test_audit_rejects_stale_started_collection(tmp_path: Path) -> None:
 
     assert report["status"] == "NOT_READY"
     assert any(issue["code"] == "STALE_STARTED_RUN" for issue in report["issues"])
+
+
+def test_audit_rejects_suricata_alert_feature_that_perfectly_separates_labels(
+    tmp_path: Path,
+) -> None:
+    populate(tmp_path, count=10)
+    for label in ("benign", "malicious"):
+        for index in range(10):
+            run_id = f"C2-{label.upper()}-{index:02d}"
+            incident_path = tmp_path / f"data/raw/{run_id}/incidents.jsonl"
+            incident = json.loads(incident_path.read_text(encoding="utf-8"))
+            incident["features"]["suricata_alert_count"] = float(label == "malicious")
+            incident_path.write_text(json.dumps(incident) + "\n", encoding="utf-8")
+            evidence_dir = tmp_path / f"evidence/scenario-runs/{run_id}"
+            metadata_path = evidence_dir / "collection_metadata.json"
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata["incidents_sha256"] = hashlib.sha256(
+                incident_path.read_bytes()
+            ).hexdigest()
+            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+            checksums(evidence_dir)
+
+    report = audit_dataset(
+        tmp_path / "data/raw",
+        tmp_path / "evidence/scenario-runs",
+        minimum_runs=10,
+        target_runs=12,
+    )
+
+    assert report["status"] == "NOT_READY"
+    assert any(
+        issue["code"] == "FEATURE_LABEL_SEPARATION" for issue in report["issues"]
+    )
