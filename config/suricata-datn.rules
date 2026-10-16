@@ -1,4 +1,4 @@
-# Lab-only deterministic signatures for the four-VM DATN dataset.
+# Lab-only signatures with deliberate benign/malicious overlap for leakage control.
 alert http 10.20.0.10 any -> 10.40.0.10 8081 (msg:"DATN LAB HTTP beacon"; flow:to_server,established; http.uri; content:"/beacon"; nocase; sid:900001; rev:1;)
 alert dns 10.20.0.10 any -> 10.40.0.10 53 (msg:"DATN LAB DNS beacon"; dns.query; content:".beacon.datn.test"; nocase; endswith; sid:900002; rev:1;)
-alert http 10.20.0.10 any -> 10.40.0.10 9001 (msg:"DATN LAB staged transfer"; flow:to_server,established; http.uri; content:"/stage.bin"; nocase; sid:900003; rev:1;)
+alert dns 10.20.0.10 any -> 10.40.0.10 53 (msg:"DATN LAB approved DNS canary"; dns.query; content:".www.datn.test"; nocase; endswith; sid:900004; rev:1;)

@@ -7,6 +7,11 @@ scenarios:
     expected_behavior: One successful interactive logon by the dedicated benign lab account.
     attribution:
       account_names: [datn_benign]
+    quality_gates:
+      min_account_failures: 0
+      max_account_failures: 0
+      min_account_successes: 1
+      require_success_after_failure: false
     preconditions:
       - The local account datn_benign exists and is enabled on WIN11-TARGET.
       - Security log auditing for Logon/Logoff is enabled.
@@ -23,6 +28,11 @@ scenarios:
     expected_behavior: One accidental password typo followed by a successful interactive logon.
     attribution:
       account_names: [datn_benign]
+    quality_gates:
+      min_account_failures: 1
+      max_account_failures: 1
+      min_account_successes: 1
+      require_success_after_failure: true
     preconditions:
       - The local account datn_benign exists and is enabled on WIN11-TARGET.
       - Security log auditing for Logon/Logoff is enabled.
@@ -39,6 +49,11 @@ scenarios:
     expected_behavior: Two accidental password typos followed by a successful interactive logon.
     attribution:
       account_names: [datn_benign]
+    quality_gates:
+      min_account_failures: 2
+      max_account_failures: 2
+      min_account_successes: 1
+      require_success_after_failure: true
     preconditions:
       - The account lockout threshold is greater than two attempts.
       - Security log auditing for Logon/Logoff is enabled.
@@ -55,6 +70,11 @@ scenarios:
     expected_behavior: A legitimate secondary logon starts whoami under the benign lab account.
     attribution:
       account_names: [datn_benign]
+    quality_gates:
+      min_account_failures: 0
+      max_account_failures: 0
+      min_account_successes: 1
+      require_success_after_failure: false
     preconditions:
       - The local account datn_benign exists and its password is known to the operator.
       - Security log auditing for Logon/Logoff is enabled.
@@ -71,6 +91,11 @@ scenarios:
     expected_behavior: Six controlled invalid password attempts against one decoy lab account.
     attribution:
       account_names: [datn_attack]
+    quality_gates:
+      min_account_failures: 6
+      max_account_failures: 6
+      min_account_successes: 0
+      max_account_successes: 0
     preconditions:
       - The disposable local account datn_attack exists.
       - The lockout policy is documented and permits the planned six attempts.
@@ -87,6 +112,11 @@ scenarios:
     expected_behavior: Ten controlled invalid password attempts against one decoy lab account.
     attribution:
       account_names: [datn_attack]
+    quality_gates:
+      min_account_failures: 10
+      max_account_failures: 10
+      min_account_successes: 0
+      max_account_successes: 0
     preconditions:
       - The disposable local account datn_attack exists.
       - The lockout policy is disabled or safely above ten attempts for this isolated run.
@@ -103,6 +133,12 @@ scenarios:
     expected_behavior: A controlled password-spray simulation sends one known-wrong password to three decoy accounts.
     attribution:
       account_names: [datn_spray01, datn_spray02, datn_spray03]
+    quality_gates:
+      min_account_failures: 3
+      max_account_failures: 3
+      min_account_successes: 0
+      max_account_successes: 0
+      require_all_accounts_observed: true
     preconditions:
       - Three disposable local decoy accounts exist and contain no real data.
       - The test remains inside the isolated Windows lab VM.
@@ -119,6 +155,11 @@ scenarios:
     expected_behavior: Five controlled invalid attempts followed by one successful logon to simulate account compromise.
     attribution:
       account_names: [datn_attack]
+    quality_gates:
+      min_account_failures: 5
+      max_account_failures: 5
+      min_account_successes: 1
+      require_success_after_failure: true
     preconditions:
       - The disposable local account datn_attack exists and its correct password is available.
       - The lockout policy safely permits five failed attempts.
@@ -138,6 +179,11 @@ scenarios:
       destination_ips: [10.40.0.10]
       destination_ports: [8080]
       command_contains_any: [/health]
+    quality_gates:
+      min_process_events: 5
+      min_network_events: 5
+      min_suricata_events: 5
+      forbidden_suricata_signature_ids: [900001, 900002]
     preconditions:
       - Kali serves the benign web root on 10.40.0.10 port 8080.
       - Traffic from 10.20.0.10 to 10.40.0.10 is routed through NET-SENSOR.
@@ -157,6 +203,11 @@ scenarios:
       destination_ips: [10.40.0.10]
       destination_ports: [8080]
       command_contains_any: [/payload-benign.txt]
+    quality_gates:
+      min_process_events: 1
+      min_network_events: 1
+      min_suricata_events: 1
+      forbidden_suricata_signature_ids: [900001, 900002]
     preconditions:
       - Kali serves payload-benign.txt on 10.40.0.10 port 8080.
       - The file contains only a fixed harmless marker string.
@@ -176,6 +227,11 @@ scenarios:
       destination_ips: [10.40.0.10]
       destination_ports: [8080]
       command_contains_any: [/api/status]
+    quality_gates:
+      min_process_events: 4
+      min_network_events: 4
+      min_suricata_events: 4
+      forbidden_suricata_signature_ids: [900001, 900002]
     preconditions:
       - Kali serves the benign web root on 10.40.0.10 port 8080.
       - NET-SENSOR is recording EVE flow and HTTP events.
@@ -194,13 +250,17 @@ scenarios:
       process_names: [powershell.exe, pwsh.exe]
       dns_suffixes: [www.datn.test]
       command_contains_any: [www.datn.test]
+    quality_gates:
+      min_dns_events: 4
+      min_suricata_events: 4
+      required_suricata_signature_ids: [900004]
     preconditions:
       - Kali dnsmasq answers www.datn.test on 10.40.0.10.
       - Windows can route UDP and TCP port 53 through NET-SENSOR.
     execution_steps:
-      - Run Resolve-DnsName www.datn.test -Server 10.40.0.10 four times with irregular pauses.
+      - Query b01 through b04.www.datn.test through 10.40.0.10 with irregular pauses.
     expected_observables:
-      - Sysmon event 22 and matching Suricata DNS records only for www.datn.test.
+      - Four Sysmon event 22 and matching Suricata DNS records, including local benign-canary SID 900004.
     cleanup_steps:
       - Clear only the lab DNS cache with Clear-DnsClientCache if needed.
 
@@ -213,6 +273,11 @@ scenarios:
       destination_ips: [10.40.0.10]
       destination_ports: [8081]
       command_contains_any: [/beacon]
+    quality_gates:
+      min_process_events: 8
+      min_network_events: 8
+      min_suricata_events: 8
+      required_suricata_signature_ids: [900001]
     preconditions:
       - Kali serves the isolated beacon web root on 10.40.0.10 port 8081.
       - The custom Suricata HTTP beacon rule is loaded.
@@ -232,6 +297,11 @@ scenarios:
       destination_ips: [10.40.0.10]
       destination_ports: [8081]
       command_contains_any: [/beacon]
+    quality_gates:
+      min_process_events: 8
+      min_network_events: 8
+      min_suricata_events: 8
+      required_suricata_signature_ids: [900001]
     preconditions:
       - Kali serves the isolated beacon web root on 10.40.0.10 port 8081.
       - The custom Suricata HTTP beacon rule is loaded.
@@ -250,6 +320,10 @@ scenarios:
       process_names: [powershell.exe, pwsh.exe]
       dns_suffixes: [beacon.datn.test]
       command_contains_any: [beacon.datn.test]
+    quality_gates:
+      min_dns_events: 8
+      min_suricata_events: 8
+      required_suricata_signature_ids: [900002]
     preconditions:
       - Kali dnsmasq answers the beacon.datn.test lab zone on 10.40.0.10.
       - The custom Suricata DNS beacon rule is loaded.
@@ -269,12 +343,17 @@ scenarios:
       destination_ips: [10.40.0.10]
       destination_ports: [9001]
       command_contains_any: [/stage.bin]
+    quality_gates:
+      min_process_events: 1
+      min_network_events: 1
+      min_suricata_events: 1
+      forbidden_suricata_signature_ids: [900001, 900002, 900004]
     preconditions:
       - Kali serves a harmless fixed stage.bin marker file on 10.40.0.10 port 9001.
-      - The custom Suricata staged-transfer rule is loaded.
+      - No custom Suricata signature targets stage.bin; only flow or HTTP telemetry is expected.
     execution_steps:
       - Download http://10.40.0.10:9001/stage.bin to $env:TEMP\\stage.bin once with curl.exe.
     expected_observables:
-      - Sysmon process/network evidence, Suricata HTTP or flow evidence and a local alert.
+      - Sysmon process/network evidence and Suricata HTTP or flow evidence without a DATN local alert.
     cleanup_steps:
       - Delete $env:TEMP\\stage.bin and verify no executable content was introduced.

@@ -67,6 +67,7 @@ def write_draft(
     family: str,
     label: str,
     attribution: dict,
+    quality_gates: dict | None = None,
 ) -> Path:
     draft = tmp_path / f"{run_id}.yaml"
     draft.write_text(
@@ -80,6 +81,15 @@ def write_draft(
                 "expected_behavior": "Controlled lab behavior.",
                 "operator": "Kien",
                 "attribution": attribution,
+                "quality_gates": quality_gates
+                or {
+                    "min_account_failures": 0,
+                    "min_account_successes": 0,
+                    "min_process_events": 0,
+                    "min_network_events": 0,
+                    "min_dns_events": 0,
+                    "min_suricata_events": 0,
+                },
             },
             sort_keys=False,
         ),
@@ -387,3 +397,181 @@ def test_finalize_fails_if_declared_execution_log_is_missing(tmp_path: Path) -> 
             tmp_path,
             now=started + timedelta(seconds=20),
         )
+
+
+def test_account_finalize_rejects_run_below_declared_event_counts(tmp_path: Path) -> None:
+    config = source_config(tmp_path)
+    draft = write_draft(
+        tmp_path,
+        run_id="ACCOUNT-MALICIOUS-QUALITY-001",
+        family="account",
+        label="malicious",
+        attribution={"account_names": ["testuser"]},
+        quality_gates={
+            "min_account_failures": 6,
+            "max_account_failures": 6,
+            "min_account_successes": 0,
+            "max_account_successes": 0,
+        },
+    )
+    started = datetime(2026, 10, 16, 7, 0, tzinfo=UTC)
+    start_run(draft, config, tmp_path, now=started)
+    append_jsonl(
+        tmp_path / "archives.json",
+        [windows_event(4625, started + timedelta(seconds=5), {"targetUserName": "testuser"})],
+    )
+
+    with pytest.raises(CollectionError, match="account failure count"):
+        finalize_run(
+            "ACCOUNT-MALICIOUS-QUALITY-001",
+            tmp_path,
+            now=started + timedelta(seconds=20),
+        )
+
+
+def test_account_finalize_requires_every_declared_spray_account(tmp_path: Path) -> None:
+    config = source_config(tmp_path)
+    draft = write_draft(
+        tmp_path,
+        run_id="ACCOUNT-MALICIOUS-SPRAY-QUALITY-001",
+        family="account",
+        label="malicious",
+        attribution={"account_names": ["spray01", "spray02", "spray03"]},
+        quality_gates={
+            "min_account_failures": 3,
+            "max_account_failures": 3,
+            "min_account_successes": 0,
+            "max_account_successes": 0,
+            "require_all_accounts_observed": True,
+        },
+    )
+    started = datetime(2026, 10, 16, 8, 0, tzinfo=UTC)
+    start_run(draft, config, tmp_path, now=started)
+    append_jsonl(
+        tmp_path / "archives.json",
+        [
+            windows_event(4625, started + timedelta(seconds=5), {"targetUserName": "spray01"}),
+            windows_event(4625, started + timedelta(seconds=6), {"targetUserName": "spray01"}),
+            windows_event(4625, started + timedelta(seconds=7), {"targetUserName": "spray02"}),
+        ],
+    )
+
+    with pytest.raises(CollectionError, match="missing declared accounts"):
+        finalize_run(
+            "ACCOUNT-MALICIOUS-SPRAY-QUALITY-001",
+            tmp_path,
+            now=started + timedelta(seconds=20),
+        )
+
+
+def test_c2_finalize_rejects_run_below_declared_network_count(tmp_path: Path) -> None:
+    config = source_config(tmp_path)
+    draft = write_draft(
+        tmp_path,
+        run_id="C2-MALICIOUS-QUALITY-001",
+        family="c2",
+        label="malicious",
+        attribution={
+            "process_names": ["curl.exe"],
+            "destination_ips": ["10.40.0.10"],
+            "destination_ports": [8081],
+        },
+        quality_gates={
+            "min_network_events": 8,
+            "min_suricata_events": 8,
+            "required_suricata_signature_ids": [900001],
+        },
+    )
+    started = datetime(2026, 10, 16, 9, 0, tzinfo=UTC)
+    start_run(draft, config, tmp_path, now=started)
+    append_jsonl(
+        tmp_path / "archives.json",
+        [
+            windows_event(
+                3,
+                started + timedelta(seconds=5),
+                {
+                    "image": r"C:\Windows\System32\curl.exe",
+                    "initiated": "true",
+                    "destinationIp": "10.40.0.10",
+                    "destinationPort": "8081",
+                },
+            ),
+            suricata_event(
+                started + timedelta(seconds=6),
+                {
+                    "event_type": "alert",
+                    "src_ip": "10.20.0.10",
+                    "dest_ip": "10.40.0.10",
+                    "dest_port": 8081,
+                    "alert": {"signature_id": 900001},
+                },
+            ),
+        ],
+    )
+
+    with pytest.raises(CollectionError, match="network event count"):
+        finalize_run(
+            "C2-MALICIOUS-QUALITY-001",
+            tmp_path,
+            now=started + timedelta(seconds=20),
+        )
+
+
+def test_start_rejects_archive_cursor_that_is_not_on_a_line_boundary(tmp_path: Path) -> None:
+    config = source_config(tmp_path)
+    (tmp_path / "archives.json").write_text('{"partial":true}', encoding="utf-8")
+    draft = write_draft(
+        tmp_path,
+        run_id="ACCOUNT-BENIGN-CURSOR-001",
+        family="account",
+        label="benign",
+        attribution={"account_names": ["labuser"]},
+    )
+
+    with pytest.raises(CollectionError, match="complete newline"):
+        start_run(
+            draft,
+            config,
+            tmp_path,
+            now=datetime(2026, 10, 16, 10, 0, tzinfo=UTC),
+        )
+
+
+def test_finalize_rejects_incomplete_archive_tail_and_allows_retry(tmp_path: Path) -> None:
+    config = source_config(tmp_path)
+    draft = write_draft(
+        tmp_path,
+        run_id="ACCOUNT-BENIGN-CURSOR-002",
+        family="account",
+        label="benign",
+        attribution={"account_names": ["labuser"]},
+    )
+    started = datetime(2026, 10, 16, 11, 0, tzinfo=UTC)
+    start_run(draft, config, tmp_path, now=started)
+    event = windows_event(
+        4624,
+        started + timedelta(seconds=5),
+        {"targetUserName": "labuser"},
+    )
+    encoded = json.dumps(event)
+    split = len(encoded) // 2
+    archive = tmp_path / "archives.json"
+    with archive.open("a", encoding="utf-8") as handle:
+        handle.write(encoded[:split])
+
+    with pytest.raises(CollectionError, match="incomplete final JSON line"):
+        finalize_run(
+            "ACCOUNT-BENIGN-CURSOR-002",
+            tmp_path,
+            now=started + timedelta(seconds=10),
+        )
+
+    with archive.open("a", encoding="utf-8") as handle:
+        handle.write(encoded[split:] + "\n")
+    result = finalize_run(
+        "ACCOUNT-BENIGN-CURSOR-002",
+        tmp_path,
+        now=started + timedelta(seconds=20),
+    )
+    assert result["status"] == "FINALIZED"

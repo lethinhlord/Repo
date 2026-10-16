@@ -52,6 +52,50 @@ class Attribution(BaseModel):
         return self
 
 
+class QualityGates(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    min_account_failures: int = Field(default=0, ge=0)
+    max_account_failures: int | None = Field(default=None, ge=0)
+    min_account_successes: int = Field(default=0, ge=0)
+    max_account_successes: int | None = Field(default=None, ge=0)
+    require_success_after_failure: bool | None = None
+    require_all_accounts_observed: bool = False
+    min_process_events: int = Field(default=0, ge=0)
+    min_network_events: int = Field(default=0, ge=0)
+    min_dns_events: int = Field(default=0, ge=0)
+    min_suricata_events: int = Field(default=0, ge=0)
+    required_suricata_signature_ids: list[int] = Field(default_factory=list)
+    forbidden_suricata_signature_ids: list[int] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_ranges_and_signatures(self) -> QualityGates:
+        ranges = (
+            (
+                "account failures",
+                self.min_account_failures,
+                self.max_account_failures,
+            ),
+            (
+                "account successes",
+                self.min_account_successes,
+                self.max_account_successes,
+            ),
+        )
+        for name, minimum, maximum in ranges:
+            if maximum is not None and maximum < minimum:
+                raise ValueError(f"maximum {name} must be greater than or equal to minimum")
+        required = set(self.required_suricata_signature_ids)
+        forbidden = set(self.forbidden_suricata_signature_ids)
+        if required & forbidden:
+            raise ValueError("a Suricata signature cannot be both required and forbidden")
+        if len(required) != len(self.required_suricata_signature_ids):
+            raise ValueError("required Suricata signature IDs must be unique")
+        if len(forbidden) != len(self.forbidden_suricata_signature_ids):
+            raise ValueError("forbidden Suricata signature IDs must be unique")
+        return self
+
+
 class RunDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -63,6 +107,7 @@ class RunDraft(BaseModel):
     expected_behavior: str = Field(min_length=1)
     operator: str = Field(min_length=1, max_length=128)
     attribution: Attribution
+    quality_gates: QualityGates
     execution_log_path: str | None = None
 
     @model_validator(mode="after")
@@ -96,6 +141,7 @@ class ScenarioDefinition(BaseModel):
     label: Literal["benign", "malicious"]
     expected_behavior: str = Field(min_length=1)
     attribution: Attribution
+    quality_gates: QualityGates
     preconditions: list[str] = Field(min_length=1)
     execution_steps: list[str] = Field(min_length=1)
     expected_observables: list[str] = Field(min_length=1)
@@ -207,6 +253,7 @@ def create_run_draft(
             expected_behavior=scenario.expected_behavior,
             operator=operator,
             attribution=scenario.attribution,
+            quality_gates=scenario.quality_gates,
             execution_log_path=execution_log_path,
         )
     except ValueError as exc:
@@ -233,10 +280,19 @@ def _sha256(path: Path) -> str:
 
 
 def _cursor(path: Path) -> dict[str, int | str]:
-    stat = path.stat()
+    with path.open("rb") as handle:
+        size = handle.seek(0, 2)
+        if size:
+            handle.seek(size - 1)
+            if handle.read(1) != b"\n":
+                raise CollectionError(
+                    "Wazuh Archives does not end with a complete newline; wait for the "
+                    "current write to finish and retry start"
+                )
+        stat = path.stat()
     return {
         "path": str(path),
-        "size": stat.st_size,
+        "size": size,
         "device": stat.st_dev,
         "inode": stat.st_ino,
     }
@@ -313,6 +369,11 @@ def _read_appended_jsonl(cursor: dict[str, Any]) -> list[dict[str, Any]]:
         payload = handle.read()
     if not payload:
         raise CollectionError("no Wazuh Archive bytes were appended during the run")
+    if not payload.endswith(b"\n"):
+        raise CollectionError(
+            "Wazuh Archives has an incomplete final JSON line; wait for the write to "
+            "finish and retry finalize"
+        )
     try:
         text = payload.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -480,6 +541,7 @@ def _derive_account(
     selected: list[dict[str, Any]] = []
     failures: list[datetime] = []
     successes: list[datetime] = []
+    observed_accounts: set[str] = set()
     for event in events:
         if str((event.get("agent") or {}).get("name")) != windows_agent:
             continue
@@ -490,10 +552,45 @@ def _derive_account(
         if timestamp is None:
             continue
         selected.append(event)
+        observed_accounts.add(_account_user(eventdata))
         (failures if event_id == "4625" else successes).append(timestamp)
     if not selected:
         raise CollectionError("no attributable Windows account events were collected")
     success_after_fail = any(success > failure for failure in failures for success in successes)
+    gates = draft.quality_gates
+    if len(failures) < gates.min_account_failures or (
+        gates.max_account_failures is not None
+        and len(failures) > gates.max_account_failures
+    ):
+        raise CollectionError(
+            "account failure count failed quality gate: "
+            f"observed={len(failures)}, expected="
+            f"[{gates.min_account_failures}, {gates.max_account_failures}]"
+        )
+    if len(successes) < gates.min_account_successes or (
+        gates.max_account_successes is not None
+        and len(successes) > gates.max_account_successes
+    ):
+        raise CollectionError(
+            "account success count failed quality gate: "
+            f"observed={len(successes)}, expected="
+            f"[{gates.min_account_successes}, {gates.max_account_successes}]"
+        )
+    if (
+        gates.require_success_after_failure is not None
+        and success_after_fail != gates.require_success_after_failure
+    ):
+        raise CollectionError(
+            "success-after-failure sequence failed quality gate: "
+            f"observed={success_after_fail}, "
+            f"expected={gates.require_success_after_failure}"
+        )
+    if gates.require_all_accounts_observed:
+        missing_accounts = sorted(users - observed_accounts)
+        if missing_accounts:
+            raise CollectionError(
+                f"account evidence is missing declared accounts: {missing_accounts}"
+            )
     features = {name: 0.0 for name in FEATURE_ORDER}
     features["failed_login_count"] = float(len(failures))
     features["success_after_fail"] = float(success_after_fail)
@@ -505,6 +602,8 @@ def _derive_c2(
 ) -> tuple[dict[str, float], list[dict[str, Any]], list[dict[str, Any]], str | None]:
     windows: list[dict[str, Any]] = []
     network_times: list[datetime] = []
+    process_events = 0
+    dns_events = 0
     ports: set[int] = set()
     suspicious = False
     for event in events:
@@ -519,6 +618,7 @@ def _derive_c2(
             )
         ):
             windows.append(event)
+            process_events += 1
             suspicious = suspicious or _taxonomy_match(eventdata, taxonomy)
         elif event_id == "3" and _matches_network(eventdata, draft.attribution):
             timestamp = _event_time(event)
@@ -531,6 +631,7 @@ def _derive_c2(
             suspicious = suspicious or _taxonomy_match(eventdata, taxonomy)
         elif event_id == "22" and _matches_dns(eventdata, draft.attribution):
             windows.append(event)
+            dns_events += 1
             suspicious = suspicious or _taxonomy_match(eventdata, taxonomy)
     if not network_times and not any(_windows_fields(event)[0] == "22" for event in windows):
         raise CollectionError("no attributable Sysmon network or DNS telemetry was collected")
@@ -538,6 +639,7 @@ def _derive_c2(
     suricata: list[dict[str, Any]] = []
     seen: set[str] = set()
     alerts = 0
+    signature_ids: set[int] = set()
     for event in events:
         if str((event.get("agent") or {}).get("name")) != source.suricata_agent_name:
             continue
@@ -552,8 +654,44 @@ def _derive_c2(
         suricata.append(payload)
         if payload.get("event_type") == "alert":
             alerts += 1
+            with suppress(TypeError, ValueError):
+                signature_ids.add(int((payload.get("alert") or {}).get("signature_id")))
     if not suricata:
         raise CollectionError("no attributable Suricata EVE evidence was collected")
+
+    gates = draft.quality_gates
+    observed_counts = {
+        "process": process_events,
+        "network": len(network_times),
+        "DNS": dns_events,
+        "Suricata": len(suricata),
+    }
+    minimum_counts = {
+        "process": gates.min_process_events,
+        "network": gates.min_network_events,
+        "DNS": gates.min_dns_events,
+        "Suricata": gates.min_suricata_events,
+    }
+    for name, minimum in minimum_counts.items():
+        if observed_counts[name] < minimum:
+            raise CollectionError(
+                f"{name} event count failed quality gate: "
+                f"observed={observed_counts[name]}, minimum={minimum}"
+            )
+    missing_signatures = sorted(
+        set(gates.required_suricata_signature_ids) - signature_ids
+    )
+    if missing_signatures:
+        raise CollectionError(
+            f"required Suricata signatures were not observed: {missing_signatures}"
+        )
+    forbidden_signatures = sorted(
+        set(gates.forbidden_suricata_signature_ids) & signature_ids
+    )
+    if forbidden_signatures:
+        raise CollectionError(
+            f"forbidden Suricata signatures were observed: {forbidden_signatures}"
+        )
 
     features = {name: 0.0 for name in FEATURE_ORDER}
     features.update(

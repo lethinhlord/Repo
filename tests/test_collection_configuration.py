@@ -56,7 +56,8 @@ def test_suricata_lab_rules_use_unique_local_signature_ids() -> None:
     assert len(lines) == 3
     assert sum("sid:900001" in line for line in lines) == 1
     assert sum("sid:900002" in line for line in lines) == 1
-    assert sum("sid:900003" in line for line in lines) == 1
+    assert sum("sid:900004" in line for line in lines) == 1
+    assert not any("sid:900003" in line for line in lines)
 
 
 def test_scenario_catalog_covers_four_strata_with_four_scenarios_each() -> None:
@@ -80,6 +81,36 @@ def test_scenario_catalog_covers_four_strata_with_four_scenarios_each() -> None:
     assert all(len(set(ids)) == 4 for ids in strata.values())
 
 
+def test_scenario_catalog_has_enforceable_quality_gates_and_alert_overlap() -> None:
+    catalog = ScenarioCatalog.model_validate(
+        yaml.safe_load(
+            (PROJECT_ROOT / "config/scenario-catalog.yaml").read_text(encoding="utf-8")
+        )
+    )
+
+    for scenario in catalog.scenarios:
+        gates = scenario.quality_gates
+        if scenario.family == "account":
+            assert (
+                gates.min_account_failures > 0
+                or gates.min_account_successes > 0
+            )
+        else:
+            assert gates.min_suricata_events > 0
+            assert gates.min_network_events > 0 or gates.min_dns_events > 0
+
+    benign_c2 = [
+        item for item in catalog.scenarios if item.family == "c2" and item.label == "benign"
+    ]
+    malicious_c2 = [
+        item
+        for item in catalog.scenarios
+        if item.family == "c2" and item.label == "malicious"
+    ]
+    assert any(item.quality_gates.required_suricata_signature_ids for item in benign_c2)
+    assert any(not item.quality_gates.required_suricata_signature_ids for item in malicious_c2)
+
+
 def test_create_run_draft_uses_catalog_without_copying_execution_commands(
     tmp_path: Path,
 ) -> None:
@@ -97,6 +128,8 @@ def test_create_run_draft_uses_catalog_without_copying_execution_commands(
     assert result["status"] == "CREATED"
     assert draft.attribution.destination_ips == ["10.40.0.10"]
     assert draft.attribution.destination_ports == [8081]
+    assert draft.quality_gates.min_network_events == 8
+    assert draft.quality_gates.required_suricata_signature_ids == [900001]
     assert "execution_steps" not in serialized
 
 
