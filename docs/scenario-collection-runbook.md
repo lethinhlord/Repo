@@ -1,6 +1,6 @@
 # QUY TRÌNH CHUẨN THU THẬP DỮ LIỆU TRAIN TRÊN LAB 4 VM
 
-Phiên bản: 1.0 — 16/10/2026
+Phiên bản: 1.1 — 16/10/2026
 Phạm vi: dữ liệu `account-benign`, `account-malicious`, `c2-benign`,
 `c2-malicious` cho nhánh `feature/week3-model-training`.
 
@@ -215,24 +215,42 @@ sudo ufw status verbose
 
 ### 5.3 Kali
 
-Thay `eth1` bằng NIC VMnet2 thực tế:
+Thay `eth1` bằng NIC VMnet2 thực tế. Khối dưới có thể chạy lại: nếu profile đã tồn
+tại thì chỉ cập nhật, không tạo profile trùng.
 
 ```bash
-sudo nmcli connection add type ethernet ifname eth1 con-name ATTACK-LAB \
-  ipv4.method manual ipv4.addresses 10.40.0.10/24 \
-  ipv4.routes "10.20.0.0/24 10.40.0.1" ipv6.method disabled
+DATA_IF=eth1
+if nmcli -t -f NAME connection show | grep -qx 'ATTACK-LAB'; then
+  sudo nmcli connection modify ATTACK-LAB \
+    connection.interface-name "$DATA_IF" ipv4.method manual \
+    ipv4.addresses 10.40.0.10/24 \
+    ipv4.routes "10.20.0.0/24 10.40.0.1" ipv6.method disabled
+else
+  sudo nmcli connection add type ethernet ifname "$DATA_IF" con-name ATTACK-LAB \
+    ipv4.method manual ipv4.addresses 10.40.0.10/24 \
+    ipv4.routes "10.20.0.0/24 10.40.0.1" ipv6.method disabled
+fi
 sudo nmcli connection up ATTACK-LAB
 ip route get 10.20.0.10
 ```
 
 ### 5.4 Windows 11
 
-Thay `Ethernet 2` bằng NIC VMnet3 thực tế:
+Thay `Ethernet 2` bằng NIC VMnet3 thực tế. Khối dưới kiểm tra trạng thái trước để
+không tạo IP/route trùng khi chạy lại:
 
 ```powershell
-New-NetIPAddress -InterfaceAlias "Ethernet 2" -IPAddress 10.20.0.10 -PrefixLength 24
-New-NetRoute -DestinationPrefix 10.40.0.0/24 -InterfaceAlias "Ethernet 2" `
-  -NextHop 10.20.0.1 -PolicyStore PersistentStore
+$DataIf = "Ethernet 2"
+if (-not (Get-NetIPAddress -InterfaceAlias $DataIf -AddressFamily IPv4 `
+  -ErrorAction SilentlyContinue | Where-Object IPAddress -eq "10.20.0.10")) {
+  New-NetIPAddress -InterfaceAlias $DataIf -IPAddress 10.20.0.10 -PrefixLength 24
+}
+if (-not (Get-NetRoute -DestinationPrefix "10.40.0.0/24" `
+  -InterfaceAlias $DataIf -ErrorAction SilentlyContinue | `
+  Where-Object NextHop -eq "10.20.0.1")) {
+  New-NetRoute -DestinationPrefix 10.40.0.0/24 -InterfaceAlias $DataIf `
+    -NextHop 10.20.0.1 -PolicyStore PersistentStore
+}
 Get-NetRoute -DestinationPrefix 10.40.0.0/24
 Test-NetConnection 10.40.0.10
 tracert -d 10.40.0.10
@@ -377,12 +395,23 @@ dùng ít attempt hơn và ghi lại biến thể; sau thí nghiệm phải khô
 
 ### 7.2 Sysmon
 
-Từ SOC-AI chuyển config vào Windows:
+PowerShell phải chạy bằng quyền Administrator. Xác nhận/cài OpenSSH Client theo đúng
+Windows Capability trước khi dùng `scp`, sau đó nhập user SSH thực tế của SOC-AI.
+Không ghi mật khẩu vào biến hoặc tài liệu:
 
 ```powershell
+$sshClient = Get-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
+if ($sshClient.State -ne "Installed") {
+  Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
+}
+ssh -V
+$SocUser = Read-Host "SOC-AI SSH username"
+$SocHome = ssh "${SocUser}@192.168.58.147" 'printf %s "$HOME"'
+if ($LASTEXITCODE -ne 0 -or -not $SocHome) { throw "Cannot resolve SOC-AI HOME" }
+$SocRepo = "$SocHome/datn-ai-soar"
 New-Item -ItemType Directory -Force C:\DATN | Out-Null
-scp lethinh@192.168.58.147:/home/lethinh/datn-ai-soar/config/sysmon-datn.xml C:\DATN\
-scp lethinh@192.168.58.147:/home/lethinh/datn-ai-soar/config/wazuh-windows-localfile.xml C:\DATN\
+scp "${SocUser}@192.168.58.147:${SocRepo}/config/sysmon-datn.xml" C:\DATN\
+scp "${SocUser}@192.168.58.147:${SocRepo}/config/wazuh-windows-localfile.xml" C:\DATN\
 Invoke-WebRequest https://download.sysinternals.com/files/Sysmon.zip `
   -OutFile C:\DATN\Sysmon.zip
 Expand-Archive C:\DATN\Sysmon.zip C:\DATN\Sysmon -Force
@@ -510,7 +539,10 @@ rule-files:
 Chuyển rule từ SOC-AI:
 
 ```bash
-scp lethinh@192.168.58.147:/home/lethinh/datn-ai-soar/config/suricata-datn.rules /tmp/
+read -rp 'SOC-AI SSH username: ' SOC_USER
+SOC_HOME=$(ssh "${SOC_USER}@192.168.58.147" 'printf %s "$HOME"') || exit 1
+SOC_REPO="$SOC_HOME/datn-ai-soar"
+scp "${SOC_USER}@192.168.58.147:${SOC_REPO}/config/suricata-datn.rules" /tmp/
 sudo install -m 0644 /tmp/suricata-datn.rules /etc/suricata/rules/datn.rules
 sudo suricata -T -c /etc/suricata/suricata.yaml
 sudo systemctl enable --now suricata
@@ -542,7 +574,10 @@ Sao lưu `/var/ossec/etc/ossec.conf`, đếm location EVE và chỉ chèn block 
 bằng đúng 1. Cho Wazuh đọc được EVE hiện tại và file tạo sau rotate:
 
 ```bash
-scp lethinh@192.168.58.147:/home/lethinh/datn-ai-soar/config/wazuh-suricata-localfile.xml /tmp/
+read -rp 'SOC-AI SSH username: ' SOC_USER
+SOC_HOME=$(ssh "${SOC_USER}@192.168.58.147" 'printf %s "$HOME"') || exit 1
+SOC_REPO="$SOC_HOME/datn-ai-soar"
+scp "${SOC_USER}@192.168.58.147:${SOC_REPO}/config/wazuh-suricata-localfile.xml" /tmp/
 sudo cp -a /var/ossec/etc/ossec.conf \
   "/var/ossec/etc/ossec.conf.bak.$(date -u +%Y%m%dT%H%M%SZ)"
 sudo grep -cF '<location>/var/log/suricata/eve.json</location>' \
@@ -608,12 +643,15 @@ interface=eth1
 listen-address=10.40.0.10
 bind-interfaces
 no-resolv
-server=1.1.1.1
+domain-needed
+bogus-priv
+local=/datn.test/
 address=/www.datn.test/10.40.0.10
 address=/beacon.datn.test/10.40.0.10
 ```
 
-Thay `eth1` đúng NIC VMnet2, rồi:
+Thay `eth1` đúng NIC VMnet2. Cấu hình cố ý **không có DNS upstream**: hai tên lab
+được trả lời cục bộ, các truy vấn khác thất bại thay vì thoát ra Internet. Sau đó:
 
 ```bash
 sudo dnsmasq --test
@@ -633,7 +671,7 @@ sudo test -s /var/ossec/logs/archives/archives.json
 df -h /var/ossec
 free -h
 timedatectl show -p NTPSynchronized --value
-cd /home/lethinh/datn-ai-soar
+cd "$HOME/datn-ai-soar"
 git status --short
 .venv-ml/bin/python -m scripts.scenario_session --help
 .venv-ml/bin/python -m scripts.audit_dataset --help
@@ -668,9 +706,45 @@ timedatectl show -p NTPSynchronized --value
 ```
 
 Ba máy Linux phải trả về `yes` cho `NTPSynchronized`; Windows phải resync thành công và
-không dùng `Local CMOS Clock` làm source. Nếu một lệnh không đạt, không bắt đầu run.
-Ghi lỗi, sửa, chạy lại toàn bộ preflight. Nếu SOC-AI còn dưới 2 GB RAM available hoặc
-filesystem `/var/ossec` còn dưới 10 GB, dừng Docker/n8n/API hoặc tăng tài nguyên trước.
+không dùng `Local CMOS Clock` làm source. Chấp nhận host key SSH và xác nhận đăng nhập
+giữa các máy **trước** cửa sổ thu. Trên SOC-AI, đo độ lệch NET-SENSOR và Kali so với
+SOC-AI; nhập đúng user SSH của từng máy:
+
+```bash
+MAX_CLOCK_SKEW_SECONDS=5
+read -rp 'NET-SENSOR SSH username: ' SENSOR_USER
+read -rp 'Kali SSH username: ' KALI_USER
+for ENDPOINT in "${SENSOR_USER}@192.168.58.150" "${KALI_USER}@192.168.58.132"; do
+  LOCAL_EPOCH=$(date -u +%s)
+  REMOTE_EPOCH=$(ssh -o ConnectTimeout=5 "$ENDPOINT" 'date -u +%s') || {
+    echo "FAIL: cannot read clock from $ENDPOINT" >&2
+    exit 1
+  }
+  SKEW=$((LOCAL_EPOCH - REMOTE_EPOCH))
+  SKEW=${SKEW#-}
+  printf '%s clock_skew_seconds=%s\n' "$ENDPOINT" "$SKEW"
+  test "$SKEW" -le "$MAX_CLOCK_SKEW_SECONDS" || exit 1
+done
+```
+
+Trên Windows, đo Windows so với SOC-AI:
+
+```powershell
+$SocUser = Read-Host "SOC-AI SSH username"
+$MaxClockSkewSeconds = 5
+$SocEpochText = ssh "${SocUser}@192.168.58.147" "date -u +%s"
+if ($LASTEXITCODE -ne 0) { throw "Cannot read SOC-AI clock" }
+$SocEpoch = [int64]($SocEpochText | Select-Object -Last 1)
+$WindowsEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+$ClockSkew = [Math]::Abs($WindowsEpoch - $SocEpoch)
+"SOC-AI/Windows clock_skew_seconds=$ClockSkew"
+if ($ClockSkew -gt $MaxClockSkewSeconds) { throw "Clock skew exceeds 5 seconds" }
+```
+
+Tất cả độ lệch phải `<= 5` giây. Nếu một lệnh hoặc cổng thời gian không đạt, không bắt
+đầu run. Ghi lỗi, sửa, rồi chạy lại toàn bộ preflight. Nếu SOC-AI còn dưới 2 GB RAM
+available hoặc filesystem `/var/ossec` còn dưới 10 GB, dừng Docker/n8n/API hoặc tăng
+tài nguyên trước.
 
 ## 11. Quy trình chuẩn cho MỖI run
 
@@ -687,7 +761,7 @@ Quy ước ID:
 Ví dụ trên SOC-AI:
 
 ```bash
-cd /home/lethinh/datn-ai-soar
+cd "$HOME/datn-ai-soar"
 date -u --iso-8601=seconds
 timedatectl show -p NTPSynchronized --value
 RUN_ID=C2-MALICIOUS-HTTP-BEACON-R01-20261016
@@ -698,9 +772,9 @@ RUN_ID=C2-MALICIOUS-HTTP-BEACON-R01-20261016
 sed -n '1,120p' "run-drafts/$RUN_ID.yaml"
 ```
 
-Ngay trước khi tạo draft, ghi lại UTC và trạng thái đồng bộ trên bốn VM (Windows dùng
-`(Get-Date).ToUniversalTime().ToString("o")` và `w32tm /query /status`). Nếu đồng hồ lệch thấy rõ hoặc nguồn thời
-gian lỗi, không start. Metadata và event window phụ thuộc trực tiếp vào điều kiện này.
+Ngay trước khi tạo draft, lưu output của kiểm tra độ lệch định lượng ở mục 10. Không
+start nếu bất kỳ máy nào lệch quá 5 giây hoặc nguồn thời gian lỗi. Metadata và event
+window phụ thuộc trực tiếp vào điều kiện này.
 
 Không sửa `family` hoặc `label` sau khi chạy. Nếu chọn sai, chưa start thì xóa draft và
 tạo lại; đã start thì dùng lệnh `abort`, không tái sử dụng `run_id`.
@@ -747,6 +821,13 @@ sudo tail -n 20 /var/ossec/logs/archives/archives.json | jq -c \
 Collector chỉ nhận log nằm trong cửa sổ, đúng agent và đúng account/process/IP/port/DNS
 đã khai báo. C2 bắt buộc có cả Sysmon network/DNS và Suricata. Thiếu một nguồn thì
 finalize lỗi và không tạo mẫu cuối.
+
+Nếu lỗi chỉ cho biết log đang đến chậm (`no Wazuh Archive bytes`, dòng JSON chưa hoàn
+chỉnh, hoặc chưa thấy nguồn dự kiến), giữ nguyên run ở trạng thái `STARTED`, không tạo
+thêm traffic và không bắt đầu run khác. Chờ 30 giây rồi **retry finalize** cùng `RUN_ID`;
+có thể lặp tối đa ba lần, tức tối đa 180 giây tính từ lúc kết thúc hoạt động. Nếu vẫn
+không đạt, dùng `abort`, sửa pipeline và thu lại với ID mới. Các lỗi attribution sai,
+checksum, rotate/truncate hoặc quality gate sai không được retry để hợp thức hóa dữ liệu.
 
 ### Bước 6 — Validate run
 
@@ -947,7 +1028,7 @@ Mỗi lần lặp phải là thực thi mới, không copy thư mục run cũ.
 Mốc 10 run/nhóm:
 
 ```bash
-cd /home/lethinh/datn-ai-soar
+cd "$HOME/datn-ai-soar"
 chmod +x scripts/verify_collection_dataset.sh
 ./scripts/verify_collection_dataset.sh
 ```
@@ -959,6 +1040,11 @@ REQUIRE_TARGET=1 ./scripts/verify_collection_dataset.sh
 ```
 
 Phải báo `TARGET_MET`, 48 valid run, 0 invalid. Sau đó mới build:
+
+Collector vẫn lưu `suspicious_process` để truy vết telemetry, nhưng schema chủ động loại
+feature này khỏi model C2 vì taxonomy chứa chính chuỗi lệnh của scenario và có thể làm
+lộ nhãn. Auditor đồng thời từ chối bất kỳ feature model nào có khoảng giá trị benign và
+malicious tách rời hoàn toàn trong cùng family. Không bỏ qua cổng này để ép train.
 
 ```bash
 .venv-ml/bin/python -m ml.build_dataset --config ml/training_config.yaml
@@ -992,25 +1078,89 @@ Không đổi tên file hoặc tạo thêm tầng `processed/processed`. Noteboo
 thiếu file, checksum sai, `group_key` không phải `scenario_id`, scenario xuất hiện ở cả
 TRAIN và VALIDATION, hoặc phát hiện `locked_test.jsonl`.
 
-## 15. Xử lý lỗi
+## 15. Sao lưu và bàn giao dữ liệu gốc
+
+`data/raw/` và `evidence/scenario-runs/` bị Git bỏ qua có chủ đích; `git push` **không
+phải bản sao lưu dataset**. Sau mỗi bốn run hợp lệ và cuối mỗi buổi, chỉ sao lưu khi
+không còn run `STARTED`:
+
+```bash
+cd "$HOME/datn-ai-soar"
+ACTIVE_RUNS=$(find evidence/scenario-runs -type f -name .collection_state.json \
+  -print0 2>/dev/null | xargs -0 -r jq -r \
+  'select(.status == "STARTED") | .run_id')
+if [ -n "$ACTIVE_RUNS" ]; then
+  printf 'FAIL: finalize/abort these runs before backup:\n%s\n' "$ACTIVE_RUNS" >&2
+  exit 1
+fi
+
+mkdir -p data/raw evidence/scenario-runs run-drafts operator-logs
+BACKUP_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+BACKUP_DIR="$HOME/datn-backups/$BACKUP_ID"
+ARCHIVE="$BACKUP_DIR/collection-$BACKUP_ID.tar.gz"
+mkdir -p "$BACKUP_DIR"
+git rev-parse HEAD > "$BACKUP_DIR/git-commit.txt"
+tar --create --gzip --file "$ARCHIVE" \
+  data/raw evidence run-drafts operator-logs \
+  config/scenario-catalog.yaml config/collection-sources.yaml \
+  config/suspicious-process-taxonomy.yaml ml/feature_schema.json
+(
+  cd "$BACKUP_DIR"
+  sha256sum "$(basename "$ARCHIVE")" git-commit.txt > checksums.sha256
+  sha256sum --check checksums.sha256
+)
+tar -tzf "$ARCHIVE" | grep -q '^data/raw/'
+tar -tzf "$ARCHIVE" | grep -q '^evidence/scenario-runs/'
+printf 'BACKUP_ID=%s\n' "$BACKUP_ID"
+```
+
+Kiểm tra giải nén vào thư mục tạm, tuyệt đối không đè lên repo đang thu:
+
+```bash
+RESTORE_CHECK=$(mktemp -d)
+trap 'rm -rf -- "$RESTORE_CHECK"' EXIT
+tar -xzf "$ARCHIVE" -C "$RESTORE_CHECK"
+test -d "$RESTORE_CHECK/data/raw"
+test -d "$RESTORE_CHECK/evidence/scenario-runs"
+find "$RESTORE_CHECK/data/raw" -name scenario_manifest.json | wc -l
+```
+
+Ngay sau đó sao chép cả thư mục backup ra ổ host Windows; nhập đúng `BACKUP_ID` vừa
+in ra. Bản nằm cùng datastore VMware không được tính là bản sao thứ hai:
+
+```powershell
+$SocUser = Read-Host "SOC-AI SSH username"
+$BackupId = Read-Host "BACKUP_ID from SOC-AI"
+$BackupRoot = "D:\SOC_AI_SOAR_backups"
+$SocHome = ssh "${SocUser}@192.168.58.147" 'printf %s "$HOME"'
+if ($LASTEXITCODE -ne 0 -or -not $SocHome) { throw "Cannot resolve SOC-AI HOME" }
+New-Item -ItemType Directory -Force $BackupRoot | Out-Null
+scp -r "${SocUser}@192.168.58.147:${SocHome}/datn-backups/${BackupId}" $BackupRoot
+Get-ChildItem "$BackupRoot\$BackupId" -File | Get-FileHash -Algorithm SHA256
+```
+
+Không đưa mật khẩu, API key, `.env` hoặc Wazuh credential vào archive. Khi bàn giao,
+gửi archive, `checksums.sha256`, `git-commit.txt` và báo cáo audit cùng nhau.
+
+## 16. Xử lý lỗi
 
 | Lỗi | Nguyên nhân thường gặp | Xử lý bắt buộc |
 |---|---|---|
-| `no Wazuh Archive bytes` | agent chưa gửi hoặc chờ chưa đủ | abort, sửa agent, chạy ID mới |
-| `does not end with a complete JSON line` | Wazuh đang ghi dở dòng cuối | không sửa Archives; chờ 5–10 giây rồi finalize lại cùng run |
+| `no Wazuh Archive bytes` | agent chưa gửi hoặc log đang đến chậm | không tạo traffic mới; chờ 30 giây và retry finalize cùng ID, tối đa ba lần; sau đó abort |
+| `does not end with a complete JSON line` | Wazuh đang ghi dở dòng cuối | không sửa Archives; chờ 30 giây rồi retry finalize cùng ID |
 | `rotated or truncated` | Archives rotate trong run | abort, tránh giờ rotate, chạy ID mới |
 | `no attributable Windows...` | sai agent/account/process/IP/port/DNS | đối chiếu draft với lệnh thật, chạy mới |
 | `no attributable Suricata...` | traffic đi tắt hoặc EVE chưa forward | kiểm tra route, interface, ACL, Wazuh Agent |
 | checksum mismatch | file evidence/generated bị sửa | loại run; không sửa checksum để hợp thức hóa |
 | concentration >30% | lặp một scenario quá nhiều | thu thêm scenario khác; không copy mẫu |
 | duplicate incident/run | tái sử dụng dữ liệu hoặc ID | loại bản trùng và chạy mới |
-| `FEATURE_LABEL_SEPARATION` | alert count phân tách hoàn hảo nhãn C2 | thu đủ benign alert 900004 và malicious staged-transfer không alert |
+| `FEATURE_LABEL_SEPARATION` | một feature của model phân tách hoàn hảo nhãn trong cùng family | bổ sung scenario để khoảng giá trị benign/malicious chồng lấn; không train trước khi audit đạt |
 | audit `NOT_READY` | thiếu hoặc có run invalid | đọc `ISSUES` và `shortage`, xử lý đúng nhóm |
 
 Không dùng lệnh sửa trực tiếp `incidents.jsonl`, `scenario_manifest.json` hoặc
 `checksums.sha256`. Dữ liệu hỏng phải được thu lại.
 
-## 16. Ảnh minh chứng
+## 17. Ảnh minh chứng
 
 Chụp toàn màn hình VMware Workstation, có thanh tiêu đề, Library, toàn bộ desktop 16 inch
 và đồng hồ. Không chỉ chụp vùng terminal.
@@ -1031,7 +1181,7 @@ và đồng hồ. Không chỉ chụp vùng terminal.
 Tên ảnh: `W3-DATA-<nn>-<noi-dung>-<run-id>.png`. Không chụp mật khẩu, API key, token,
 cookie hoặc nội dung `.env`.
 
-## 17. Tiêu chí bàn giao
+## 18. Tiêu chí bàn giao
 
 Chỉ bàn giao khi tất cả đều đúng:
 
@@ -1050,60 +1200,19 @@ Mốc 10–12 run/nhóm đủ cho benchmark đồ án và kiểm thử pipeline,
 nhỏ; không được mô tả là đủ để triển khai production. Chất lượng phụ thuộc vào đa dạng
 kịch bản, tính độc lập, bằng chứng đầy đủ và việc không làm rò nhãn vào feature.
 
-## 18. Tùy chọn Atomic Red Team (không bắt buộc cho catalog v1)
+## 19. Atomic Red Team không thuộc đợt thu v1
 
-Chỉ cài khi nhóm đã duyệt test cụ thể. Catalog v1 cố ý dùng mô phỏng kiểm soát được để
-nhãn và attribution ổn định; Atomic không được chạy hàng loạt hoặc dùng để “bù số run”.
+Không cài hoặc chạy Atomic Red Team trong 40–48 run của tài liệu này. Catalog v1 đã có
+20 scenario kiểm soát được; thêm Atomic giữa đợt sẽ thay đổi phân phối dữ liệu, làm mất
+tính lặp lại và có thể để lại trạng thái ngoài dự kiến trên Windows.
 
-Trên Windows PowerShell (Administrator):
+Nếu nhóm mở rộng ở phiên bản sau, phải lập kế hoạch thay đổi riêng: chọn chính xác test,
+đọc attack/cleanup command, duyệt payload, khóa release/commit cụ thể, kiểm tra SHA-256
+trước khi chạy, snapshot riêng, ghi execution log và tạo scenario/catalog mới. Không dùng
+lệnh tải script từ nhánh `master` rồi thực thi trực tiếp, không dùng Atomic để bù số run,
+và không trộn dữ liệu mở rộng vào dataset v1.
 
-```powershell
-Set-ExecutionPolicy Bypass -Scope Process -Force
-Install-Module -Name invoke-atomicredteam,powershell-yaml -Scope CurrentUser -Force
-IEX (IWR 'https://raw.githubusercontent.com/redcanaryco/invoke-atomicredteam/master/install-atomicredteam.ps1' -UseBasicParsing)
-Install-AtomicRedTeam -getAtomics -Force -noPayloads
-$PSDefaultParameterValues = @{
-  "Invoke-AtomicTest:PathToAtomicsFolder" = "C:\AtomicRedTeam\atomics"
-}
-```
-
-Với `$Technique` và `$TestNumber` đã được nhóm duyệt, luôn xem chi tiết và kiểm tra điều
-kiện trước:
-
-```powershell
-Invoke-AtomicTest $Technique -TestNumbers $TestNumber -ShowDetails
-Invoke-AtomicTest $Technique -TestNumbers $TestNumber -CheckPrereqs
-```
-
-Khi tạo draft trên SOC-AI, khai báo trước vị trí execution log sẽ nhận về:
-
-```bash
-mkdir -p operator-logs
-.venv-ml/bin/python -m scripts.create_run_draft \
-  --scenario "$SCENARIO_ID" --run-id "$RUN_ID" --operator Kien \
-  --execution-log "operator-logs/atomic-$RUN_ID.csv"
-.venv-ml/bin/python -m scripts.scenario_session start \
-  --draft "run-drafts/$RUN_ID.yaml"
-```
-
-Chỉ sau khi collector đã `STARTED` mới execute; trên Windows đặt đúng `RUN_ID` và ghi
-log vào file riêng:
-
-```powershell
-$env:RUN_ID = "ID-giong-het-draft-tren-SOC-AI"
-$log = "C:\DATN\atomic-$env:RUN_ID.csv"
-Invoke-AtomicTest $Technique -TestNumbers $TestNumber -ExecutionLogPath $log
-Invoke-AtomicTest $Technique -TestNumbers $TestNumber -Cleanup
-Get-FileHash $log -Algorithm SHA256
-scp $log lethinh@192.168.58.147:/home/lethinh/datn-ai-soar/operator-logs/
-```
-
-Trên SOC-AI, xác nhận file tồn tại rồi mới `finalize`; collector sẽ từ chối nếu draft đã
-khai báo log nhưng file chưa được chuyển về. Nếu cleanup lỗi, abort run và restore
-snapshot. Không chạy test credential dumping, persistence, destructive impact hoặc test
-có payload chưa được rà soát.
-
-## 19. Tài liệu chính thức đã đối chiếu
+## 20. Tài liệu chính thức đã đối chiếu
 
 - Wazuh Quickstart 4.14: https://documentation.wazuh.com/current/quickstart.html
 - Wazuh Windows/Linux agent: https://documentation.wazuh.com/current/installation-guide/
@@ -1112,9 +1221,9 @@ có payload chưa được rà soát.
 - Wazuh kiểm tra cấu hình: https://documentation.wazuh.com/current/user-manual/reference/ossec-conf/verifying-configuration.html
 - Wazuh Windows default channels: https://documentation.wazuh.com/current/user-manual/capabilities/log-data-collection/configuration.html
 - Microsoft Sysmon: https://learn.microsoft.com/sysinternals/downloads/sysmon
+- Microsoft OpenSSH Client: https://learn.microsoft.com/windows-server/administration/openssh/openssh_install_firstuse
 - Suricata EVE JSON: https://docs.suricata.io/en/latest/output/eve/eve-json-output.html
 - Atomic Red Team: https://www.atomicredteam.io/docs/invoke-atomicredteam
 
-Atomic Red Team là tùy chọn mở rộng, không phải điều kiện để hoàn thành 48 run trong
-catalog. Nếu sử dụng, phải đọc test, chạy `-CheckPrereqs`, ghi execution log, cleanup và
-chỉ chạy test đã được phê duyệt trong Windows lab; không thay ground truth bằng cảnh báo.
+Atomic Red Team chỉ là hướng mở rộng sau khi dataset v1 đã được đóng và bàn giao; không
+phải điều kiện để hoàn thành 48 run trong catalog.

@@ -27,6 +27,21 @@ def test_c2_model_excludes_taxonomy_derived_suspicious_process_proxy() -> None:
     assert "suspicious_process" not in schema["x-family-features"]["c2"]
 
 
+def test_collection_runbook_is_portable_isolated_and_failure_safe() -> None:
+    runbook = (PROJECT_ROOT / "docs/scenario-collection-runbook.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "/home/lethinh" not in runbook
+    assert "scp lethinh@" not in runbook
+    assert "server=1.1.1.1" not in runbook
+    assert "IEX (IWR" not in runbook
+    assert "OpenSSH.Client~~~~0.0.1.0" in runbook
+    assert "MAX_CLOCK_SKEW_SECONDS=5" in runbook
+    assert "BACKUP_ID=" in runbook
+    assert "retry finalize" in runbook
+
+
 def test_committed_source_and_taxonomy_configuration_is_valid() -> None:
     source_payload = yaml.safe_load(
         (PROJECT_ROOT / "config/collection-sources.yaml").read_text(encoding="utf-8")
