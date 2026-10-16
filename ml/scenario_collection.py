@@ -5,6 +5,7 @@ import json
 import math
 import shutil
 import statistics
+import tempfile
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -328,7 +329,6 @@ def start_run(
     output_dir = project_root / "data/raw" / draft.run_id
     if evidence_dir.exists() or output_dir.exists():
         raise CollectionError(f"run_id already exists: {draft.run_id}")
-    evidence_dir.mkdir(parents=True)
 
     started_at = _utc(now)
     draft_snapshot = draft.model_dump(mode="json")
@@ -347,11 +347,25 @@ def start_run(
         "source_config_sha256": _sha256(source_config_path),
         "taxonomy_sha256": _sha256(taxonomy_path),
     }
-    _write_json(evidence_dir / "ground_truth.json", draft_snapshot)
-    shutil.copyfile(source_config_path, evidence_dir / "collection-sources.yaml")
-    shutil.copyfile(taxonomy_path, evidence_dir / "suspicious-process-taxonomy.yaml")
-    _write_json(evidence_dir / ".collection_state.json", state)
-    _append_log(evidence_dir, f"RUN_STARTED run_id={draft.run_id}")
+    evidence_root = evidence_dir.parent
+    evidence_root.mkdir(parents=True, exist_ok=True)
+    try:
+        with tempfile.TemporaryDirectory(
+            prefix=f".{draft.run_id}.starting-",
+            dir=evidence_root,
+        ) as temporary:
+            staging_dir = Path(temporary)
+            _write_json(staging_dir / "ground_truth.json", draft_snapshot)
+            shutil.copyfile(source_config_path, staging_dir / "collection-sources.yaml")
+            shutil.copyfile(
+                taxonomy_path,
+                staging_dir / "suspicious-process-taxonomy.yaml",
+            )
+            _write_json(staging_dir / ".collection_state.json", state)
+            _append_log(staging_dir, f"RUN_STARTED run_id={draft.run_id}")
+            staging_dir.replace(evidence_dir)
+    except OSError as exc:
+        raise CollectionError(f"could not initialize run evidence: {exc}") from exc
     return {"status": "STARTED", "run_id": draft.run_id, "started_at": state["started_at"]}
 
 

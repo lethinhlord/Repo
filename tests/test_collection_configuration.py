@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -15,6 +16,15 @@ from ml.scenario_collection import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_c2_model_excludes_taxonomy_derived_suspicious_process_proxy() -> None:
+    schema = json.loads(
+        (PROJECT_ROOT / "ml/feature_schema.json").read_text(encoding="utf-8")
+    )
+
+    assert "suspicious_process" in schema["properties"]
+    assert "suspicious_process" not in schema["x-family-features"]["c2"]
 
 
 def test_committed_source_and_taxonomy_configuration_is_valid() -> None:

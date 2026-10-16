@@ -253,7 +253,7 @@ def test_audit_rejects_stale_started_collection(tmp_path: Path) -> None:
     assert any(issue["code"] == "STALE_STARTED_RUN" for issue in report["issues"])
 
 
-def test_audit_rejects_suricata_alert_feature_that_perfectly_separates_labels(
+def test_audit_rejects_any_model_feature_that_perfectly_separates_labels(
     tmp_path: Path,
 ) -> None:
     populate(tmp_path, count=10)
@@ -262,7 +262,7 @@ def test_audit_rejects_suricata_alert_feature_that_perfectly_separates_labels(
             run_id = f"C2-{label.upper()}-{index:02d}"
             incident_path = tmp_path / f"data/raw/{run_id}/incidents.jsonl"
             incident = json.loads(incident_path.read_text(encoding="utf-8"))
-            incident["features"]["suricata_alert_count"] = float(label == "malicious")
+            incident["features"]["periodicity_score"] = float(label == "malicious")
             incident_path.write_text(json.dumps(incident) + "\n", encoding="utf-8")
             evidence_dir = tmp_path / f"evidence/scenario-runs/{run_id}"
             metadata_path = evidence_dir / "collection_metadata.json"
@@ -281,6 +281,8 @@ def test_audit_rejects_suricata_alert_feature_that_perfectly_separates_labels(
     )
 
     assert report["status"] == "NOT_READY"
-    assert any(
-        issue["code"] == "FEATURE_LABEL_SEPARATION" for issue in report["issues"]
-    )
+    separation = [
+        issue for issue in report["issues"] if issue["code"] == "FEATURE_LABEL_SEPARATION"
+    ]
+    assert len(separation) == 1
+    assert "periodicity_score" in separation[0]["message"]

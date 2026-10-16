@@ -537,6 +537,18 @@ def test_start_rejects_archive_cursor_that_is_not_on_a_line_boundary(tmp_path: P
             now=datetime(2026, 10, 16, 10, 0, tzinfo=UTC),
         )
 
+    evidence_dir = tmp_path / "evidence/scenario-runs/ACCOUNT-BENIGN-CURSOR-001"
+    assert not evidence_dir.exists()
+
+    (tmp_path / "archives.json").write_text('{"baseline":true}\n', encoding="utf-8")
+    result = start_run(
+        draft,
+        config,
+        tmp_path,
+        now=datetime(2026, 10, 16, 10, 1, tzinfo=UTC),
+    )
+    assert result["status"] == "STARTED"
+
 
 def test_finalize_rejects_incomplete_archive_tail_and_allows_retry(tmp_path: Path) -> None:
     config = source_config(tmp_path)

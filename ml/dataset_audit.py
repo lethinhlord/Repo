@@ -285,31 +285,39 @@ def audit_dataset(
     valid = {
         run_id: value for run_id, value in candidates.items() if run_id not in invalid_runs
     }
-    c2_alert_values: dict[str, list[float]] = {"benign": [], "malicious": []}
+    family_feature_values: dict[str, dict[str, dict[str, list[float]]]] = {
+        family: {
+            feature: {"benign": [], "malicious": []}
+            for feature in schema["x-family-features"][family]
+        }
+        for family in ("account", "c2")
+    }
     for manifest, incidents in valid.values():
-        if manifest.family != "c2":
-            continue
         for incident in incidents:
-            value = incident.features.get("suricata_alert_count")
-            if value is not None:
-                c2_alert_values[manifest.label].append(float(value))
-    benign_alerts = c2_alert_values["benign"]
-    malicious_alerts = c2_alert_values["malicious"]
-    if benign_alerts and malicious_alerts:
-        benign_range = (min(benign_alerts), max(benign_alerts))
-        malicious_range = (min(malicious_alerts), max(malicious_alerts))
-        separated = (
-            benign_range[1] < malicious_range[0]
-            or malicious_range[1] < benign_range[0]
-        )
-        if separated:
-            _issue(
-                issues,
-                "FEATURE_LABEL_SEPARATION",
-                "suricata_alert_count perfectly separates C2 labels; collect a benign "
-                "alerting scenario and a malicious non-alerting scenario before training "
-                f"(benign={benign_range}, malicious={malicious_range})",
+            for feature, labels in family_feature_values[manifest.family].items():
+                value = incident.features.get(feature)
+                if value is not None:
+                    labels[manifest.label].append(float(value))
+    for family, feature_values in family_feature_values.items():
+        for feature, labels in feature_values.items():
+            benign_values = labels["benign"]
+            malicious_values = labels["malicious"]
+            if not benign_values or not malicious_values:
+                continue
+            benign_range = (min(benign_values), max(benign_values))
+            malicious_range = (min(malicious_values), max(malicious_values))
+            separated = (
+                benign_range[1] < malicious_range[0]
+                or malicious_range[1] < benign_range[0]
             )
+            if separated:
+                _issue(
+                    issues,
+                    "FEATURE_LABEL_SEPARATION",
+                    f"{feature} perfectly separates {family} labels; collect scenarios "
+                    "whose benign and malicious value ranges overlap before training "
+                    f"(benign={benign_range}, malicious={malicious_range})",
+                )
     stratum_runs: dict[str, list[ScenarioManifest]] = {name: [] for name in STRATA}
     for manifest, _ in valid.values():
         stratum_runs[f"{manifest.family}:{manifest.label}"].append(manifest)

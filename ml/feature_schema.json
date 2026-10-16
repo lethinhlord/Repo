@@ -36,7 +36,6 @@
   "x-family-features": {
     "account": ["failed_login_count", "success_after_fail"],
     "c2": [
-      "suspicious_process",
       "periodicity_score",
       "suricata_alert_count",
       "outbound_connection_count",
