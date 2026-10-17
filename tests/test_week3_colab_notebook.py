@@ -38,6 +38,7 @@ def test_colab_notebook_orchestrates_the_trusted_pipeline() -> None:
         "colab-upload.sha256",
         "hashlib.sha256",
         'manifest.get("group_key") == "scenario_id"',
+        'manifest.get("collection_audit", {}).get("status")',
         'row["scenario_id"]',
         "python -m ruff check .",
         "python -m pytest -q",

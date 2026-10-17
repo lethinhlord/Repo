@@ -10,6 +10,14 @@ data:
   records_name: incidents.jsonl
   group_key: scenario_id
   minimum_groups_per_family_label: 5
+  require_collection_audit: true
+  evidence_dir: evidence/scenario-runs
+  scenario_catalog: config/scenario-catalog.yaml
+  audit_report: evidence/dataset-audit.json
+  minimum_runs: 10
+  target_runs: 12
+  minimum_scenarios: 5
+  maximum_scenario_share: 0.30
 split:
   train_folds: [0, 1, 2]
   validation_folds: [3]

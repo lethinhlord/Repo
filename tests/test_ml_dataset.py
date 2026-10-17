@@ -1,9 +1,16 @@
 from __future__ import annotations
 
-import pytest
+from pathlib import Path
 
+import pytest
+import yaml
+
+from ml.build_dataset import build_dataset
 from ml.dataset import DatasetError, DatasetRecord, assign_grouped_folds
 from ml.training import leakage_audit
+from scripts.generate_smoke_dataset import generate
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def record(
@@ -152,3 +159,61 @@ def test_leakage_audit_rejects_scenario_overlap_across_distinct_runs() -> None:
     assert result["checks"]["scenario_overlap"] == [
         "ACCOUNT-BENIGN-NORMAL-LOGON"
     ]
+
+
+def test_build_stops_before_reading_raw_data_when_collection_audit_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = yaml.safe_load(
+        (PROJECT_ROOT / "config/training-smoke.yaml").read_text(encoding="utf-8")
+    )
+    config["feature_schema"] = str(PROJECT_ROOT / "ml/feature_schema.json")
+    config["data"].update(
+        {
+            "raw_dir": str(tmp_path / "missing-raw"),
+            "processed_dir": str(tmp_path / "processed"),
+            "splits_dir": str(tmp_path / "splits"),
+            "require_collection_audit": True,
+            "evidence_dir": str(tmp_path / "evidence"),
+            "scenario_catalog": str(PROJECT_ROOT / "config/scenario-catalog.yaml"),
+            "audit_report": str(tmp_path / "dataset-audit.json"),
+            "minimum_runs": 10,
+            "target_runs": 12,
+        }
+    )
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    monkeypatch.setattr(
+        "ml.build_dataset.audit_dataset",
+        lambda *args, **kwargs: {"status": "NOT_READY", "error_count": 1},
+        raising=False,
+    )
+
+    with pytest.raises(ValueError, match="collection audit is not ready"):
+        build_dataset(config_path)
+
+
+def test_public_dataset_manifest_does_not_expose_locked_fold_membership(
+    tmp_path: Path,
+) -> None:
+    raw_dir = tmp_path / "raw"
+    generate(raw_dir)
+    config = yaml.safe_load(
+        (PROJECT_ROOT / "config/training-smoke.yaml").read_text(encoding="utf-8")
+    )
+    config["feature_schema"] = str(PROJECT_ROOT / "ml/feature_schema.json")
+    config["data"].update(
+        {
+            "raw_dir": str(raw_dir),
+            "processed_dir": str(tmp_path / "processed"),
+            "splits_dir": str(tmp_path / "splits"),
+            "require_collection_audit": False,
+        }
+    )
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+    manifest = build_dataset(config_path)
+
+    assert "fold_by_run" not in manifest
+    assert "split_assignment_commitment_sha256" in manifest

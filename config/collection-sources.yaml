@@ -3,3 +3,4 @@ wazuh_archives_path: /var/ossec/logs/archives/archives.json
 windows_agent_name: WIN11-TARGET
 suricata_agent_name: NET-SENSOR
 taxonomy_path: config/suspicious-process-taxonomy.yaml
+scenario_catalog_path: config/scenario-catalog.yaml

@@ -17,6 +17,11 @@ def main() -> int:
     parser.add_argument("--target-runs", type=int, default=12)
     parser.add_argument("--minimum-scenarios", type=int, default=5)
     parser.add_argument("--maximum-scenario-share", type=float, default=0.30)
+    parser.add_argument(
+        "--scenario-catalog",
+        type=Path,
+        default=Path("config/scenario-catalog.yaml"),
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--require-target", action="store_true")
     args = parser.parse_args()
@@ -28,6 +33,7 @@ def main() -> int:
         target_runs=args.target_runs,
         minimum_scenarios=args.minimum_scenarios,
         maximum_scenario_share=args.maximum_scenario_share,
+        scenario_catalog_path=args.scenario_catalog,
     )
     print(format_audit_report(report), end="")
     if args.output:

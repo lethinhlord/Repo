@@ -13,6 +13,7 @@ from ml.scenario_collection import (
     _matches_suricata,
     abort_run,
     finalize_run,
+    quarantine_run,
     start_run,
     validate_run,
 )
@@ -695,3 +696,83 @@ def test_validate_rejects_empty_or_incomplete_checksum_manifest(tmp_path: Path) 
 
     with pytest.raises(CollectionError, match="checksum manifest"):
         validate_run("ACCOUNT-BENIGN-CHECKSUM-001", tmp_path)
+
+
+def test_start_rejects_draft_identity_that_disagrees_with_catalog(tmp_path: Path) -> None:
+    config = source_config(tmp_path)
+    catalog = tmp_path / "catalog.yaml"
+    catalog.write_text(
+        yaml.safe_dump(
+            {
+                "version": "scenario-catalog-v1",
+                "lab_only": True,
+                "scenarios": [
+                    {
+                        "scenario_id": "SCENARIO-account-benign",
+                        "family": "account",
+                        "label": "benign",
+                        "expected_behavior": "Controlled lab behavior.",
+                        "attribution": {"account_names": ["labuser"]},
+                        "quality_gates": {},
+                        "preconditions": ["test"],
+                        "execution_steps": ["test"],
+                        "expected_observables": ["test"],
+                        "cleanup_steps": ["test"],
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    config_payload = yaml.safe_load(config.read_text(encoding="utf-8"))
+    config_payload["scenario_catalog_path"] = str(catalog)
+    config.write_text(yaml.safe_dump(config_payload, sort_keys=False), encoding="utf-8")
+    draft = write_draft(
+        tmp_path,
+        run_id="ACCOUNT-MISMATCH-001",
+        family="account",
+        label="malicious",
+        attribution={"account_names": ["labuser"]},
+    )
+
+    with pytest.raises(CollectionError, match="does not match scenario catalog"):
+        start_run(draft, config, tmp_path)
+
+
+def test_invalid_finalized_run_can_be_quarantined_without_deletion(tmp_path: Path) -> None:
+    config = source_config(tmp_path)
+    draft = write_draft(
+        tmp_path,
+        run_id="ACCOUNT-BENIGN-QUARANTINE-001",
+        family="account",
+        label="benign",
+        attribution={"account_names": ["labuser"]},
+    )
+    started = datetime(2026, 10, 16, 14, 0, tzinfo=UTC)
+    start_run(draft, config, tmp_path, now=started)
+    append_jsonl(
+        tmp_path / "archives.json",
+        [windows_event(4624, started + timedelta(seconds=5), {"targetUserName": "labuser"})],
+    )
+    finalize_run(
+        "ACCOUNT-BENIGN-QUARANTINE-001",
+        tmp_path,
+        now=started + timedelta(seconds=10),
+    )
+    incident = tmp_path / "data/raw/ACCOUNT-BENIGN-QUARANTINE-001/incidents.jsonl"
+    incident.write_text("tampered\n", encoding="utf-8")
+
+    result = quarantine_run(
+        "ACCOUNT-BENIGN-QUARANTINE-001", tmp_path, "checksum mismatch"
+    )
+
+    assert result["status"] == "QUARANTINED"
+    assert not (tmp_path / "data/raw/ACCOUNT-BENIGN-QUARANTINE-001").exists()
+    assert not (tmp_path / "evidence/scenario-runs/ACCOUNT-BENIGN-QUARANTINE-001").exists()
+    assert (tmp_path / "data/quarantine/ACCOUNT-BENIGN-QUARANTINE-001").is_dir()
+    evidence = tmp_path / "evidence/quarantine/ACCOUNT-BENIGN-QUARANTINE-001"
+    assert evidence.is_dir()
+    assert json.loads((evidence / "quarantine.json").read_text(encoding="utf-8"))[
+        "reason"
+    ] == "checksum mismatch"

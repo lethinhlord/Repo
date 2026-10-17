@@ -8,6 +8,7 @@ from ml.scenario_collection import (
     CollectionError,
     abort_run,
     finalize_run,
+    quarantine_run,
     run_status,
     start_run,
     validate_run,
@@ -32,6 +33,9 @@ def parser() -> argparse.ArgumentParser:
     abort = subcommands.add_parser("abort")
     abort.add_argument("--run-id", required=True)
     abort.add_argument("--reason", required=True)
+    quarantine = subcommands.add_parser("quarantine")
+    quarantine.add_argument("--run-id", required=True)
+    quarantine.add_argument("--reason", required=True)
     return result
 
 
@@ -47,8 +51,10 @@ def main() -> int:
             payload = validate_run(args.run_id, root)
         elif args.command == "status":
             payload = run_status(args.run_id, root)
-        else:
+        elif args.command == "abort":
             payload = abort_run(args.run_id, root, args.reason)
+        else:
+            payload = quarantine_run(args.run_id, root, args.reason)
     except CollectionError as exc:
         print(json.dumps({"status": "ERROR", "detail": str(exc)}, indent=2))
         return 1

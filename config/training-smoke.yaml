@@ -10,6 +10,7 @@ data:
   records_name: incidents.jsonl
   group_key: scenario_id
   minimum_groups_per_family_label: 5
+  require_collection_audit: false
 split:
   train_folds: [0, 1, 2]
   validation_folds: [3]

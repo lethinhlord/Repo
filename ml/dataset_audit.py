@@ -3,8 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
+from itertools import combinations
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from api.app.contracts import IncidentRequest
 from ml.dataset import (
@@ -13,6 +16,7 @@ from ml.dataset import (
     load_feature_schema,
     validate_feature_contract,
 )
+from ml.scenario_collection import ScenarioCatalog
 
 STRATA = ("account:benign", "account:malicious", "c2:benign", "c2:malicious")
 
@@ -43,6 +47,7 @@ def _verify_evidence_checksums(evidence_dir: Path) -> list[str]:
     path = evidence_dir / "checksums.sha256"
     if not path.is_file():
         return ["missing checksums.sha256"]
+    entries: dict[str, str] = {}
     for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if not line.strip():
             continue
@@ -51,11 +56,30 @@ def _verify_evidence_checksums(evidence_dir: Path) -> list[str]:
         except ValueError:
             errors.append(f"invalid checksums.sha256 line {line_number}")
             continue
+        if len(expected) != 64 or any(character not in "0123456789abcdef" for character in expected):
+            errors.append(f"invalid checksum digest on line {line_number}")
+            continue
+        if name in entries or Path(name).name != name:
+            errors.append(f"invalid checksum file name on line {line_number}")
+            continue
+        entries[name] = expected
         target = evidence_dir / name
         if not target.is_file():
             errors.append(f"checksummed evidence file is missing: {name}")
         elif _sha256(target) != expected:
             errors.append(f"checksum mismatch for evidence file: {name}")
+    actual_files = {
+        target.name
+        for target in evidence_dir.iterdir()
+        if target.is_file()
+        and target.name not in {"checksums.sha256", ".collection_state.json"}
+    }
+    if not entries or set(entries) != actual_files:
+        errors.append(
+            "checksum manifest is incomplete or inconsistent: "
+            f"missing={sorted(actual_files - set(entries))}, "
+            f"unexpected={sorted(set(entries) - actual_files)}"
+        )
     return errors
 
 
@@ -76,6 +100,7 @@ def _audit_run(
     manifest_path: Path,
     evidence_root: Path,
     schema: dict[str, Any],
+    catalog: dict[str, tuple[str, str]],
 ) -> tuple[ScenarioManifest | None, list[IncidentRequest], list[str]]:
     errors: list[str] = []
     run_dir = manifest_path.parent
@@ -88,6 +113,12 @@ def _audit_run(
     if run_dir.name != manifest.run_id:
         errors.append(
             f"run directory {run_dir.name} does not match manifest run_id {manifest.run_id}"
+        )
+    catalog_identity = catalog.get(manifest.scenario_id)
+    if catalog_identity != (manifest.family, manifest.label):
+        errors.append(
+            "SCENARIO_CATALOG_MISMATCH: scenario_id is missing from the catalog or "
+            "does not match its catalog family/label"
         )
 
     incident_path = run_dir / "incidents.jsonl"
@@ -133,6 +164,30 @@ def _audit_run(
     evidence_dir = evidence_root / manifest.run_id
     if not evidence_dir.is_dir():
         return manifest, incidents, errors + ["missing evidence directory"]
+    state_path = evidence_dir / ".collection_state.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(f"RUN_STATE_INVALID: invalid .collection_state.json: {exc}")
+        state = {}
+    if state.get("status") != "FINALIZED" or state.get("run_id") != manifest.run_id:
+        errors.append("RUN_STATE_INVALID: collection state is not FINALIZED for this run")
+    ground_truth_path = evidence_dir / "ground_truth.json"
+    try:
+        ground_truth = json.loads(ground_truth_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(f"invalid ground_truth.json: {exc}")
+        ground_truth = {}
+    manifest_identity = {
+        "scenario_id": manifest.scenario_id,
+        "run_id": manifest.run_id,
+        "family": manifest.family,
+        "label": manifest.label,
+        "host": manifest.host,
+        "expected_behavior": manifest.expected_behavior,
+    }
+    if any(ground_truth.get(name) != value for name, value in manifest_identity.items()):
+        errors.append("ground truth identity does not match finalized scenario manifest")
     metadata_path = evidence_dir / "collection_metadata.json"
     if not metadata_path.is_file():
         errors.append("missing collection_metadata.json")
@@ -185,6 +240,7 @@ def audit_dataset(
     target_runs: int = 12,
     minimum_scenarios: int = 5,
     maximum_scenario_share: float = 0.30,
+    scenario_catalog_path: Path = Path("config/scenario-catalog.yaml"),
 ) -> dict[str, Any]:
     if minimum_runs < 5:
         raise ValueError("minimum_runs must be at least 5 for the configured grouped split")
@@ -197,6 +253,17 @@ def audit_dataset(
 
     raw_dir = raw_dir.resolve()
     evidence_dir = evidence_dir.resolve()
+    try:
+        payload = yaml.safe_load(scenario_catalog_path.read_text(encoding="utf-8"))
+        parsed_catalog = ScenarioCatalog.model_validate(payload)
+    except (OSError, yaml.YAMLError, ValueError) as exc:
+        raise ValueError(f"invalid scenario catalog {scenario_catalog_path}: {exc}") from exc
+    catalog = {
+        item.scenario_id: (item.family, item.label) for item in parsed_catalog.scenarios
+    }
+    expected_scenarios: dict[str, set[str]] = {name: set() for name in STRATA}
+    for item in parsed_catalog.scenarios:
+        expected_scenarios[f"{item.family}:{item.label}"].add(item.scenario_id)
     schema = load_feature_schema(Path(__file__).with_name("feature_schema.json"))
     issues: list[dict[str, str]] = []
     candidates: dict[str, tuple[ScenarioManifest, list[IncidentRequest]]] = {}
@@ -221,12 +288,21 @@ def audit_dataset(
         _issue(issues, "NO_RUNS", "no scenario_manifest.json files were found")
 
     for manifest_path in manifest_paths:
-        manifest, incidents, errors = _audit_run(manifest_path, evidence_dir, schema)
+        manifest, incidents, errors = _audit_run(
+            manifest_path, evidence_dir, schema, catalog
+        )
         run_id = manifest.run_id if manifest is not None else manifest_path.parent.name
         if errors:
             invalid_runs.add(run_id)
             for message in errors:
-                code = "SURICATA_MISSING" if "Suricata" in message else "RUN_INVALID"
+                if message.startswith("SCENARIO_CATALOG_MISMATCH:"):
+                    code = "SCENARIO_CATALOG_MISMATCH"
+                    message = message.split(":", 1)[1].strip()
+                elif message.startswith("RUN_STATE_INVALID:"):
+                    code = "RUN_STATE_INVALID"
+                    message = message.split(":", 1)[1].strip()
+                else:
+                    code = "SURICATA_MISSING" if "Suricata" in message else "RUN_INVALID"
                 _issue(issues, code, message, run_id=run_id)
         if manifest is not None:
             candidates[run_id] = (manifest, incidents)
@@ -318,6 +394,39 @@ def audit_dataset(
                     "whose benign and malicious value ranges overlap before training "
                     f"(benign={benign_range}, malicious={malicious_range})",
                 )
+        feature_names = sorted(feature_values)
+        family_rows: dict[str, list[dict[str, float]]] = {"benign": [], "malicious": []}
+        for manifest, incidents in valid.values():
+            if manifest.family != family:
+                continue
+            family_rows[manifest.label].extend(
+                {name: float(incident.features[name]) for name in feature_names}
+                for incident in incidents
+            )
+        for first, second in combinations(feature_names, 2):
+            benign_pairs = {
+                (row[first], row[second]) for row in family_rows["benign"]
+            }
+            malicious_pairs = {
+                (row[first], row[second]) for row in family_rows["malicious"]
+            }
+            if (
+                benign_pairs
+                and malicious_pairs
+                and benign_pairs.isdisjoint(malicious_pairs)
+                and len(benign_pairs | malicious_pairs) <= 16
+            ):
+                first_benign = {pair[0] for pair in benign_pairs}
+                first_malicious = {pair[0] for pair in malicious_pairs}
+                second_benign = {pair[1] for pair in benign_pairs}
+                second_malicious = {pair[1] for pair in malicious_pairs}
+                if first_benign & first_malicious and second_benign & second_malicious:
+                    _issue(
+                        issues,
+                        "JOINT_FEATURE_LABEL_SEPARATION",
+                        f"the low-cardinality pair ({first}, {second}) perfectly "
+                        f"separates {family} labels; collect overlapping joint behavior",
+                    )
     stratum_runs: dict[str, list[ScenarioManifest]] = {name: [] for name in STRATA}
     for manifest, _ in valid.values():
         stratum_runs[f"{manifest.family}:{manifest.label}"].append(manifest)
@@ -345,6 +454,30 @@ def audit_dataset(
                 "STRATUM_SHORTAGE",
                 f"{name} has {count}/{minimum_runs} required runs",
             )
+        if count > target_runs:
+            _issue(
+                issues,
+                "STRATUM_EXCESS",
+                f"{name} has {count} runs; freeze collection at the target of {target_runs}",
+            )
+        expected = expected_scenarios[name]
+        if count >= minimum_runs and set(scenarios) != expected:
+            _issue(
+                issues,
+                "SCENARIO_CATALOG_COVERAGE",
+                f"{name} must use exactly the catalog scenarios; "
+                f"missing={sorted(expected - set(scenarios))}, "
+                f"unexpected={sorted(set(scenarios) - expected)}",
+            )
+        if count >= minimum_runs and scenarios and max(scenarios.values()) - min(
+            scenarios.values()
+        ) > 1:
+            _issue(
+                issues,
+                "SCENARIO_IMBALANCE",
+                f"{name} scenario counts must differ by at most one: "
+                f"{dict(sorted(scenarios.items()))}",
+            )
         if count and len(scenarios) < minimum_scenarios:
             _issue(
                 issues,
@@ -369,7 +502,7 @@ def audit_dataset(
     else:
         status = "READY"
     return {
-        "audit_version": "dataset-audit-v1",
+        "audit_version": "dataset-audit-v2",
         "status": status,
         "minimum_policy": (
             f">={minimum_runs} valid independent runs and >={minimum_scenarios} "

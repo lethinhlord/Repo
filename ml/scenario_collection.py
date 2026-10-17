@@ -135,6 +135,7 @@ class SourceConfig(BaseModel):
     windows_agent_name: str = Field(min_length=1)
     suricata_agent_name: str = Field(min_length=1)
     taxonomy_path: str
+    scenario_catalog_path: str | None = None
 
 
 class ScenarioDefinition(BaseModel):
@@ -208,6 +209,35 @@ def _read_yaml(path: Path) -> dict[str, Any]:
 def _resolve(project_root: Path, value: str) -> Path:
     path = Path(value)
     return path if path.is_absolute() else project_root / path
+
+
+def _validate_draft_against_catalog(draft: RunDraft, catalog_path: Path) -> None:
+    try:
+        catalog = ScenarioCatalog.model_validate(_read_yaml(catalog_path))
+    except ValueError as exc:
+        raise CollectionError(f"invalid scenario catalog: {exc}") from exc
+    scenario = next(
+        (item for item in catalog.scenarios if item.scenario_id == draft.scenario_id),
+        None,
+    )
+    if scenario is None:
+        raise CollectionError(f"draft does not match scenario catalog: {draft.scenario_id}")
+    expected = {
+        "family": scenario.family,
+        "label": scenario.label,
+        "expected_behavior": scenario.expected_behavior,
+        "attribution": scenario.attribution.model_dump(mode="json"),
+        "quality_gates": scenario.quality_gates.model_dump(mode="json"),
+    }
+    actual = {
+        "family": draft.family,
+        "label": draft.label,
+        "expected_behavior": draft.expected_behavior,
+        "attribution": draft.attribution.model_dump(mode="json"),
+        "quality_gates": draft.quality_gates.model_dump(mode="json"),
+    }
+    if actual != expected:
+        raise CollectionError(f"draft does not match scenario catalog: {draft.scenario_id}")
 
 
 def _atomic_text(path: Path, text: str) -> None:
@@ -374,6 +404,12 @@ def start_run(
         raise CollectionError(f"Wazuh Archives source does not exist: {archive_path}")
     if not taxonomy_path.is_file():
         raise CollectionError(f"taxonomy does not exist: {taxonomy_path}")
+    catalog_path: Path | None = None
+    if source.scenario_catalog_path:
+        catalog_path = _resolve(project_root, source.scenario_catalog_path).resolve()
+        if not catalog_path.is_file():
+            raise CollectionError(f"scenario catalog does not exist: {catalog_path}")
+        _validate_draft_against_catalog(draft, catalog_path)
 
     evidence_dir = project_root / "evidence/scenario-runs" / draft.run_id
     output_dir = project_root / "data/raw" / draft.run_id
@@ -385,6 +421,8 @@ def start_run(
     source_snapshot = source.model_dump(mode="json")
     source_snapshot["wazuh_archives_path"] = str(archive_path)
     source_snapshot["taxonomy_path"] = str(taxonomy_path)
+    if catalog_path is not None:
+        source_snapshot["scenario_catalog_path"] = str(catalog_path)
     state = {
         "version": "scenario-collection-v1",
         "status": "STARTED",
@@ -397,6 +435,8 @@ def start_run(
         "source_config_sha256": _sha256(source_config_path),
         "taxonomy_sha256": _sha256(taxonomy_path),
     }
+    if catalog_path is not None:
+        state["scenario_catalog_sha256"] = _sha256(catalog_path)
     evidence_root = evidence_dir.parent
     _acquire_active_run(evidence_root, draft.run_id)
     try:
@@ -411,6 +451,8 @@ def start_run(
                 taxonomy_path,
                 staging_dir / "suspicious-process-taxonomy.yaml",
             )
+            if catalog_path is not None:
+                shutil.copyfile(catalog_path, staging_dir / "scenario-catalog.yaml")
             _write_json(staging_dir / ".collection_state.json", state)
             _append_log(staging_dir, f"RUN_STARTED run_id={draft.run_id}")
             staging_dir.replace(evidence_dir)
@@ -801,6 +843,10 @@ def _verify_start_snapshot(evidence_dir: Path, state: dict[str, Any]) -> None:
         source_snapshot_path: state.get("source_config_sha256"),
         taxonomy_snapshot_path: state.get("taxonomy_sha256"),
     }
+    if state.get("scenario_catalog_sha256") is not None:
+        protected[evidence_dir / "scenario-catalog.yaml"] = state.get(
+            "scenario_catalog_sha256"
+        )
     for path, expected in protected.items():
         if not isinstance(expected, str) or not path.is_file() or _sha256(path) != expected:
             raise CollectionError(f"start snapshot changed after run start: {path.name}")
@@ -1061,3 +1107,41 @@ def abort_run(run_id: str, project_root: Path, reason: str) -> dict[str, Any]:
     _append_log(evidence_dir, f"RUN_ABORTED run_id={run_id} reason={reason.strip()}")
     _release_active_run(evidence_dir.parent, run_id)
     return {"status": "ABORTED", "run_id": run_id, "reason": reason.strip()}
+
+
+def quarantine_run(run_id: str, project_root: Path, reason: str) -> dict[str, Any]:
+    if not reason.strip():
+        raise CollectionError("quarantine reason must not be blank")
+    project_root = project_root.resolve()
+    evidence_source = project_root / "evidence/scenario-runs" / run_id
+    raw_source = project_root / "data/raw" / run_id
+    if not evidence_source.is_dir():
+        raise CollectionError(f"unknown run_id: {run_id}")
+    evidence_target = project_root / "evidence/quarantine" / run_id
+    raw_target = project_root / "data/quarantine" / run_id
+    if evidence_target.exists() or raw_target.exists():
+        raise CollectionError(f"quarantine target already exists: {run_id}")
+    evidence_target.parent.mkdir(parents=True, exist_ok=True)
+    raw_target.parent.mkdir(parents=True, exist_ok=True)
+
+    _release_active_run(evidence_source.parent, run_id)
+    raw_moved = False
+    try:
+        if raw_source.exists():
+            raw_source.replace(raw_target)
+            raw_moved = True
+        evidence_source.replace(evidence_target)
+    except OSError as exc:
+        if raw_moved and raw_target.exists() and not raw_source.exists():
+            raw_target.replace(raw_source)
+        raise CollectionError(f"could not quarantine run {run_id}: {exc}") from exc
+
+    marker = {
+        "status": "QUARANTINED",
+        "run_id": run_id,
+        "reason": reason.strip(),
+        "quarantined_at": _iso(datetime.now(UTC)),
+        "raw_preserved": raw_moved,
+    }
+    _write_json(evidence_target / "quarantine.json", marker)
+    return marker

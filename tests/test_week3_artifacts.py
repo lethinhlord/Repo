@@ -25,6 +25,8 @@ def test_training_config_preserves_60_20_20_grouped_split() -> None:
 
     assert config["random_seed"] == 42
     assert config["data"]["group_key"] == "scenario_id"
+    assert config["data"]["require_collection_audit"] is True
+    assert config["data"]["scenario_catalog"] == "config/scenario-catalog.yaml"
     assert config["split"] == {
         "train_folds": [0, 1, 2],
         "validation_folds": [3],
@@ -45,6 +47,7 @@ def test_smoke_training_uses_the_same_scenario_group_boundary() -> None:
 
     assert config["data"]["group_key"] == "scenario_id"
     assert config["data"]["minimum_groups_per_family_label"] == 5
+    assert config["data"]["require_collection_audit"] is False
 
 
 def test_feature_schema_excludes_context_and_ground_truth() -> None:

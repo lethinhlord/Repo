@@ -52,6 +52,7 @@ def test_committed_source_and_taxonomy_configuration_is_valid() -> None:
 
     assert source.windows_agent_name == "WIN11-TARGET"
     assert source.suricata_agent_name == "NET-SENSOR"
+    assert source.scenario_catalog_path == "config/scenario-catalog.yaml"
     assert taxonomy["revision"] == "datn-process-taxonomy-v1"
     assert len(taxonomy["rules"]) >= 3
 
@@ -133,6 +134,7 @@ def test_scenario_catalog_has_enforceable_quality_gates_and_alert_overlap() -> N
                 or gates.min_account_successes > 0
             )
         else:
+            assert scenario.attribution.source_ips == ["10.20.0.10"]
             assert gates.min_suricata_events > 0
             assert gates.min_network_events > 0 or gates.min_dns_events > 0
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 from collections import Counter
 from pathlib import Path
 
@@ -14,12 +16,42 @@ from ml.dataset import (
     write_json,
     write_jsonl,
 )
+from ml.dataset_audit import audit_dataset
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def build_dataset(config_path: Path) -> dict[str, object]:
     config = load_config(config_path)
     schema = load_feature_schema(Path(config["feature_schema"]))
     data_config = config["data"]
+    audit_summary: dict[str, object] | None = None
+    if bool(data_config.get("require_collection_audit", False)):
+        report = audit_dataset(
+            Path(data_config["raw_dir"]),
+            Path(data_config["evidence_dir"]),
+            minimum_runs=int(data_config["minimum_runs"]),
+            target_runs=int(data_config["target_runs"]),
+            minimum_scenarios=int(data_config.get("minimum_scenarios", 5)),
+            maximum_scenario_share=float(
+                data_config.get("maximum_scenario_share", 0.30)
+            ),
+            scenario_catalog_path=Path(data_config["scenario_catalog"]),
+        )
+        if report["status"] not in {"READY", "TARGET_MET"}:
+            raise ValueError(
+                "collection audit is not ready: "
+                f"status={report['status']}, errors={report['error_count']}"
+            )
+        audit_report_path = Path(data_config["audit_report"])
+        write_json(audit_report_path, report)
+        audit_summary = {
+            "status": report["status"],
+            "audit_version": report["audit_version"],
+            "report_sha256": _sha256(audit_report_path),
+        }
     records = discover_records(
         Path(data_config["raw_dir"]),
         data_config["manifest_name"],
@@ -88,8 +120,13 @@ def build_dataset(config_path: Path) -> dict[str, object]:
             f"{record.family}:{record.label}"
             for record in {row.run_id: row for row in records}.values()
         ),
-        "fold_by_run": folds,
+        "split_assignment_commitment_sha256": hashlib.sha256(
+            json.dumps(folds, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest(),
+        "locked_test_sha256": _sha256(output_dir / "locked_test.jsonl"),
     }
+    if audit_summary is not None:
+        manifest["collection_audit"] = audit_summary
     manifest["partition_counts"] = dict(manifest["partition_counts"])
     manifest["record_counts"] = dict(manifest["record_counts"])
     manifest["stratum_run_counts"] = dict(manifest["stratum_run_counts"])
