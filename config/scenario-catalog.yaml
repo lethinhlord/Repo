@@ -11,6 +11,7 @@ scenarios:
       min_account_failures: 0
       max_account_failures: 0
       min_account_successes: 1
+      max_account_successes: 1
       require_success_after_failure: false
     preconditions:
       - The local account datn_benign exists and is enabled on WIN11-TARGET.
@@ -32,6 +33,7 @@ scenarios:
       min_account_failures: 1
       max_account_failures: 1
       min_account_successes: 1
+      max_account_successes: 1
       require_success_after_failure: true
     preconditions:
       - The local account datn_benign exists and is enabled on WIN11-TARGET.
@@ -53,6 +55,7 @@ scenarios:
       min_account_failures: 2
       max_account_failures: 2
       min_account_successes: 1
+      max_account_successes: 1
       require_success_after_failure: true
     preconditions:
       - The account lockout threshold is greater than two attempts.
@@ -74,6 +77,7 @@ scenarios:
       min_account_failures: 0
       max_account_failures: 0
       min_account_successes: 1
+      max_account_successes: 1
       require_success_after_failure: false
     preconditions:
       - The local account datn_benign exists and its password is known to the operator.
@@ -95,6 +99,7 @@ scenarios:
       min_account_failures: 3
       max_account_failures: 3
       min_account_successes: 1
+      max_account_successes: 1
       require_success_after_failure: true
     preconditions:
       - The account lockout threshold is greater than three attempts.
@@ -173,21 +178,22 @@ scenarios:
   - scenario_id: ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS
     family: account
     label: malicious
-    expected_behavior: Five controlled invalid attempts followed by one successful logon to simulate account compromise.
+    expected_behavior: One controlled invalid attempt followed by one successful logon to simulate a low-noise account compromise.
     attribution:
       account_names: [datn_attack]
     quality_gates:
-      min_account_failures: 5
-      max_account_failures: 5
+      min_account_failures: 1
+      max_account_failures: 1
       min_account_successes: 1
+      max_account_successes: 1
       require_success_after_failure: true
     preconditions:
       - The disposable local account datn_attack exists and its correct password is available.
-      - The lockout policy safely permits five failed attempts.
+      - The disposable account is unlocked before the run.
     execution_steps:
-      - Enter five known-wrong passwords for datn_attack, then enter its correct lab password once.
+      - Enter one known-wrong password for datn_attack, then enter its correct lab password once.
     expected_observables:
-      - Five events 4625 followed by event 4624 for datn_attack.
+      - One event 4625 followed by one event 4624 for datn_attack.
     cleanup_steps:
       - Sign out of datn_attack and restore the clean snapshot if required.
 
@@ -218,6 +224,7 @@ scenarios:
     expected_behavior: Regular curl health checks to the approved Kali lab web service.
     attribution:
       process_names: [curl.exe]
+      source_ips: [10.20.0.10]
       destination_ips: [10.40.0.10]
       destination_ports: [8080]
       command_contains_any: [/health]
@@ -242,6 +249,7 @@ scenarios:
     expected_behavior: One approved curl download of a harmless text artifact from the Kali lab web service.
     attribution:
       process_names: [curl.exe]
+      source_ips: [10.20.0.10]
       destination_ips: [10.40.0.10]
       destination_ports: [8080]
       command_contains_any: [/payload-benign.txt]
@@ -266,6 +274,7 @@ scenarios:
     expected_behavior: Four approved API requests with deliberately irregular gaps.
     attribution:
       process_names: [curl.exe]
+      source_ips: [10.20.0.10]
       destination_ips: [10.40.0.10]
       destination_ports: [8080]
       command_contains_any: [/api/status]
@@ -290,6 +299,7 @@ scenarios:
     expected_behavior: Approved DNS lookups for a benign lab-only name through the Kali DNS service.
     attribution:
       process_names: [powershell.exe, pwsh.exe]
+      source_ips: [10.20.0.10]
       dns_suffixes: [www.datn.test]
       command_contains_any: [www.datn.test]
     quality_gates:
@@ -312,6 +322,7 @@ scenarios:
     expected_behavior: Six approved API health requests in a short administrative burst.
     attribution:
       process_names: [curl.exe]
+      source_ips: [10.20.0.10]
       destination_ips: [10.40.0.10]
       destination_ports: [8080]
       command_contains_any: [/api/status]
@@ -336,6 +347,7 @@ scenarios:
     expected_behavior: A safe lab-only periodic HTTP beacon simulation to the Kali listener.
     attribution:
       process_names: [curl.exe, powershell.exe, pwsh.exe]
+      source_ips: [10.20.0.10]
       destination_ips: [10.40.0.10]
       destination_ports: [8081]
       command_contains_any: [/beacon]
@@ -360,6 +372,7 @@ scenarios:
     expected_behavior: A safe lab-only HTTP beacon simulation with deterministic jitter.
     attribution:
       process_names: [curl.exe, powershell.exe, pwsh.exe]
+      source_ips: [10.20.0.10]
       destination_ips: [10.40.0.10]
       destination_ports: [8081]
       command_contains_any: [/beacon]
@@ -384,6 +397,7 @@ scenarios:
     expected_behavior: A safe lab-only DNS beacon simulation using unique subdomains.
     attribution:
       process_names: [powershell.exe, pwsh.exe]
+      source_ips: [10.20.0.10]
       dns_suffixes: [beacon.datn.test]
       command_contains_any: [beacon.datn.test]
     quality_gates:
@@ -406,6 +420,7 @@ scenarios:
     expected_behavior: A safe lab-only staged-transfer simulation downloads a harmless fixed test file.
     attribution:
       process_names: [curl.exe, powershell.exe, pwsh.exe]
+      source_ips: [10.20.0.10]
       destination_ips: [10.40.0.10]
       destination_ports: [9001]
       command_contains_any: [/stage.bin]
@@ -430,6 +445,7 @@ scenarios:
     expected_behavior: Three repeated downloads of a harmless staged marker simulate retry behavior without a signature alert.
     attribution:
       process_names: [curl.exe, powershell.exe, pwsh.exe]
+      source_ips: [10.20.0.10]
       destination_ips: [10.40.0.10]
       destination_ports: [9001]
       command_contains_any: [/stage.bin]

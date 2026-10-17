@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import shutil
 import statistics
 import tempfile
@@ -33,6 +34,7 @@ class Attribution(BaseModel):
 
     account_names: list[str] = Field(default_factory=list)
     process_names: list[str] = Field(default_factory=list)
+    source_ips: list[str] = Field(default_factory=list)
     destination_ips: list[str] = Field(default_factory=list)
     destination_ports: list[int] = Field(default_factory=list)
     dns_suffixes: list[str] = Field(default_factory=list)
@@ -43,6 +45,7 @@ class Attribution(BaseModel):
         fields = (
             self.account_names,
             self.process_names,
+            self.source_ips,
             self.destination_ips,
             self.destination_ports,
             self.dns_suffixes,
@@ -304,6 +307,53 @@ def _append_log(evidence_dir: Path, message: str) -> None:
         handle.write(f"{_iso(datetime.now(UTC))} {message}\n")
 
 
+def _active_lock_path(evidence_root: Path) -> Path:
+    return evidence_root / ".active-run.json"
+
+
+def _acquire_active_run(evidence_root: Path, run_id: str) -> None:
+    evidence_root.mkdir(parents=True, exist_ok=True)
+    for state_path in evidence_root.glob("*/.collection_state.json"):
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise CollectionError(
+                f"cannot verify collection state before start: {state_path}: {exc}"
+            ) from exc
+        if state.get("status") == "STARTED":
+            raise CollectionError(
+                f"active run already exists: {state.get('run_id', state_path.parent.name)}"
+            )
+
+    lock_path = _active_lock_path(evidence_root)
+    payload = json.dumps({"run_id": run_id}, sort_keys=True) + "\n"
+    try:
+        descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError as exc:
+        try:
+            owner = json.loads(lock_path.read_text(encoding="utf-8")).get("run_id")
+        except (OSError, json.JSONDecodeError):
+            owner = "UNKNOWN"
+        raise CollectionError(f"active run lock is held by: {owner}") from exc
+    try:
+        os.write(descriptor, payload.encode("utf-8"))
+    finally:
+        os.close(descriptor)
+
+
+def _release_active_run(evidence_root: Path, run_id: str) -> None:
+    lock_path = _active_lock_path(evidence_root)
+    if not lock_path.exists():
+        return
+    try:
+        owner = json.loads(lock_path.read_text(encoding="utf-8")).get("run_id")
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CollectionError(f"cannot verify active run lock: {lock_path}: {exc}") from exc
+    if owner != run_id:
+        raise CollectionError(f"active run lock belongs to {owner}, not {run_id}")
+    lock_path.unlink()
+
+
 def start_run(
     draft_path: Path,
     source_config_path: Path,
@@ -348,7 +398,7 @@ def start_run(
         "taxonomy_sha256": _sha256(taxonomy_path),
     }
     evidence_root = evidence_dir.parent
-    evidence_root.mkdir(parents=True, exist_ok=True)
+    _acquire_active_run(evidence_root, draft.run_id)
     try:
         with tempfile.TemporaryDirectory(
             prefix=f".{draft.run_id}.starting-",
@@ -365,6 +415,7 @@ def start_run(
             _append_log(staging_dir, f"RUN_STARTED run_id={draft.run_id}")
             staging_dir.replace(evidence_dir)
     except OSError as exc:
+        _release_active_run(evidence_root, draft.run_id)
         raise CollectionError(f"could not initialize run evidence: {exc}") from exc
     return {"status": "STARTED", "run_id": draft.run_id, "started_at": state["started_at"]}
 
@@ -485,6 +536,9 @@ def _suricata_payload(event: dict[str, Any]) -> dict[str, Any] | None:
 
 def _matches_suricata(payload: dict[str, Any], attribution: Attribution) -> bool:
     event_type = payload.get("event_type")
+    source_ips = _casefold_set(attribution.source_ips)
+    if source_ips and str(payload.get("src_ip", "")).casefold() not in source_ips:
+        return False
     destination_ips = _casefold_set(attribution.destination_ips)
     if destination_ips and str(payload.get("dest_ip", "")).casefold() not in destination_ips:
         return False
@@ -733,6 +787,25 @@ def _write_checksums(evidence_dir: Path) -> None:
     _atomic_text(evidence_dir / "checksums.sha256", "".join(rows))
 
 
+def _verify_start_snapshot(evidence_dir: Path, state: dict[str, Any]) -> None:
+    ground_truth_path = evidence_dir / "ground_truth.json"
+    source_snapshot_path = evidence_dir / "collection-sources.yaml"
+    taxonomy_snapshot_path = evidence_dir / "suspicious-process-taxonomy.yaml"
+    try:
+        ground_truth = json.loads(ground_truth_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CollectionError(f"invalid start snapshot ground_truth.json: {exc}") from exc
+    if ground_truth != state.get("draft"):
+        raise CollectionError("start snapshot ground_truth.json changed after run start")
+    protected = {
+        source_snapshot_path: state.get("source_config_sha256"),
+        taxonomy_snapshot_path: state.get("taxonomy_sha256"),
+    }
+    for path, expected in protected.items():
+        if not isinstance(expected, str) or not path.is_file() or _sha256(path) != expected:
+            raise CollectionError(f"start snapshot changed after run start: {path.name}")
+
+
 def finalize_run(
     run_id: str,
     project_root: Path,
@@ -752,6 +825,7 @@ def finalize_run(
         source = SourceConfig.model_validate(state["source"])
     except ValueError as exc:
         raise CollectionError(f"stored collection state is invalid: {exc}") from exc
+    _verify_start_snapshot(evidence_dir, state)
     ended_at = _utc(now)
     started_at = _parse_time(state["started_at"])
     if started_at is None or ended_at <= started_at:
@@ -765,7 +839,7 @@ def finalize_run(
     ]
     if not in_window:
         raise CollectionError("no timestamped events fall inside the run window")
-    taxonomy_path = Path(source.taxonomy_path)
+    taxonomy_path = evidence_dir / "suspicious-process-taxonomy.yaml"
     taxonomy = _load_taxonomy(taxonomy_path)
     if _sha256(taxonomy_path) != state["taxonomy_sha256"]:
         raise CollectionError("taxonomy changed after run start")
@@ -867,6 +941,7 @@ def finalize_run(
     state["status"] = "FINALIZED"
     state["ended_at"] = _iso(ended_at)
     _write_json(state_path, state)
+    _release_active_run(evidence_dir.parent, run_id)
     return metadata
 
 
@@ -874,6 +949,7 @@ def _verify_checksums(evidence_dir: Path) -> None:
     checksum_path = evidence_dir / "checksums.sha256"
     if not checksum_path.is_file():
         raise CollectionError("missing evidence checksums.sha256")
+    entries: dict[str, str] = {}
     for line_number, line in enumerate(checksum_path.read_text(encoding="utf-8").splitlines(), 1):
         if not line.strip():
             continue
@@ -881,9 +957,26 @@ def _verify_checksums(evidence_dir: Path) -> None:
             expected, name = line.split("  ", 1)
         except ValueError as exc:
             raise CollectionError(f"invalid checksum line {line_number}") from exc
+        if len(expected) != 64 or any(character not in "0123456789abcdef" for character in expected):
+            raise CollectionError(f"invalid checksum digest on line {line_number}")
+        if name in entries or Path(name).name != name:
+            raise CollectionError(f"invalid checksum file name on line {line_number}")
+        entries[name] = expected
         path = evidence_dir / name
         if not path.is_file() or _sha256(path) != expected:
             raise CollectionError(f"checksum mismatch for evidence file: {name}")
+    expected_files = {
+        path.name
+        for path in evidence_dir.iterdir()
+        if path.is_file() and path.name not in {"checksums.sha256", ".collection_state.json"}
+    }
+    if not entries or set(entries) != expected_files:
+        missing = sorted(expected_files - set(entries))
+        unexpected = sorted(set(entries) - expected_files)
+        raise CollectionError(
+            "checksum manifest is incomplete or inconsistent: "
+            f"missing={missing}, unexpected={unexpected}"
+        )
 
 
 def validate_run(run_id: str, project_root: Path) -> dict[str, Any]:
@@ -891,6 +984,14 @@ def validate_run(run_id: str, project_root: Path) -> dict[str, Any]:
     evidence_dir = project_root / "evidence/scenario-runs" / run_id
     run_dir = project_root / "data/raw" / run_id
     _verify_checksums(evidence_dir)
+    state_path = evidence_dir / ".collection_state.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CollectionError(f"invalid collection state: {exc}") from exc
+    if state.get("status") != "FINALIZED" or state.get("run_id") != run_id:
+        raise CollectionError("collection state is not FINALIZED for this run")
+    _verify_start_snapshot(evidence_dir, state)
     metadata_path = evidence_dir / "collection_metadata.json"
     if not metadata_path.is_file():
         raise CollectionError("missing collection_metadata.json")
@@ -958,4 +1059,5 @@ def abort_run(run_id: str, project_root: Path, reason: str) -> dict[str, Any]:
     state["aborted_at"] = _iso(datetime.now(UTC))
     _write_json(state_path, state)
     _append_log(evidence_dir, f"RUN_ABORTED run_id={run_id} reason={reason.strip()}")
+    _release_active_run(evidence_dir.parent, run_id)
     return {"status": "ABORTED", "run_id": run_id, "reason": reason.strip()}

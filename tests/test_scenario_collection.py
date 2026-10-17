@@ -11,6 +11,7 @@ from ml.scenario_collection import (
     Attribution,
     CollectionError,
     _matches_suricata,
+    abort_run,
     finalize_run,
     start_run,
     validate_run,
@@ -587,3 +588,110 @@ def test_finalize_rejects_incomplete_archive_tail_and_allows_retry(tmp_path: Pat
         now=started + timedelta(seconds=20),
     )
     assert result["status"] == "FINALIZED"
+
+
+def test_start_rejects_a_second_concurrent_run_and_abort_releases_lock(
+    tmp_path: Path,
+) -> None:
+    config = source_config(tmp_path)
+    first = write_draft(
+        tmp_path,
+        run_id="ACCOUNT-BENIGN-CONCURRENT-001",
+        family="account",
+        label="benign",
+        attribution={"account_names": ["labuser"]},
+    )
+    second = write_draft(
+        tmp_path,
+        run_id="ACCOUNT-BENIGN-CONCURRENT-002",
+        family="account",
+        label="benign",
+        attribution={"account_names": ["labuser"]},
+    )
+
+    start_run(first, config, tmp_path)
+    with pytest.raises(CollectionError, match="active run"):
+        start_run(second, config, tmp_path)
+
+    abort_run("ACCOUNT-BENIGN-CONCURRENT-001", tmp_path, "test cleanup")
+    result = start_run(second, config, tmp_path)
+    assert result["status"] == "STARTED"
+
+
+def test_finalize_rejects_modified_start_snapshot(tmp_path: Path) -> None:
+    config = source_config(tmp_path)
+    draft = write_draft(
+        tmp_path,
+        run_id="ACCOUNT-BENIGN-SNAPSHOT-001",
+        family="account",
+        label="benign",
+        attribution={"account_names": ["labuser"]},
+    )
+    started = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
+    start_run(draft, config, tmp_path, now=started)
+    ground_truth = (
+        tmp_path
+        / "evidence/scenario-runs/ACCOUNT-BENIGN-SNAPSHOT-001/ground_truth.json"
+    )
+    payload = json.loads(ground_truth.read_text(encoding="utf-8"))
+    payload["label"] = "malicious"
+    ground_truth.write_text(json.dumps(payload), encoding="utf-8")
+    append_jsonl(
+        tmp_path / "archives.json",
+        [windows_event(4624, started + timedelta(seconds=5), {"targetUserName": "labuser"})],
+    )
+
+    with pytest.raises(CollectionError, match="start snapshot"):
+        finalize_run(
+            "ACCOUNT-BENIGN-SNAPSHOT-001",
+            tmp_path,
+            now=started + timedelta(seconds=10),
+        )
+
+
+def test_suricata_attribution_requires_the_declared_windows_source_ip() -> None:
+    attribution = Attribution(
+        source_ips=["10.20.0.10"],
+        destination_ips=["10.40.0.10"],
+        destination_ports=[8081],
+    )
+    unrelated = {
+        "event_type": "http",
+        "src_ip": "10.20.0.99",
+        "dest_ip": "10.40.0.10",
+        "dest_port": 8081,
+    }
+    expected = {**unrelated, "src_ip": "10.20.0.10"}
+
+    assert not _matches_suricata(unrelated, attribution)
+    assert _matches_suricata(expected, attribution)
+
+
+def test_validate_rejects_empty_or_incomplete_checksum_manifest(tmp_path: Path) -> None:
+    config = source_config(tmp_path)
+    draft = write_draft(
+        tmp_path,
+        run_id="ACCOUNT-BENIGN-CHECKSUM-001",
+        family="account",
+        label="benign",
+        attribution={"account_names": ["labuser"]},
+    )
+    started = datetime(2026, 10, 16, 13, 0, tzinfo=UTC)
+    start_run(draft, config, tmp_path, now=started)
+    append_jsonl(
+        tmp_path / "archives.json",
+        [windows_event(4624, started + timedelta(seconds=5), {"targetUserName": "labuser"})],
+    )
+    finalize_run(
+        "ACCOUNT-BENIGN-CHECKSUM-001",
+        tmp_path,
+        now=started + timedelta(seconds=10),
+    )
+    checksum_path = (
+        tmp_path
+        / "evidence/scenario-runs/ACCOUNT-BENIGN-CHECKSUM-001/checksums.sha256"
+    )
+    checksum_path.write_text("", encoding="utf-8")
+
+    with pytest.raises(CollectionError, match="checksum manifest"):
+        validate_run("ACCOUNT-BENIGN-CHECKSUM-001", tmp_path)
