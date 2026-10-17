@@ -105,6 +105,9 @@ def windows_event(
     when: datetime,
     eventdata: dict,
 ) -> dict:
+    eventdata = dict(eventdata)
+    if event_id in {4624, 4625}:
+        eventdata.setdefault("logonType", "2")
     return {
         "timestamp": when.isoformat(),
         "agent": {"name": "WIN11-TARGET"},
@@ -179,6 +182,65 @@ def test_account_run_creates_strict_manifest_incident_and_checksums(tmp_path: Pa
     assert incident["evidence_sources"] == ["wazuh-archives"]
     validation = validate_run("ACCOUNT-MALICIOUS-001", tmp_path)
     assert validation["status"] == "VALID"
+
+
+def test_account_run_ignores_noninteractive_logons_for_declared_user(tmp_path: Path) -> None:
+    config = source_config(tmp_path)
+    draft = write_draft(
+        tmp_path,
+        run_id="ACCOUNT-BENIGN-INTERACTIVE-001",
+        family="account",
+        label="benign",
+        attribution={"account_names": ["testuser"]},
+        quality_gates={
+            "min_account_failures": 0,
+            "max_account_failures": 0,
+            "min_account_successes": 1,
+            "max_account_successes": 1,
+            "require_success_after_failure": False,
+        },
+    )
+    started = datetime(2026, 10, 16, 1, 0, tzinfo=UTC)
+    start_run(draft, config, tmp_path, now=started)
+    missing_logon_type = windows_event(
+        4624,
+        started + timedelta(seconds=3),
+        {"targetUserName": "testuser"},
+    )
+    del missing_logon_type["data"]["win"]["eventdata"]["logonType"]
+    append_jsonl(
+        tmp_path / "archives.json",
+        [
+            missing_logon_type,
+            windows_event(
+                4624,
+                started + timedelta(seconds=5),
+                {"targetUserName": "testuser", "logonType": "3"},
+            ),
+            windows_event(
+                4624,
+                started + timedelta(seconds=10),
+                {"targetUserName": "testuser", "logonType": "2"},
+            ),
+        ],
+    )
+
+    result = finalize_run(
+        "ACCOUNT-BENIGN-INTERACTIVE-001",
+        tmp_path,
+        now=started + timedelta(seconds=30),
+    )
+
+    assert result["status"] == "FINALIZED"
+    evidence = [
+        json.loads(line)
+        for line in (
+            tmp_path
+            / "evidence/scenario-runs/ACCOUNT-BENIGN-INTERACTIVE-001/windows_events.jsonl"
+        ).read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(evidence) == 1
+    assert evidence[0]["data"]["win"]["eventdata"]["logonType"] == "2"
 
 
 def test_c2_run_requires_correlated_sysmon_and_suricata_and_calculates_features(

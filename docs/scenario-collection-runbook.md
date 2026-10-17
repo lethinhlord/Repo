@@ -1,6 +1,6 @@
 # QUY TRÌNH CHUẨN THU THẬP DỮ LIỆU TRAIN TRÊN LAB 4 VM
 
-Phiên bản: 1.1 — 16/10/2026
+Phiên bản: 1.2 — 17/10/2026
 Phạm vi: dữ liệu `account-benign`, `account-malicious`, `c2-benign`,
 `c2-malicious` cho nhánh `feature/week3-model-training`.
 
@@ -17,9 +17,9 @@ trước khi chạy, bằng chứng gốc và checksum. Không coi từng dòng 
 | c2-malicious | 10 run hợp lệ | 12 |
 
 Mỗi nhóm dùng đủ **năm** kịch bản trong `config/scenario-catalog.yaml`. Ở mốc 10,
-mỗi kịch bản chạy đúng hai lần. Ở mốc 12, chọn hai kịch bản khác nhau để chạy lần thứ
-ba; do đó không kịch bản nào vượt 25% số run của nhóm. Không nhân bản file để tăng số
-mẫu.
+mỗi kịch bản chạy đúng hai lần. Ở mốc 11, chọn một kịch bản để chạy lần thứ ba; ở mốc
+12, chọn thêm một kịch bản khác để chạy lần thứ ba. Vì vậy phân bố luôn cân bằng và
+không kịch bản nào vượt 27,3% số run của nhóm. Không nhân bản file để tăng số mẫu.
 
 ## 2. Kiến trúc 4 VM
 
@@ -105,10 +105,59 @@ Trên Windows PowerShell (Administrator), đặt tên rồi reboot:
 Rename-Computer -NewName WIN11-TARGET -Restart
 ```
 
-Sau reboot, chụp `hostname` và IP management. Dùng DHCP reservation của VMnet8 hoặc IP
-tĩnh để giữ `132/147/148/150`; trước khi đặt tĩnh phải kiểm tra không trùng bằng ping và
-bảng DHCP. Management gateway/DNS lấy đúng giá trị hiển thị trong Virtual Network
-Editor, không giả định máy nào cũng dùng cùng gateway VMware.
+Sau reboot, chụp `hostname` và IP management. Trong `Virtual Network Editor > VMnet8 >
+DHCP Settings`, chỉnh dải DHCP để **không chứa** `.132`, `.147`, `.148`, `.150`, rồi đặt
+bốn địa chỉ này tĩnh trên guest. Trước khi đặt, tắt VM cần gán và kiểm tra địa chỉ chưa bị
+dùng bằng `ping` và bảng ARP trên host. Gateway/DNS phải chép từ `Virtual Network Editor`;
+không tự đoán. Ghi ba giá trị `VMNET8_SUBNET`, `VMNET8_GATEWAY`, `VMNET8_DNS` vào biên
+bản lab. Sau khi đặt tĩnh, reboot từng VM và xác nhận địa chỉ không đổi. Nếu chưa thực
+hiện đủ bước này thì các địa chỉ ở phần sau chưa phải điều kiện đảm bảo và không được thu.
+
+Trên Ubuntu Server, xác định NIC management bằng `ip route show default`, sao lưu
+`/etc/netplan`, rồi sửa **file đang khai báo NIC đó** bằng `sudoedit`; không tạo declaration
+thứ hai. Mẫu dưới dùng giá trị gateway/DNS đã ghi từ VMware (thay `ens33`):
+
+```yaml
+network:
+  version: 2
+  ethernets:
+    ens33:
+      dhcp4: false
+      addresses: [192.168.58.147/24] # SOC-AI; NET-SENSOR dùng .150
+      routes:
+        - to: default
+          via: <VMNET8_GATEWAY>
+      nameservers:
+        addresses: [<VMNET8_DNS>]
+```
+
+Chạy `sudo netplan generate`, rồi `sudo netplan try --timeout 120` từ console VMware;
+chỉ xác nhận khi ping gateway và host thành công. Trên Kali, thay đúng connection/NIC:
+
+```bash
+MGMT_IF=eth0
+MGMT_CON=$(nmcli -g GENERAL.CONNECTION device show "$MGMT_IF")
+sudo nmcli connection modify "$MGMT_CON" ipv4.method manual \
+  ipv4.addresses 192.168.58.132/24 \
+  ipv4.gateway '<VMNET8_GATEWAY>' ipv4.dns '<VMNET8_DNS>'
+sudo nmcli connection up "$MGMT_CON"
+```
+
+Trên Windows PowerShell Administrator, thay alias/MAC đúng NIC VMnet8 và giá trị đã ghi:
+
+```powershell
+$MgmtIf = 'Ethernet'
+Set-NetIPInterface -InterfaceAlias $MgmtIf -AddressFamily IPv4 -Dhcp Disabled
+Get-NetIPAddress -InterfaceAlias $MgmtIf -AddressFamily IPv4 `
+  -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false
+New-NetIPAddress -InterfaceAlias $MgmtIf -IPAddress 192.168.58.148 `
+  -PrefixLength 24 -DefaultGateway '<VMNET8_GATEWAY>'
+Set-DnsClientServerAddress -InterfaceAlias $MgmtIf `
+  -ServerAddresses '<VMNET8_DNS>'
+```
+
+Không dán literal `<VMNET8_GATEWAY>`/`<VMNET8_DNS>`; thay bằng giá trị thật trước khi
+chạy. SOC-AI dùng `.147`, NET-SENSOR `.150`, Kali `.132`, Windows `.148`.
 
 Trên mọi Linux VM:
 
@@ -141,8 +190,22 @@ bản. Tạo snapshot `01-TELEMETRY-READY` sau khi đạt G4.
 Trong Virtual Network Editor, tạo:
 
 - VMnet8: NAT/management `192.168.58.0/24`.
-- VMnet2: Host-only `10.40.0.0/24`, tắt DHCP.
-- VMnet3: Host-only `10.20.0.0/24`, tắt DHCP.
+- VMnet2: Host-only `10.40.0.0/24`, tắt DHCP và bỏ chọn
+  `Connect a host virtual adapter to this network`.
+- VMnet3: Host-only `10.20.0.0/24`, tắt DHCP và bỏ chọn
+  `Connect a host virtual adapter to this network`.
+
+Hai mạng dữ liệu không được có adapter host dùng `10.40.0.1` hoặc `10.20.0.1`, vì hai
+địa chỉ đó thuộc NET-SENSOR. Trên host PowerShell (Administrator), xác nhận adapter cũ
+đã biến mất hoặc bị disable:
+
+```powershell
+Get-NetAdapter -Name 'VMware Network Adapter VMnet2','VMware Network Adapter VMnet3' `
+  -ErrorAction SilentlyContinue | Select-Object Name,Status,MacAddress
+```
+
+Nếu vẫn còn adapter host ở trạng thái `Up`, quay lại Virtual Network Editor và bỏ kết
+nối host; không chỉ đổi IP để che xung đột.
 
 Gắn NIC:
 
@@ -151,9 +214,12 @@ Gắn NIC:
 - SOC-AI: VMnet8.
 - NET-SENSOR: VMnet8 + VMnet2 + VMnet3.
 
-Sau khi boot, dùng `ip -br link` trên Linux và `Get-NetAdapter` trên Windows để ghi
-đúng tên interface. Trong các ví dụ dưới đây, NET-SENSOR dùng `ens37` phía Kali và
-`ens38` phía Windows; phải thay bằng tên thật nếu khác.
+Trước khi boot, mở `VM > Settings > Network Adapter > Advanced` và ghi MAC của từng
+NIC. Sau boot, đối chiếu MAC bằng `ip -br link` trên Linux và
+`Get-NetAdapter | Format-Table Name,MacAddress,Status` trên Windows. Lập bảng
+`MAC -> VMnet -> tên interface` trong biên bản. Không suy tên NIC theo thứ tự. Trong ví
+dụ dưới đây, NET-SENSOR dùng `ens37` phía Kali và `ens38` phía Windows; chỉ dùng các
+tên đó nếu MAC đã khớp.
 
 ### 5.2 NET-SENSOR
 
@@ -184,16 +250,17 @@ network:
 
 Không đặt default gateway trên hai NIC dữ liệu. Kiểm tra trước khi apply:
 
+Mở sẵn một console VMware thứ hai, sau đó chạy:
+
 ```bash
 sudo netplan generate
-sudo netplan try
-ip -br address
-ip route
+sudo netplan try --timeout 120
 ```
 
-Sau `netplan try`, xác nhận default route vẫn chỉ đi qua NIC management/VMnet8 và hai
-NIC dữ liệu không có default route. Mất SSH hoặc xuất hiện hai default route thì từ chối
-apply và phục hồi bản sao lưu.
+Trong lúc `netplan try` đang chờ, dùng console thứ hai chạy `ip -br address` và
+`ip route`; chỉ bấm `ENTER` xác nhận ở console thứ nhất khi hai IP dữ liệu đúng và chỉ
+có một default route qua VMnet8. Nếu sai, không xác nhận để Netplan tự rollback. Sau khi
+xác nhận mới chạy lại `ip -br address` và `ip route` để lưu bằng chứng.
 
 Bật chuyển tiếp IPv4:
 
@@ -240,14 +307,23 @@ Thay `Ethernet 2` bằng NIC VMnet3 thực tế. Khối dưới kiểm tra trạ
 không tạo IP/route trùng khi chạy lại:
 
 ```powershell
+$ErrorActionPreference = 'Stop'
 $DataIf = "Ethernet 2"
+$unexpectedIp = Get-NetIPAddress -InterfaceAlias $DataIf -AddressFamily IPv4 `
+  -ErrorAction SilentlyContinue | Where-Object {
+    $_.IPAddress -ne '10.20.0.10' -and $_.PrefixOrigin -ne 'WellKnown'
+  }
+if ($unexpectedIp) { throw "Unexpected IPv4 address exists on $DataIf" }
 if (-not (Get-NetIPAddress -InterfaceAlias $DataIf -AddressFamily IPv4 `
   -ErrorAction SilentlyContinue | Where-Object IPAddress -eq "10.20.0.10")) {
   New-NetIPAddress -InterfaceAlias $DataIf -IPAddress 10.20.0.10 -PrefixLength 24
 }
-if (-not (Get-NetRoute -DestinationPrefix "10.40.0.0/24" `
-  -InterfaceAlias $DataIf -ErrorAction SilentlyContinue | `
-  Where-Object NextHop -eq "10.20.0.1")) {
+$routes = @(Get-NetRoute -DestinationPrefix "10.40.0.0/24" `
+  -ErrorAction SilentlyContinue)
+if ($routes | Where-Object {
+  $_.InterfaceAlias -ne $DataIf -or $_.NextHop -ne '10.20.0.1'
+}) { throw 'Competing route to 10.40.0.0/24 exists' }
+if (-not $routes) {
   New-NetRoute -DestinationPrefix 10.40.0.0/24 -InterfaceAlias $DataIf `
     -NextHop 10.20.0.1 -PolicyStore PersistentStore
 }
@@ -306,6 +382,7 @@ agent đã gửi dữ liệu, không tự tạo file rỗng để vượt kiểm
 ### 6.2 Repo, môi trường Python và Week 2 services
 
 ```bash
+set -euo pipefail
 LAB_USER="$(id -un)"
 PROJECT_ROOT="$HOME/datn-ai-soar"
 if [ -d "$PROJECT_ROOT/.git" ]; then
@@ -317,16 +394,19 @@ else
     https://github.com/lethinhlord/Repo.git "$PROJECT_ROOT"
 fi
 cd "$PROJECT_ROOT"
-git branch --show-current
-git status --short
-test "$(git rev-parse HEAD)" = \
-  "$(git rev-parse origin/feature/week3-model-training)"
+test "$(git branch --show-current)" = "feature/week3-model-training"
+test -z "$(git status --porcelain)" || {
+  echo 'FAIL: repository has local changes' >&2
+  exit 1
+}
+test "$(git rev-parse HEAD)" = "$(git rev-parse origin/feature/week3-model-training)"
 chmod +x scripts/bootstrap_ml.sh scripts/deploy_week2.sh scripts/verify_week2.sh
 ./scripts/bootstrap_ml.sh
 .venv-ml/bin/python -m pytest -q \
   tests/test_scenario_collection.py \
   tests/test_dataset_audit.py \
   tests/test_collection_configuration.py
+echo 'REPOSITORY_PREFLIGHT=PASS'
 ```
 
 Kết quả chuẩn là toàn bộ test pass. Nếu cần API/n8n Week 2 trên cùng VM:
@@ -339,6 +419,7 @@ sudo usermod -aG docker "$LAB_USER"
 Thoát SSH, đăng nhập lại để group có hiệu lực, rồi:
 
 ```bash
+set -euo pipefail
 cd "$HOME/datn-ai-soar"
 docker version
 ./scripts/deploy_week2.sh
@@ -380,18 +461,36 @@ New-LocalUser -Name datn_attack -Password $p -Description "DATN attack decoy"
   $p = Read-Host "Password for $name" -AsSecureString
   New-LocalUser -Name $name -Password $p -Description "DATN spray decoy"
 }
-auditpol /set /subcategory:"Logon" /success:enable /failure:enable
-auditpol /get /subcategory:"Logon"
+$LogonAuditGuid = '{0CCE9215-69AE-11D9-BED3-505054503030}'
+auditpol /set /subcategory:$LogonAuditGuid /success:enable /failure:enable
+if ($LASTEXITCODE -ne 0) { throw 'Cannot enable Logon audit policy' }
+auditpol /get /subcategory:$LogonAuditGuid
+if ($LASTEXITCODE -ne 0) { throw 'Cannot verify Logon audit policy' }
 ```
 
-Ghi ngưỡng lockout hiện tại:
+GUID làm cho lệnh không phụ thuộc ngôn ngữ Windows. Xuất policy gốc, sau đó vô hiệu hóa
+lockout **chỉ trên VM target dùng riêng cho lab** để các run 6/10 lần sai không bị phụ
+thuộc trạng thái của run trước:
 
 ```powershell
+New-Item -ItemType Directory -Force C:\DATN | Out-Null
+secedit /export /cfg C:\DATN\before-collection-security.inf /areas SECURITYPOLICY /quiet
+if ($LASTEXITCODE -ne 0) { throw 'Cannot export original security policy' }
+net accounts /lockoutthreshold:0
+if ($LASTEXITCODE -ne 0) { throw 'Cannot disable lab account lockout' }
 net accounts
 ```
 
-Không chạy 6/10 lần sai nếu ngưỡng khóa tài khoản thấp hơn. Điều chỉnh trong lab hoặc
-dùng ít attempt hơn và ghi lại biến thể; sau thí nghiệm phải khôi phục policy.
+Output phải hiện `Lockout threshold: Never` (hoặc giá trị tương đương theo ngôn ngữ hệ
+thống). Không được tự giảm số attempt: collector kiểm đúng số trong catalog. Sau khi đóng
+dataset, khôi phục policy gốc bằng snapshot `01-TELEMETRY-READY` hoặc lệnh sau rồi reboot:
+
+```powershell
+secedit /configure /db C:\DATN\restore-security.sdb `
+  /cfg C:\DATN\before-collection-security.inf /areas SECURITYPOLICY /quiet
+if ($LASTEXITCODE -ne 0) { throw 'Cannot restore original security policy' }
+Restart-Computer
+```
 
 ### 7.2 Sysmon
 
@@ -420,12 +519,13 @@ C:\DATN\Sysmon\Sysmon64.exe -c
 Get-Service Sysmon64
 ```
 
-Config repo bật ProcessCreate (ID 1), NetworkConnect (ID 3) và DnsQuery (ID 22). Tạo
-traffic kiểm tra qua management (chưa dùng làm dữ liệu train), sau đó xác nhận:
+Config repo bật ProcessCreate (ID 1), NetworkConnect (ID 3) và DnsQuery (ID 22). Không
+dùng DNS Internet để test. Sau khi dịch vụ Kali ở mục 9 đã chạy, tạo traffic lab (chưa
+dùng làm dữ liệu train), sau đó xác nhận:
 
 ```powershell
 Test-NetConnection 192.168.58.147 -Port 443
-Resolve-DnsName example.com
+Resolve-DnsName www.datn.test -Server 10.40.0.10
 Start-Process "$env:SystemRoot\System32\cmd.exe" -ArgumentList '/c whoami' -Wait
 1,3,22 | ForEach-Object {
   Get-WinEvent -FilterHashtable @{
@@ -504,7 +604,7 @@ Trong `/etc/suricata/suricata.yaml`:
 - đặt `HOME_NET` là `[10.20.0.0/24]`;
 - cấu hình `af-packet` nghe **chỉ NIC phía Kali** (ví dụ `ens37`) để tránh đếm đôi;
 - trong `eve-log.types` bật `alert`, `dns`, `http`, `tls`, `flow`;
-- thêm `datn.rules` vào `rule-files`.
+- thêm đường dẫn tuyệt đối `/etc/suricata/rules/datn.rules` vào `rule-files`.
 
 Khối tối thiểu cần đối chiếu trong YAML (không tạo block trùng nếu file đã có):
 
@@ -533,8 +633,14 @@ outputs:
 
 rule-files:
   - suricata.rules
-  - datn.rules
+  - /etc/suricata/rules/datn.rules
 ```
+
+Đây là các mục cần sửa **trong các section sẵn có**, không dán thêm một bộ khóa
+`vars`/`af-packet`/`outputs`/`rule-files` ở cuối file. Trước khi lưu, dùng
+`grep -nE '^(vars:|af-packet:|outputs:|rule-files:)'` và bảo đảm mỗi khóa cấp cao nhất chỉ
+có một lần. Nếu không xác định được đúng vị trí, phục hồi backup và nhờ người phụ trách
+kiểm tra; không đoán thứ tự YAML.
 
 Chuyển rule từ SOC-AI:
 
@@ -544,9 +650,13 @@ SOC_HOME=$(ssh "${SOC_USER}@192.168.58.147" 'printf %s "$HOME"') || exit 1
 SOC_REPO="$SOC_HOME/datn-ai-soar"
 scp "${SOC_USER}@192.168.58.147:${SOC_REPO}/config/suricata-datn.rules" /tmp/
 sudo install -m 0644 /tmp/suricata-datn.rules /etc/suricata/rules/datn.rules
-sudo suricata -T -c /etc/suricata/suricata.yaml
-sudo systemctl enable --now suricata
+sudo suricata --init-errors-fatal -T -c /etc/suricata/suricata.yaml
+sudo systemctl enable suricata
+sudo systemctl restart suricata
 sudo systemctl is-active suricata
+sudo suricata --dump-config -c /etc/suricata/suricata.yaml | \
+  grep -F '/etc/suricata/rules/datn.rules'
+sudo grep -E 'sid:(900001|900002|900004);' /etc/suricata/rules/datn.rules
 sudo tail -n 5 /var/log/suricata/eve.json | jq -c .
 ```
 
@@ -565,8 +675,11 @@ sudo chmod 644 /usr/share/keyrings/wazuh.gpg
 echo 'deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main' | \
   sudo tee /etc/apt/sources.list.d/wazuh.list
 sudo apt-get update
+WAZUH_VERSION=4.14.9-1
 sudo env WAZUH_MANAGER="192.168.58.147" WAZUH_AGENT_NAME="NET-SENSOR" \
-  apt-get install -y wazuh-agent
+  apt-get install -y "wazuh-agent=$WAZUH_VERSION"
+sudo apt-mark hold wazuh-agent
+dpkg-query -W -f='${Version}\n' wazuh-agent | grep -Fx "$WAZUH_VERSION"
 ```
 
 Sao lưu `/var/ossec/etc/ossec.conf`, đếm location EVE và chỉ chèn block trong
@@ -591,7 +704,8 @@ sudo setfacl -d -m u:wazuh:rx /var/log/suricata
 sudo /var/ossec/bin/wazuh-logcollector -t
 sudo /var/ossec/bin/wazuh-agentd -t
 sudo systemctl daemon-reload
-sudo systemctl enable --now wazuh-agent
+sudo systemctl enable wazuh-agent
+sudo systemctl restart wazuh-agent
 sudo -u wazuh test -r /var/log/suricata/eve.json
 sudo systemctl is-active wazuh-agent
 ```
@@ -611,7 +725,7 @@ có ở Archives nghĩa là cấu hình Wazuh/ACL chưa đạt.
 
 ```bash
 sudo apt update
-sudo apt install -y python3 dnsmasq curl jq
+sudo apt install -y python3 dnsmasq curl jq dnsutils
 sudo install -d -m 0755 /srv/datn/benign/api /srv/datn/beacon /srv/datn/stage
 printf 'ok\n' | sudo tee /srv/datn/benign/health
 printf '{"status":"ok"}\n' | sudo tee /srv/datn/benign/api/status
@@ -636,7 +750,13 @@ systemctl is-active datn-http-benign datn-http-beacon datn-http-stage
 ss -lntp | grep -E ':8080|:8081|:9001'
 ```
 
-Tạo `/etc/dnsmasq.d/datn-lab.conf`:
+Tạo file bằng quyền root; thay `eth1` đúng NIC VMnet2 trước khi lưu:
+
+```bash
+sudoedit /etc/dnsmasq.d/datn-lab.conf
+```
+
+Nội dung đầy đủ của `/etc/dnsmasq.d/datn-lab.conf`:
 
 ```text
 interface=eth1
@@ -656,95 +776,246 @@ Thay `eth1` đúng NIC VMnet2. Cấu hình cố ý **không có DNS upstream**: 
 ```bash
 sudo dnsmasq --test
 sudo systemctl restart dnsmasq
-dig @10.40.0.10 www.datn.test
-dig @10.40.0.10 r01.beacon.datn.test
+test "$(systemctl is-active dnsmasq)" = active
+ss -lunp | grep -E '10\.40\.0\.10:53\b'
+test "$(dig +short @10.40.0.10 www.datn.test A)" = 10.40.0.10
+test "$(dig +short @10.40.0.10 r01.beacon.datn.test A)" = 10.40.0.10
 ```
 
 ## 10. Preflight bắt buộc trước mỗi buổi thu
 
+### 10.1 Chuyển lab sang collection mode cô lập Internet
+
+Chỉ thực hiện sau khi đã cài hết package. **Trước khi xóa route**, đồng bộ giờ khi
+management/NAT còn hoạt động. Trên từng Linux VM:
+
+```bash
+sudo timedatectl set-ntp true
+for attempt in $(seq 1 12); do
+  test "$(timedatectl show -p NTPSynchronized --value)" = yes && break
+  sleep 5
+done
+test "$(timedatectl show -p NTPSynchronized --value)" = yes
+```
+
+Trên Windows PowerShell Administrator:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+w32tm /resync | Out-Host
+if ($LASTEXITCODE -ne 0) { throw 'Windows time resync failed' }
+$timeSource = (w32tm /query /source | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $timeSource -match 'Local CMOS Clock') {
+  throw "Invalid Windows time source: $timeSource"
+}
+```
+
+Sau khi bốn máy đã đồng bộ, trên ba Linux VM xóa default route tạm thời; trên Windows
+xóa default route của phiên hiện tại. Kết nối nội bộ cùng VMnet8 và các route
+`10.20/10.40` vẫn hoạt động. Reboot sẽ khôi phục route để bảo trì; trước buổi thu sau phải
+lặp lại toàn bộ bước đồng bộ rồi cô lập này.
+
+```bash
+sudo ip route del default 2>/dev/null || true
+test -z "$(ip -4 route show default)"
+```
+
+```powershell
+$ErrorActionPreference = 'Stop'
+Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' `
+  -ErrorAction SilentlyContinue | Remove-NetRoute -Confirm:$false
+if (Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' `
+  -ErrorAction SilentlyContinue) { throw 'Internet default route still exists' }
+```
+
+Nếu cần Internet để cập nhật, dừng thu, đóng run đang mở, reboot/khôi phục route, cập nhật
+xong rồi quay lại snapshot và chạy lại toàn bộ preflight. Không cập nhật trong cửa sổ run.
+
+### 10.2 Kiểm tra fail-closed từng VM
+
 SOC-AI:
 
 ```bash
-sudo systemctl is-active wazuh-manager
-sudo /var/ossec/bin/agent_control -l | grep -E 'WIN11-TARGET|NET-SENSOR'
-sudo test -s /var/ossec/logs/archives/archives.json
-df -h /var/ossec
-free -h
-timedatectl show -p NTPSynchronized --value
+set -euo pipefail
+test "$(sudo systemctl is-active wazuh-manager)" = active
+AGENTS=$(sudo /var/ossec/bin/agent_control -l)
+printf '%s\n' "$AGENTS" | grep -E 'Name: WIN11-TARGET,.*Active'
+printf '%s\n' "$AGENTS" | grep -E 'Name: NET-SENSOR,.*Active'
+ARCHIVE=/var/ossec/logs/archives/archives.json
+sudo test -s "$ARCHIVE"
+test "$(timedatectl show -p NTPSynchronized --value)" = yes
+AVAILABLE_KB=$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)
+FREE_KB=$(df -Pk /var/ossec | awk 'NR==2 {print $4}')
+test "$AVAILABLE_KB" -ge 2097152
+test "$FREE_KB" -ge 10485760
 cd "$HOME/datn-ai-soar"
-git status --short
-.venv-ml/bin/python -m scripts.scenario_session --help
-.venv-ml/bin/python -m scripts.audit_dataset --help
+test -z "$(git status --porcelain)"
+test "$(git branch --show-current)" = feature/week3-model-training
+test ! -e evidence/scenario-runs/.active-run.json
+while IFS= read -r -d '' STATE; do
+  jq -e . "$STATE" >/dev/null
+  test "$(jq -r '.status' "$STATE")" != STARTED
+done < <(find evidence/scenario-runs -mindepth 2 \
+  -name .collection_state.json -print0)
+.venv-ml/bin/python -m scripts.scenario_session --help >/dev/null
+.venv-ml/bin/python -m scripts.audit_dataset --help >/dev/null
+echo 'SOC_PREFLIGHT=PASS'
 ```
 
 NET-SENSOR:
 
 ```bash
-sudo systemctl is-active suricata wazuh-agent
-sudo suricata -T -c /etc/suricata/suricata.yaml
+set -euo pipefail
+test "$(sudo systemctl is-active suricata)" = active
+test "$(sudo systemctl is-active wazuh-agent)" = active
+sudo suricata --init-errors-fatal -T -c /etc/suricata/suricata.yaml
+sudo suricata --dump-config -c /etc/suricata/suricata.yaml \
+  | grep -F '/etc/suricata/rules/datn.rules'
 sudo -u wazuh test -r /var/log/suricata/eve.json
-ip route
-timedatectl show -p NTPSynchronized --value
-```
-
-Windows:
-
-```powershell
-Get-Service Sysmon64,WazuhSvc
-Test-NetConnection 10.40.0.10 -Port 8080
-Resolve-DnsName www.datn.test -Server 10.40.0.10
-w32tm /resync
-w32tm /query /status
+ip -4 route show 10.40.0.0/24 | grep -q 'scope link'
+ip -4 route show 10.20.0.0/24 | grep -q 'scope link'
+test -z "$(ip -4 route show default)"
+test "$(timedatectl show -p NTPSynchronized --value)" = yes
+echo 'SENSOR_PREFLIGHT=PASS'
 ```
 
 Kali:
 
 ```bash
-systemctl is-active datn-http-benign datn-http-beacon datn-http-stage dnsmasq
-ss -lntup | grep -E ':53|:8080|:8081|:9001'
-timedatectl show -p NTPSynchronized --value
+set -euo pipefail
+for service in datn-http-benign datn-http-beacon datn-http-stage dnsmasq; do
+  test "$(systemctl is-active "$service")" = active
+done
+for port in 53 8080 8081 9001; do
+  ss -lntup | grep -Eq ":${port}\\b"
+done
+ip route get 10.20.0.10 | grep -q 'via 10.40.0.1'
+test -z "$(ip -4 route show default)"
+test "$(timedatectl show -p NTPSynchronized --value)" = yes
+echo 'KALI_PREFLIGHT=PASS'
 ```
 
-Ba máy Linux phải trả về `yes` cho `NTPSynchronized`; Windows phải resync thành công và
-không dùng `Local CMOS Clock` làm source. Chấp nhận host key SSH và xác nhận đăng nhập
-giữa các máy **trước** cửa sổ thu. Trên SOC-AI, đo độ lệch NET-SENSOR và Kali so với
-SOC-AI; nhập đúng user SSH của từng máy:
+Windows PowerShell (Administrator):
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$services = Get-Service Sysmon64,WazuhSvc
+if ($services.Where({$_.Status -ne 'Running'})) { throw 'Sysmon/Wazuh is not running' }
+$route = Get-NetRoute -DestinationPrefix '10.40.0.0/24' -ErrorAction Stop
+if (-not $route.Where({$_.NextHop -eq '10.20.0.1'})) { throw 'Wrong data route' }
+if (Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' `
+  -ErrorAction SilentlyContinue) { throw 'Internet default route still exists' }
+foreach ($port in 8080,8081,9001) {
+  $test = Test-NetConnection 10.40.0.10 -Port $port -WarningAction SilentlyContinue
+  if (-not $test.TcpTestSucceeded) { throw "Kali TCP $port is unreachable" }
+}
+foreach ($name in 'www.datn.test','beacon.datn.test') {
+  $answer = Resolve-DnsName $name -Server 10.40.0.10 -Type A
+  if ('10.40.0.10' -notin $answer.IPAddress) { throw "Wrong DNS answer for $name" }
+}
+$timeSource = (w32tm /query /source | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $timeSource -match 'Local CMOS Clock') {
+  throw "Invalid Windows time source: $timeSource"
+}
+'WINDOWS_PREFLIGHT=PASS'
+```
+
+### 10.3 Đo clock không tính thời gian nhập mật khẩu
+
+Thiết lập SSH key/agent trước; các lệnh sau dùng `BatchMode=yes` và phải không hỏi mật
+khẩu. Trên SOC-AI:
 
 ```bash
+set -euo pipefail
 MAX_CLOCK_SKEW_SECONDS=5
+MAX_SSH_ROUNDTRIP_SECONDS=4
 read -rp 'NET-SENSOR SSH username: ' SENSOR_USER
 read -rp 'Kali SSH username: ' KALI_USER
 for ENDPOINT in "${SENSOR_USER}@192.168.58.150" "${KALI_USER}@192.168.58.132"; do
-  LOCAL_EPOCH=$(date -u +%s)
-  REMOTE_EPOCH=$(ssh -o ConnectTimeout=5 "$ENDPOINT" 'date -u +%s') || {
-    echo "FAIL: cannot read clock from $ENDPOINT" >&2
-    exit 1
-  }
-  SKEW=$((LOCAL_EPOCH - REMOTE_EPOCH))
-  SKEW=${SKEW#-}
-  printf '%s clock_skew_seconds=%s\n' "$ENDPOINT" "$SKEW"
-  test "$SKEW" -le "$MAX_CLOCK_SKEW_SECONDS" || exit 1
+  BEFORE=$(date -u +%s)
+  REMOTE=$(ssh -o BatchMode=yes -o ConnectTimeout=5 "$ENDPOINT" 'date -u +%s')
+  AFTER=$(date -u +%s)
+  RTT=$((AFTER - BEFORE))
+  MID=$(((BEFORE + AFTER) / 2))
+  SKEW=$((MID - REMOTE)); SKEW=${SKEW#-}
+  printf '%s roundtrip=%s skew=%s\n' "$ENDPOINT" "$RTT" "$SKEW"
+  test "$RTT" -le "$MAX_SSH_ROUNDTRIP_SECONDS"
+  test "$SKEW" -le "$MAX_CLOCK_SKEW_SECONDS"
 done
 ```
 
-Trên Windows, đo Windows so với SOC-AI:
+Trên Windows:
 
 ```powershell
-$SocUser = Read-Host "SOC-AI SSH username"
-$MaxClockSkewSeconds = 5
-$SocEpochText = ssh "${SocUser}@192.168.58.147" "date -u +%s"
-if ($LASTEXITCODE -ne 0) { throw "Cannot read SOC-AI clock" }
-$SocEpoch = [int64]($SocEpochText | Select-Object -Last 1)
-$WindowsEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-$ClockSkew = [Math]::Abs($WindowsEpoch - $SocEpoch)
-"SOC-AI/Windows clock_skew_seconds=$ClockSkew"
-if ($ClockSkew -gt $MaxClockSkewSeconds) { throw "Clock skew exceeds 5 seconds" }
+$ErrorActionPreference = 'Stop'
+$SocUser = Read-Host 'SOC-AI SSH username'
+$before = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+$remoteText = ssh -o BatchMode=yes -o ConnectTimeout=5 `
+  "${SocUser}@192.168.58.147" 'date -u +%s'
+$after = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+if ($LASTEXITCODE -ne 0) { throw 'Cannot read SOC-AI clock non-interactively' }
+$remote = [int64]($remoteText | Select-Object -Last 1)
+$roundTrip = $after - $before
+$skew = [Math]::Abs(([Math]::Floor(($before + $after) / 2)) - $remote)
+"SOC-AI/Windows roundtrip=$roundTrip skew=$skew"
+if ($roundTrip -gt 4 -or $skew -gt 5) { throw 'Clock/SSH gate failed' }
 ```
 
-Tất cả độ lệch phải `<= 5` giây. Nếu một lệnh hoặc cổng thời gian không đạt, không bắt
-đầu run. Ghi lỗi, sửa, rồi chạy lại toàn bộ preflight. Nếu SOC-AI còn dưới 2 GB RAM
-available hoặc filesystem `/var/ossec` còn dưới 10 GB, dừng Docker/n8n/API hoặc tăng
-tài nguyên trước.
+### 10.4 Canary end-to-end mới, không dùng dữ liệu cũ
+
+Trên SOC-AI, ghi byte cursor tại đúng ranh giới dòng:
+
+```bash
+set -euo pipefail
+ARCHIVE=/var/ossec/logs/archives/archives.json
+test "$(sudo tail -c 1 "$ARCHIVE" | od -An -t u1 | tr -d ' ')" = 10
+sudo stat -c %s "$ARCHIVE" | tee /tmp/datn-preflight.cursor
+```
+
+Ngay sau đó trên Windows PowerShell chạy canary an toàn và bắt mọi lỗi HTTP:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+foreach ($uri in @(
+  'http://10.40.0.10:8080/health?preflight=1',
+  'http://10.40.0.10:8081/beacon?preflight=1',
+  'http://10.40.0.10:9001/stage.bin'
+)) {
+  curl.exe --fail --silent --show-error --output NUL $uri
+  if ($LASTEXITCODE -ne 0) { throw "Canary failed: $uri" }
+}
+Resolve-DnsName preflight.www.datn.test -Server 10.40.0.10 | Out-Null
+Resolve-DnsName preflight.beacon.datn.test -Server 10.40.0.10 | Out-Null
+```
+
+Trở lại SOC-AI; vòng lặp chỉ PASS khi **event mới sau cursor** có cả Sysmon và Suricata
+đúng nguồn `10.20.0.10`:
+
+```bash
+set -euo pipefail
+ARCHIVE=/var/ossec/logs/archives/archives.json
+CURSOR=$(cat /tmp/datn-preflight.cursor)
+FRESH=/tmp/datn-preflight-fresh.jsonl
+PASS=0
+for attempt in $(seq 1 18); do
+  sudo tail -c "+$((CURSOR + 1))" "$ARCHIVE" > "$FRESH"
+  if jq -e 'select(.agent.name=="WIN11-TARGET" and
+      ((.data.win.system.eventID//"")|tostring)=="3")' "$FRESH" >/dev/null 2>&1 \
+    && jq -e 'select(.agent.name=="WIN11-TARGET" and
+      ((.data.win.system.eventID//"")|tostring)=="22")' "$FRESH" >/dev/null 2>&1 \
+    && jq -e 'select(.agent.name=="NET-SENSOR") |
+      (.full_log|fromjson?) | select(.src_ip=="10.20.0.10" and
+      .dest_ip=="10.40.0.10")' "$FRESH" >/dev/null 2>&1; then
+    PASS=1; break
+  fi
+  sleep 5
+done
+test "$PASS" -eq 1
+echo 'END_TO_END_PREFLIGHT=PASS'
+```
+
+Nếu bất kỳ block nào không in `PASS`, không bắt đầu run. Sửa nguyên nhân rồi chạy lại
+từ 10.1; không dùng event cũ, không tạo file Archives giả và không hạ ngưỡng kiểm tra.
 
 ## 11. Quy trình chuẩn cho MỖI run
 
@@ -755,7 +1026,7 @@ Thực hiện đúng thứ tự; không gộp hai kịch bản trong một cửa
 Quy ước ID:
 
 ```text
-<SCENARIO-ID>-R<01..03>-<YYYYMMDD>
+<SCENARIO-ID>-R<01..99>-<YYYYMMDD>
 ```
 
 Ví dụ trên SOC-AI:
@@ -764,7 +1035,8 @@ Ví dụ trên SOC-AI:
 cd "$HOME/datn-ai-soar"
 date -u --iso-8601=seconds
 timedatectl show -p NTPSynchronized --value
-RUN_ID=C2-MALICIOUS-HTTP-BEACON-R01-20261016
+RUN_DATE=$(date -u +%Y%m%d)
+RUN_ID="C2-MALICIOUS-HTTP-BEACON-R01-$RUN_DATE"
 .venv-ml/bin/python -m scripts.create_run_draft \
   --scenario C2-MALICIOUS-HTTP-BEACON \
   --run-id "$RUN_ID" \
@@ -787,8 +1059,9 @@ tạo lại; đã start thì dùng lệnh `abort`, không tái sử dụng `run_
 .venv-ml/bin/python -m scripts.scenario_session status --run-id "$RUN_ID"
 ```
 
-Phải thấy `STARTED`. Lệnh này chụp cursor của Archives, taxonomy và ground truth. Chỉ
-sau đó mới thao tác trên Windows/Kali.
+Phải thấy `STARTED`. Lệnh này đối chiếu draft với catalog, chụp cursor/snapshot và tạo
+khóa toàn cục; một lệnh `start` thứ hai sẽ bị từ chối. Chỉ sau đó mới thao tác trên
+Windows/Kali.
 
 ### Bước 3 — Chạy đúng một kịch bản
 
@@ -839,7 +1112,17 @@ find "evidence/scenario-runs/$RUN_ID" -maxdepth 1 -type f -printf '%f\n' | sort
 
 Phải thấy `VALID`; `data/raw/$RUN_ID` có `scenario_manifest.json` và `incidents.jsonl`;
 evidence có Archives, Windows events, Suricata EVE, metadata và SHA-256. Không chỉnh
-tay file đã finalize. Nếu sai, loại run và chạy lại với ID mới.
+tay file đã finalize. Nếu validate sai, bảo toàn dữ liệu hỏng để điều tra rồi đưa cả cặp
+raw/evidence ra khỏi dataset bằng lệnh duy nhất:
+
+```bash
+.venv-ml/bin/python -m scripts.scenario_session quarantine \
+  --run-id "$RUN_ID" --reason "ghi ro loi validate"
+```
+
+Phải thấy `QUARANTINED`, hai thư mục nguồn không còn và dữ liệu được giữ trong
+`data/quarantine/$RUN_ID` cùng `evidence/quarantine/$RUN_ID`. Sau đó mới chạy lại với ID
+mới. Không xóa một phía và không tự sửa checksum.
 
 ### Bước 7 — Audit toàn dataset
 
@@ -847,20 +1130,24 @@ tay file đã finalize. Nếu sai, loại run và chạy lại với ID mới.
 .venv-ml/bin/python -m scripts.audit_dataset \
   --raw-dir data/raw \
   --evidence-dir evidence/scenario-runs \
+  --scenario-catalog config/scenario-catalog.yaml \
   --minimum-runs 10 \
   --target-runs 12 \
   --output evidence/dataset-audit.json
-echo "audit_exit=$?"
 ```
 
 Trước khi đủ 10 mỗi nhóm, exit `1` và `NOT_READY` là đúng; báo cáo phải cho biết chính
-xác thiếu nhóm nào. Không được bỏ qua `RUN_INVALID`, `SURICATA_MISSING`, duplicate,
-checksum, thiếu đủ năm scenario hoặc concentration >30%.
+xác thiếu nhóm nào. Không được nối `|| true` hoặc chạy tiếp sau exit `1`. Không được bỏ
+qua `RUN_INVALID`, `RUN_STATE_INVALID`, `SCENARIO_CATALOG_MISMATCH`,
+`SURICATA_MISSING`, duplicate, checksum, thiếu/sai năm scenario, phân bố lệch hoặc hơn
+12 run/nhóm.
 
 ### Bước 8 — Cleanup và khoảng nghỉ
 
-Thực hiện cleanup trong catalog, chờ ít nhất 60 giây, kiểm tra không còn loop PowerShell,
-xóa file tạm. Không chạy hai run đồng thời. Không tái dùng `run_id`.
+Thực hiện cleanup trong catalog, chờ ít nhất 60 giây, kiểm tra không còn PID của chính
+vòng lặp đã chạy và xóa file tạm. Collector tự chặn hai run đồng thời; nếu báo active lock,
+phải finalize/abort/quarantine run đang sở hữu khóa. Không xóa file lock bằng tay và không
+tái dùng `run_id`.
 
 Nếu thao tác sai giữa run:
 
@@ -876,21 +1163,38 @@ Sau đó cleanup, chờ pipeline yên, tạo run mới với ID mới.
 ### 12.1 Account scenarios
 
 Chạy tại màn hình console của `WIN11-TARGET`, không qua tài khoản thật và chỉ sau khi
-collector đã `STARTED`. Trước từng run, dùng `net accounts` để xác nhận ngưỡng lockout
-cao hơn số lần sai của scenario; nếu không, thay policy lab có kiểm soát hoặc không chạy.
+collector đã `STARTED`. Trước từng run account, PowerShell Administrator phải xác nhận
+policy lab chưa lockout và mở khóa các tài khoản dùng riêng cho lab:
+
+```powershell
+net accounts
+'datn_benign','datn_attack','datn_spray01','datn_spray02','datn_spray03' | `
+  ForEach-Object { Unlock-LocalUser -Name $_ -ErrorAction SilentlyContinue }
+Get-CimInstance Win32_UserAccount -Filter "LocalAccount=True" | Where-Object {
+  $_.Name -in 'datn_benign','datn_attack','datn_spray01','datn_spray02','datn_spray03'
+} | Select-Object Name,Disabled,Lockout
+```
+
+Mọi dòng phải có `Disabled=False`, `Lockout=False`. Nếu khác, dừng và sửa trước `start`;
+không mở khóa giữa cửa sổ run vì sẽ tạo thêm event.
+
+Collector chỉ đếm Security 4624/4625 có `LogonType=2` (interactive) cho các scenario
+account. Các logon nền kiểu network/service của cùng user bị loại để một hoạt động không
+bị đếm sai thành nhiều lần. Vì vậy phải thao tác ở console/`runas` đúng như bảng, không
+thay bằng SMB, WinRM, RDP hoặc scheduled task.
 
 | Scenario | Thao tác chính xác |
 |---|---|
 | `ACCOUNT-BENIGN-NORMAL-LOGON` | đăng xuất, đăng nhập `datn_benign` đúng một lần bằng mật khẩu đúng |
 | `ACCOUNT-BENIGN-TYPO-THEN-SUCCESS` | nhập sai đúng 1 lần, sau đó nhập đúng 1 lần |
 | `ACCOUNT-BENIGN-TWO-TYPOS-THEN-SUCCESS` | nhập sai đúng 2 lần, sau đó nhập đúng 1 lần |
-| `ACCOUNT-BENIGN-RUNAS` | tại CMD chạy `runas /user:.\\datn_benign "cmd /c whoami"`, nhập đúng mật khẩu một lần |
+| `ACCOUNT-BENIGN-RUNAS` | tại CMD chạy `runas /user:.\datn_benign "cmd /c whoami"`, nhập đúng mật khẩu một lần |
 | `ACCOUNT-BENIGN-THREE-TYPOS-THEN-SUCCESS` | nhập sai đúng 3 lần, sau đó nhập đúng 1 lần |
 | `ACCOUNT-MALICIOUS-REPEATED-FAILURES-3` | nhập sai đúng 3 lần cho `datn_attack`, không đăng nhập đúng |
 | `ACCOUNT-MALICIOUS-REPEATED-FAILURES-6` | nhập sai đúng 6 lần cho `datn_attack`, không đăng nhập đúng |
 | `ACCOUNT-MALICIOUS-REPEATED-FAILURES-10` | nhập sai đúng 10 lần cho `datn_attack`, không đăng nhập đúng |
 | `ACCOUNT-MALICIOUS-PASSWORD-SPRAY` | nhập sai đúng 1 lần lần lượt cho `datn_spray01`, `02`, `03` |
-| `ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS` | nhập sai đúng 5 lần cho `datn_attack`, sau đó nhập đúng 1 lần |
+| `ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS` | nhập sai đúng 1 lần cho `datn_attack`, sau đó nhập đúng 1 lần; đây là mẫu low-noise cố ý chồng lấn benign để tránh rò nhãn |
 
 Không tạo thêm lần thử ngoài bảng trong cùng cửa sổ. Kết thúc run benign/malicious có
 success thì sign out; run chỉ có failure thì quay lại desktop quản trị mà không đăng nhập
@@ -904,8 +1208,10 @@ Chạy PowerShell thường trong `WIN11-TARGET`; chỉ chạy sau `start`.
 ### C2-BENIGN-HEALTH-POLL
 
 ```powershell
+$ErrorActionPreference = 'Stop'
 1..5 | ForEach-Object {
-  curl.exe -s -o NUL http://10.40.0.10:8080/health
+  curl.exe --fail --silent --show-error --output NUL http://10.40.0.10:8080/health
+  if ($LASTEXITCODE -ne 0) { throw 'health request failed' }
   if ($_ -lt 5) { Start-Sleep -Seconds 30 }
 }
 ```
@@ -913,17 +1219,24 @@ Chạy PowerShell thường trong `WIN11-TARGET`; chỉ chạy sau `start`.
 ### C2-BENIGN-SINGLE-DOWNLOAD
 
 ```powershell
-curl.exe http://10.40.0.10:8080/payload-benign.txt `
+$ErrorActionPreference = 'Stop'
+curl.exe --fail --silent --show-error http://10.40.0.10:8080/payload-benign.txt `
   -o $env:TEMP\payload-benign.txt
-Get-FileHash $env:TEMP\payload-benign.txt -Algorithm SHA256
+if ($LASTEXITCODE -ne 0) { throw 'benign download failed' }
+$hash = (Get-FileHash $env:TEMP\payload-benign.txt -Algorithm SHA256).Hash.ToLower()
+if ($hash -ne 'd3aad3cdd62be01b41e8004813eb7fb60c78590cfa520764f783f581f951c2e3') {
+  throw "Unexpected benign payload hash: $hash"
+}
 ```
 
 ### C2-BENIGN-IRREGULAR-API
 
 ```powershell
+$ErrorActionPreference = 'Stop'
 $gaps = @(10,35,20)
 for ($i=0; $i -lt 4; $i++) {
-  curl.exe -s -o NUL http://10.40.0.10:8080/api/status
+  curl.exe --fail --silent --show-error --output NUL http://10.40.0.10:8080/api/status
+  if ($LASTEXITCODE -ne 0) { throw 'API request failed' }
   if ($i -lt 3) { Start-Sleep -Seconds $gaps[$i] }
 }
 ```
@@ -931,10 +1244,12 @@ for ($i=0; $i -lt 4; $i++) {
 ### C2-BENIGN-DNS
 
 ```powershell
+$ErrorActionPreference = 'Stop'
 $gaps = @(7,23,11)
 for ($i=0; $i -lt 4; $i++) {
   $name = "b{0:D2}.www.datn.test" -f ($i + 1)
-  Resolve-DnsName $name -Server 10.40.0.10
+  $answer = Resolve-DnsName $name -Server 10.40.0.10 -Type A
+  if ('10.40.0.10' -notin $answer.IPAddress) { throw "Wrong DNS answer: $name" }
   if ($i -lt 3) { Start-Sleep -Seconds $gaps[$i] }
 }
 ```
@@ -942,8 +1257,10 @@ for ($i=0; $i -lt 4; $i++) {
 ### C2-BENIGN-API-BURST
 
 ```powershell
+$ErrorActionPreference = 'Stop'
 1..6 | ForEach-Object {
-  curl.exe -s -o NUL http://10.40.0.10:8080/api/status
+  curl.exe --fail --silent --show-error --output NUL http://10.40.0.10:8080/api/status
+  if ($LASTEXITCODE -ne 0) { throw 'API burst request failed' }
   if ($_ -lt 6) { Start-Sleep -Seconds 2 }
 }
 ```
@@ -951,8 +1268,11 @@ for ($i=0; $i -lt 4; $i++) {
 ### C2-MALICIOUS-HTTP-BEACON
 
 ```powershell
+$ErrorActionPreference = 'Stop'
 1..8 | ForEach-Object {
-  curl.exe -s -o NUL "http://10.40.0.10:8081/beacon?run=$($_)"
+  curl.exe --fail --silent --show-error --output NUL `
+    "http://10.40.0.10:8081/beacon?run=$($_)"
+  if ($LASTEXITCODE -ne 0) { throw 'beacon request failed' }
   if ($_ -lt 8) { Start-Sleep -Seconds 15 }
 }
 ```
@@ -960,9 +1280,12 @@ for ($i=0; $i -lt 4; $i++) {
 ### C2-MALICIOUS-JITTER-BEACON
 
 ```powershell
+$ErrorActionPreference = 'Stop'
 $gaps = @(8,21,13,30,11,24,17)
 for ($i=0; $i -lt 8; $i++) {
-  curl.exe -s -o NUL "http://10.40.0.10:8081/beacon?run=$($i+1)"
+  curl.exe --fail --silent --show-error --output NUL `
+    "http://10.40.0.10:8081/beacon?run=$($i+1)"
+  if ($LASTEXITCODE -ne 0) { throw 'jitter beacon request failed' }
   if ($i -lt 7) { Start-Sleep -Seconds $gaps[$i] }
 }
 ```
@@ -970,9 +1293,11 @@ for ($i=0; $i -lt 8; $i++) {
 ### C2-MALICIOUS-DNS-BEACON
 
 ```powershell
+$ErrorActionPreference = 'Stop'
 1..8 | ForEach-Object {
   $name = "r{0:D2}.beacon.datn.test" -f $_
-  Resolve-DnsName $name -Server 10.40.0.10
+  $answer = Resolve-DnsName $name -Server 10.40.0.10 -Type A
+  if ('10.40.0.10' -notin $answer.IPAddress) { throw "Wrong DNS answer: $name" }
   if ($_ -lt 8) { Start-Sleep -Seconds 15 }
 }
 ```
@@ -980,16 +1305,26 @@ for ($i=0; $i -lt 8; $i++) {
 ### C2-MALICIOUS-STAGED-TRANSFER
 
 ```powershell
-curl.exe http://10.40.0.10:9001/stage.bin -o $env:TEMP\stage.bin
-Get-FileHash $env:TEMP\stage.bin -Algorithm SHA256
+$ErrorActionPreference = 'Stop'
+$expectedStageHash = 'de2f256064a0af797747c2b97505dc0b9f3df0de4f489eac731c23ae9ca9cc31'
+curl.exe --fail --silent --show-error http://10.40.0.10:9001/stage.bin `
+  -o $env:TEMP\stage.bin
+if ($LASTEXITCODE -ne 0) { throw 'staged transfer failed' }
+$hash = (Get-FileHash $env:TEMP\stage.bin -Algorithm SHA256).Hash.ToLower()
+if ($hash -ne $expectedStageHash) { throw "Unexpected stage hash: $hash" }
 ```
 
 ### C2-MALICIOUS-STAGED-TRANSFER-RETRY
 
 ```powershell
+$ErrorActionPreference = 'Stop'
+$expectedStageHash = 'de2f256064a0af797747c2b97505dc0b9f3df0de4f489eac731c23ae9ca9cc31'
 1..3 | ForEach-Object {
   $out = Join-Path $env:TEMP ("stage-{0:D2}.bin" -f $_)
-  curl.exe http://10.40.0.10:9001/stage.bin -o $out
+  curl.exe --fail --silent --show-error http://10.40.0.10:9001/stage.bin -o $out
+  if ($LASTEXITCODE -ne 0) { throw "staged retry $_ failed" }
+  $hash = (Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
+  if ($hash -ne $expectedStageHash) { throw "Unexpected stage hash: $hash" }
   if ($_ -lt 3) { Start-Sleep -Seconds 20 }
 }
 Get-FileHash $env:TEMP\stage-*.bin -Algorithm SHA256
@@ -1004,15 +1339,20 @@ Remove-Item $env:TEMP\stage-*.bin -ErrorAction SilentlyContinue
 Get-Process curl,powershell,pwsh -ErrorAction SilentlyContinue
 ```
 
+Lệnh `Get-Process` chỉ là kiểm tra hỗ trợ. Trước mỗi loop, ghi lại PID PowerShell đang
+chạy bằng `$PID`; sau loop, xác nhận không còn tiến trình `curl.exe` con của phiên đó.
+Không kết luận chỉ dựa vào việc danh sách vẫn có chính PowerShell của người vận hành.
+
 Đây là mô phỏng traffic an toàn trong lab, không tạo reverse shell, persistence, mã độc
 hoặc kết nối ra Internet.
 
 ## 13. Lịch 10–12 run mỗi nhóm
 
 Catalog có đúng năm scenario cho mỗi nhóm. Ở mốc tối thiểu 10, chạy mỗi scenario hai
-lần: phân bố `2-2-2-2-2`. Ở mốc mục tiêu 12, chọn hai scenario khác nhau theo vòng
-luân phiên và chạy thêm một lần: phân bố `3-3-2-2-2`. Tổng toàn bộ là 40 run ở mốc
-READY hoặc 48 run ở mốc TARGET_MET; tỷ lệ lớn nhất lần lượt là 20% hoặc 25%.
+lần: phân bố `2-2-2-2-2`. Ở mốc 11, chọn một scenario để chạy thêm một lần:
+`3-2-2-2-2`. Ở mốc mục tiêu 12, chọn một scenario **khác** chạy thêm một lần:
+`3-3-2-2-2`. Tổng toàn bộ có thể là 40–47 run ở trạng thái READY; chỉ đủ đúng 48 run,
+12 cho từng nhóm, mới là TARGET_MET.
 
 Không chạy toàn bộ benign rồi mới malicious. Dùng lịch xen kẽ:
 
@@ -1036,6 +1376,7 @@ chmod +x scripts/verify_collection_dataset.sh
 Phải báo `READY`, 40 valid run, 0 invalid. Mốc 12:
 
 ```bash
+set -euo pipefail
 REQUIRE_TARGET=1 ./scripts/verify_collection_dataset.sh
 ```
 
@@ -1043,12 +1384,19 @@ Phải báo `TARGET_MET`, 48 valid run, 0 invalid. Sau đó mới build:
 
 Collector vẫn lưu `suspicious_process` để truy vết telemetry, nhưng schema chủ động loại
 feature này khỏi model C2 vì taxonomy chứa chính chuỗi lệnh của scenario và có thể làm
-lộ nhãn. Auditor đồng thời từ chối bất kỳ feature model nào có khoảng giá trị benign và
-malicious tách rời hoàn toàn trong cùng family. Không bỏ qua cổng này để ép train.
+lộ nhãn. Auditor đồng thời từ chối feature đơn hoặc cặp feature low-cardinality phân
+tách hoàn hảo nhãn trong cùng family. Không bỏ qua cổng này để ép train.
 
 ```bash
+set -euo pipefail
 .venv-ml/bin/python -m ml.build_dataset --config ml/training_config.yaml
-jq . data/processed/dataset_manifest.json
+jq '{dataset_hash_sha256,feature_schema_version,group_key,locked_test_status,
+  partition_counts,record_counts,stratum_run_counts,collection_audit,
+  split_assignment_commitment_sha256}' data/processed/dataset_manifest.json
+jq -e '.collection_audit.status == "READY" or
+  .collection_audit.status == "TARGET_MET"' data/processed/dataset_manifest.json >/dev/null
+test -z "$(jq -r 'keys[]' data/processed/dataset_manifest.json \
+  | grep '^fold_by_run$' || true)"
 wc -l data/processed/train.jsonl data/processed/validation.jsonl
 grep -n 'locked_test_status' data/processed/dataset_manifest.json
 ```
@@ -1057,6 +1405,7 @@ Không mở hoặc upload nội dung `data/processed/locked_test.jsonl` hoặc `
 để xem kết quả trước Week 6. Tạo checksum ngay trên SOC-AI:
 
 ```bash
+set -euo pipefail
 cd data/processed
 sha256sum train.jsonl validation.jsonl dataset_manifest.json \
   | tee colab-upload.sha256
@@ -1085,22 +1434,33 @@ phải bản sao lưu dataset**. Sau mỗi bốn run hợp lệ và cuối mỗi
 không còn run `STARTED`:
 
 ```bash
+set -euo pipefail
 cd "$HOME/datn-ai-soar"
-ACTIVE_RUNS=$(find evidence/scenario-runs -type f -name .collection_state.json \
-  -print0 2>/dev/null | xargs -0 -r jq -r \
-  'select(.status == "STARTED") | .run_id')
-if [ -n "$ACTIVE_RUNS" ]; then
-  printf 'FAIL: finalize/abort these runs before backup:\n%s\n' "$ACTIVE_RUNS" >&2
+mkdir -p data/raw evidence/scenario-runs run-drafts operator-logs
+LOCK=evidence/scenario-runs/.active-run.json
+if ! (set -o noclobber; printf '{"run_id":"BACKUP"}\n' > "$LOCK") 2>/dev/null; then
+  echo 'FAIL: a collection run or another backup holds the active lock' >&2
   exit 1
 fi
+cleanup_backup_lock() { rm -f -- "$LOCK"; }
+trap cleanup_backup_lock EXIT HUP INT TERM
+while IFS= read -r -d '' STATE; do
+  jq -e . "$STATE" >/dev/null
+  STATUS=$(jq -r '.status' "$STATE")
+  if [ "$STATUS" = STARTED ]; then
+    echo "FAIL: active state in $STATE" >&2
+    exit 1
+  fi
+done < <(find evidence/scenario-runs -mindepth 2 -name .collection_state.json -print0)
 
-mkdir -p data/raw evidence/scenario-runs run-drafts operator-logs
 BACKUP_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP_DIR="$HOME/datn-backups/$BACKUP_ID"
 ARCHIVE="$BACKUP_DIR/collection-$BACKUP_ID.tar.gz"
 mkdir -p "$BACKUP_DIR"
 git rev-parse HEAD > "$BACKUP_DIR/git-commit.txt"
+RAW_COUNT=$(find data/raw -mindepth 2 -maxdepth 2 -name scenario_manifest.json | wc -l)
 tar --create --gzip --file "$ARCHIVE" \
+  --exclude='evidence/scenario-runs/.active-run.json' \
   data/raw evidence run-drafts operator-logs \
   config/scenario-catalog.yaml config/collection-sources.yaml \
   config/suspicious-process-taxonomy.yaml ml/feature_schema.json
@@ -1109,34 +1469,94 @@ tar --create --gzip --file "$ARCHIVE" \
   sha256sum "$(basename "$ARCHIVE")" git-commit.txt > checksums.sha256
   sha256sum --check checksums.sha256
 )
-tar -tzf "$ARCHIVE" | grep -q '^data/raw/'
-tar -tzf "$ARCHIVE" | grep -q '^evidence/scenario-runs/'
+tar -tzf "$ARCHIVE" > "$BACKUP_DIR/archive.list"
+grep -q '^data/raw/' "$BACKUP_DIR/archive.list"
+grep -q '^evidence/scenario-runs/' "$BACKUP_DIR/archive.list"
+ARCHIVE_RUNS=$(grep -c '/scenario_manifest.json$' "$BACKUP_DIR/archive.list")
+test "$ARCHIVE_RUNS" -eq "$RAW_COUNT"
+cleanup_backup_lock
+trap - EXIT HUP INT TERM
 printf 'BACKUP_ID=%s\n' "$BACKUP_ID"
 ```
 
 Kiểm tra giải nén vào thư mục tạm, tuyệt đối không đè lên repo đang thu:
 
 ```bash
+set -euo pipefail
+read -rp 'BACKUP_ID cần kiểm tra: ' BACKUP_ID
+BACKUP_DIR="$HOME/datn-backups/$BACKUP_ID"
+ARCHIVE="$BACKUP_DIR/collection-$BACKUP_ID.tar.gz"
+test -f "$ARCHIVE"
+test -f "$BACKUP_DIR/archive.list"
+(cd "$BACKUP_DIR" && sha256sum --check checksums.sha256)
+RAW_COUNT=$(grep -c '/scenario_manifest.json$' "$BACKUP_DIR/archive.list")
 RESTORE_CHECK=$(mktemp -d)
 trap 'rm -rf -- "$RESTORE_CHECK"' EXIT
 tar -xzf "$ARCHIVE" -C "$RESTORE_CHECK"
 test -d "$RESTORE_CHECK/data/raw"
 test -d "$RESTORE_CHECK/evidence/scenario-runs"
-find "$RESTORE_CHECK/data/raw" -name scenario_manifest.json | wc -l
+RESTORED_RUNS=$(find "$RESTORE_CHECK/data/raw" -name scenario_manifest.json | wc -l)
+test "$RESTORED_RUNS" -eq "$RAW_COUNT"
+while IFS= read -r -d '' CHECKSUM; do
+  (cd "$(dirname "$CHECKSUM")" && sha256sum --check checksums.sha256)
+done < <(find "$RESTORE_CHECK/evidence/scenario-runs" -name checksums.sha256 -print0)
+echo 'RESTORE_DRY_RUN=PASS'
 ```
+
+Khôi phục thật vào checkout mới, không đè repo đang thu:
+
+```bash
+set -euo pipefail
+read -rp 'BACKUP_ID cần khôi phục: ' BACKUP_ID
+BACKUP_DIR="$HOME/datn-backups/$BACKUP_ID"
+ARCHIVE="$BACKUP_DIR/collection-$BACKUP_ID.tar.gz"
+test -f "$ARCHIVE"
+test -f "$BACKUP_DIR/git-commit.txt"
+RESTORE_ROOT="$HOME/datn-ai-soar-restored-$BACKUP_ID"
+test ! -e "$RESTORE_ROOT"
+COMMIT=$(cat "$BACKUP_DIR/git-commit.txt")
+git clone https://github.com/lethinhlord/Repo.git "$RESTORE_ROOT"
+git -C "$RESTORE_ROOT" checkout --detach "$COMMIT"
+tar -xzf "$ARCHIVE" -C "$RESTORE_ROOT"
+cd "$RESTORE_ROOT"
+./scripts/bootstrap_ml.sh
+for RUN_PATH in data/raw/*; do
+  test -d "$RUN_PATH" || continue
+  .venv-ml/bin/python -m scripts.scenario_session validate \
+    --run-id "$(basename "$RUN_PATH")"
+done
+echo 'RESTORE_VALIDATION=PASS'
+```
+
+Với backup giữa buổi chưa đủ 40 run, audit toàn dataset có thể vẫn `NOT_READY`; điều đó
+không làm restore sai. Điều kiện restore là tất cả run hiện có `VALID`, checksum đúng và
+số manifest bằng bản gốc.
 
 Ngay sau đó sao chép cả thư mục backup ra ổ host Windows; nhập đúng `BACKUP_ID` vừa
 in ra. Bản nằm cùng datastore VMware không được tính là bản sao thứ hai:
 
 ```powershell
+$ErrorActionPreference = 'Stop'
 $SocUser = Read-Host "SOC-AI SSH username"
 $BackupId = Read-Host "BACKUP_ID from SOC-AI"
 $BackupRoot = "D:\SOC_AI_SOAR_backups"
 $SocHome = ssh "${SocUser}@192.168.58.147" 'printf %s "$HOME"'
 if ($LASTEXITCODE -ne 0 -or -not $SocHome) { throw "Cannot resolve SOC-AI HOME" }
 New-Item -ItemType Directory -Force $BackupRoot | Out-Null
+if (Test-Path "$BackupRoot\$BackupId") { throw 'Backup destination already exists' }
 scp -r "${SocUser}@192.168.58.147:${SocHome}/datn-backups/${BackupId}" $BackupRoot
-Get-ChildItem "$BackupRoot\$BackupId" -File | Get-FileHash -Algorithm SHA256
+if ($LASTEXITCODE -ne 0) { throw 'SCP backup failed' }
+$LocalBackup = "$BackupRoot\$BackupId"
+foreach ($line in Get-Content "$LocalBackup\checksums.sha256") {
+  if ($line -notmatch '^([0-9a-f]{64})  (.+)$') { throw "Bad checksum line: $line" }
+  $expected = $Matches[1]
+  $file = Join-Path $LocalBackup $Matches[2]
+  $actual = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+  if ($actual -ne $expected) { throw "Checksum mismatch: $file" }
+}
+tar -tzf (Get-ChildItem "$LocalBackup\collection-*.tar.gz").FullName | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Copied archive is unreadable' }
+'HOST_BACKUP_VERIFY=PASS'
 ```
 
 Không đưa mật khẩu, API key, `.env` hoặc Wazuh credential vào archive. Khi bàn giao,
@@ -1150,15 +1570,17 @@ gửi archive, `checksums.sha256`, `git-commit.txt` và báo cáo audit cùng nh
 | `does not end with a complete JSON line` | Wazuh đang ghi dở dòng cuối | không sửa Archives; chờ 30 giây rồi retry finalize cùng ID |
 | `rotated or truncated` | Archives rotate trong run | abort, tránh giờ rotate, chạy ID mới |
 | `no attributable Windows...` | sai agent/account/process/IP/port/DNS | đối chiếu draft với lệnh thật, chạy mới |
-| `no attributable Suricata...` | traffic đi tắt hoặc EVE chưa forward | kiểm tra route, interface, ACL, Wazuh Agent |
-| checksum mismatch | file evidence/generated bị sửa | loại run; không sửa checksum để hợp thức hóa |
-| concentration >30% | lặp một scenario quá nhiều | thu thêm scenario khác; không copy mẫu |
-| duplicate incident/run | tái sử dụng dữ liệu hoặc ID | loại bản trùng và chạy mới |
-| `FEATURE_LABEL_SEPARATION` | một feature của model phân tách hoàn hảo nhãn trong cùng family | bổ sung scenario để khoảng giá trị benign/malicious chồng lấn; không train trước khi audit đạt |
+| `no attributable Suricata...` | traffic đi tắt, sai `src_ip`, rule/interface hoặc EVE chưa forward | không retry bằng traffic mới trong cùng run; abort, sửa route/rule/ACL, chạy pilot mới |
+| checksum/`RUN_STATE_INVALID` | file bị sửa hoặc finalize bị gián đoạn | dùng `quarantine`, không sửa checksum/state để hợp thức hóa; thu ID mới |
+| `active run...` | còn run STARTED hoặc backup đang giữ khóa | đọc owner, finalize/abort/quarantine đúng run; không xóa `.active-run.json` bằng tay |
+| `SCENARIO_CATALOG_MISMATCH` | draft/manifest không thuộc catalog hoặc sai family/label | quarantine run, cập nhật repo đúng commit, tạo draft mới từ CLI |
+| `SCENARIO_IMBALANCE`/`STRATUM_EXCESS` | năm scenario lệch nhau quá 1 run hoặc nhóm đã quá 12 | không copy/xóa tùy tiện; dừng thu, bàn giao audit để người phụ trách quyết định dataset version mới |
+| duplicate incident/run | tái sử dụng dữ liệu hoặc ID | quarantine bản trùng và chạy mới |
+| `FEATURE_LABEL_SEPARATION`/`JOINT_FEATURE_LABEL_SEPARATION` | feature đơn/cặp feature phân tách hoàn hảo nhãn | bổ sung/chỉnh catalog có hành vi chồng lấn rồi thu dataset version mới; không train trước khi audit đạt |
 | audit `NOT_READY` | thiếu hoặc có run invalid | đọc `ISSUES` và `shortage`, xử lý đúng nhóm |
 
 Không dùng lệnh sửa trực tiếp `incidents.jsonl`, `scenario_manifest.json` hoặc
-`checksums.sha256`. Dữ liệu hỏng phải được thu lại.
+`checksums.sha256`. Dữ liệu hỏng phải được quarantine và thu lại.
 
 ## 17. Ảnh minh chứng
 
@@ -1191,9 +1613,11 @@ Chỉ bàn giao khi tất cả đều đúng:
 - [ ] EVE flow/DNS/HTTP và alert local tồn tại trong Archives.
 - [ ] mỗi run có ground truth trước hoạt động, evidence, metadata, checksum.
 - [ ] 10–12 run hợp lệ cho mỗi trong bốn nhóm.
-- [ ] đủ 5 scenario/nhóm; không scenario nào >30%.
+- [ ] đúng 5 scenario/nhóm; số run của hai scenario bất kỳ trong cùng nhóm lệch tối đa 1
+  (`2-2-2-2-2`, `3-2-2-2-2` hoặc `3-3-2-2-2`).
 - [ ] auditor báo 0 invalid; build dataset thành công.
-- [ ] dataset manifest ghi `group_key=scenario_id`, locked test `UNOPENED`.
+- [ ] dataset manifest ghi `group_key=scenario_id`, collection audit `READY`/`TARGET_MET`,
+  locked test `UNOPENED` và không chứa `fold_by_run`.
 - [ ] ảnh minh chứng không lộ bí mật.
 
 Mốc 10–12 run/nhóm đủ cho benchmark đồ án và kiểm thử pipeline, nhưng vẫn là dataset
@@ -1216,13 +1640,16 @@ và không trộn dữ liệu mở rộng vào dataset v1.
 
 - Wazuh Quickstart 4.14: https://documentation.wazuh.com/current/quickstart.html
 - Wazuh Windows/Linux agent: https://documentation.wazuh.com/current/installation-guide/
+- Wazuh package list 4.14.9: https://documentation.wazuh.com/current/installation-guide/packages-list.html
 - Wazuh Archives: https://documentation.wazuh.com/current/user-manual/manager/event-logging.html
 - Wazuh localfile: https://documentation.wazuh.com/current/user-manual/reference/ossec-conf/localfile.html
 - Wazuh kiểm tra cấu hình: https://documentation.wazuh.com/current/user-manual/reference/ossec-conf/verifying-configuration.html
 - Wazuh Windows default channels: https://documentation.wazuh.com/current/user-manual/capabilities/log-data-collection/configuration.html
 - Microsoft Sysmon: https://learn.microsoft.com/sysinternals/downloads/sysmon
 - Microsoft OpenSSH Client: https://learn.microsoft.com/windows-server/administration/openssh/openssh_install_firstuse
+- Microsoft audit GUID constants: https://learn.microsoft.com/windows/win32/secauthz/auditing-constants
 - Suricata EVE JSON: https://docs.suricata.io/en/latest/output/eve/eve-json-output.html
+- Suricata rule-files/default-rule-path: https://docs.suricata.io/en/latest/configuration/suricata-yaml.html
 - Atomic Red Team: https://www.atomicredteam.io/docs/invoke-atomicredteam
 
 Atomic Red Team chỉ là hướng mở rộng sau khi dataset v1 đã được đóng và bàn giao; không

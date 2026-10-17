@@ -529,6 +529,12 @@ def _account_user(eventdata: dict[str, Any]) -> str:
     return ""
 
 
+def _is_interactive_logon(eventdata: dict[str, Any]) -> bool:
+    """Keep console/runas events and exclude background network/service logons."""
+    raw = eventdata.get("logonType", eventdata.get("LogonType"))
+    return raw not in (None, "") and str(raw).strip() == "2"
+
+
 def _matches_network(eventdata: dict[str, Any], attribution: Attribution) -> bool:
     initiated = str(eventdata.get("initiated", "true")).casefold()
     if initiated not in {"true", "1", "yes"}:
@@ -656,7 +662,11 @@ def _derive_account(
         if str((event.get("agent") or {}).get("name")) != windows_agent:
             continue
         event_id, _, eventdata = _windows_fields(event)
-        if event_id not in {"4624", "4625"} or _account_user(eventdata) not in users:
+        if (
+            event_id not in {"4624", "4625"}
+            or _account_user(eventdata) not in users
+            or not _is_interactive_logon(eventdata)
+        ):
             continue
         timestamp = _event_time(event)
         if timestamp is None:
@@ -1003,7 +1013,9 @@ def _verify_checksums(evidence_dir: Path) -> None:
             expected, name = line.split("  ", 1)
         except ValueError as exc:
             raise CollectionError(f"invalid checksum line {line_number}") from exc
-        if len(expected) != 64 or any(character not in "0123456789abcdef" for character in expected):
+        if len(expected) != 64 or any(
+            character not in "0123456789abcdef" for character in expected
+        ):
             raise CollectionError(f"invalid checksum digest on line {line_number}")
         if name in entries or Path(name).name != name:
             raise CollectionError(f"invalid checksum file name on line {line_number}")

@@ -40,6 +40,23 @@ def test_collection_runbook_is_portable_isolated_and_failure_safe() -> None:
     assert "MAX_CLOCK_SKEW_SECONDS=5" in runbook
     assert "BACKUP_ID=" in runbook
     assert "retry finalize" in runbook
+    assert "Connect a host virtual adapter to this network" in runbook
+    assert "/etc/suricata/rules/datn.rules" in runbook
+    assert "--init-errors-fatal -T" in runbook
+    assert "systemctl restart suricata" in runbook
+    assert "systemctl restart wazuh-agent" in runbook
+    assert "wazuh-agent=$WAZUH_VERSION" in runbook
+    assert "dnsutils" in runbook
+    assert "END_TO_END_PREFLIGHT=PASS" in runbook
+    assert "scripts.scenario_session quarantine" in runbook
+    assert "curl.exe --fail --silent --show-error" in runbook
+    assert "HOST_BACKUP_VERIFY=PASS" in runbook
+    assert "0CCE9215-69AE-11D9-BED3-505054503030" in runbook
+    assert "LogonType=2" in runbook
+    assert "3-2-2-2-2" in runbook
+    assert "enable --now suricata" not in runbook
+    assert "enable --now wazuh-agent" not in runbook
+    assert 'echo "audit_exit=$?"' not in runbook
 
 
 def test_committed_source_and_taxonomy_configuration_is_valid() -> None:
@@ -133,6 +150,8 @@ def test_scenario_catalog_has_enforceable_quality_gates_and_alert_overlap() -> N
                 gates.min_account_failures > 0
                 or gates.min_account_successes > 0
             )
+            if gates.min_account_successes:
+                assert gates.max_account_successes == gates.min_account_successes
         else:
             assert scenario.attribution.source_ips == ["10.20.0.10"]
             assert gates.min_suricata_events > 0

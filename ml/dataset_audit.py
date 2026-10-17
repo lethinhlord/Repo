@@ -56,7 +56,9 @@ def _verify_evidence_checksums(evidence_dir: Path) -> list[str]:
         except ValueError:
             errors.append(f"invalid checksums.sha256 line {line_number}")
             continue
-        if len(expected) != 64 or any(character not in "0123456789abcdef" for character in expected):
+        if len(expected) != 64 or any(
+            character not in "0123456789abcdef" for character in expected
+        ):
             errors.append(f"invalid checksum digest on line {line_number}")
             continue
         if name in entries or Path(name).name != name:
@@ -505,10 +507,11 @@ def audit_dataset(
         "audit_version": "dataset-audit-v2",
         "status": status,
         "minimum_policy": (
-            f">={minimum_runs} valid independent runs and >={minimum_scenarios} "
-            "scenario groups per family/label"
+            f"{minimum_runs}..{target_runs} valid independent runs, exactly "
+            f"{minimum_scenarios} catalog scenarios, scenario counts differ by at most "
+            "one per family/label"
         ),
-        "target_policy": f">={target_runs} valid independent runs per family/label",
+        "target_policy": f"exactly {target_runs} valid independent runs per family/label",
         "collection_unit": "run_id",
         "split_group_key": "scenario_id",
         "raw_event_rows_are_independent_samples": False,

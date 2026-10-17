@@ -58,7 +58,7 @@ scenarios:
       max_account_successes: 1
       require_success_after_failure: true
     preconditions:
-      - The account lockout threshold is greater than two attempts.
+      - The dedicated lab target has account lockout disabled for the collection window.
       - Security log auditing for Logon/Logoff is enabled.
     execution_steps:
       - Enter two incorrect passwords for datn_benign, then enter the correct password once.
@@ -83,7 +83,7 @@ scenarios:
       - The local account datn_benign exists and its password is known to the operator.
       - Security log auditing for Logon/Logoff is enabled.
     execution_steps:
-      - Run runas /user:.\\datn_benign "cmd /c whoami" and enter the correct lab password.
+      - Run runas /user:.\datn_benign "cmd /c whoami" and enter the correct lab password.
     expected_observables:
       - A successful Security logon event 4624 for datn_benign.
     cleanup_steps:
@@ -102,7 +102,7 @@ scenarios:
       max_account_successes: 1
       require_success_after_failure: true
     preconditions:
-      - The account lockout threshold is greater than three attempts.
+      - The dedicated lab target has account lockout disabled for the collection window.
       - Security log auditing for Logon/Logoff is enabled.
     execution_steps:
       - Enter three incorrect passwords for datn_benign, then enter the correct password once.
@@ -124,7 +124,7 @@ scenarios:
       max_account_successes: 0
     preconditions:
       - The disposable local account datn_attack exists.
-      - The lockout policy is documented and permits the planned six attempts.
+      - The dedicated lab target has account lockout disabled for the collection window.
     execution_steps:
       - At the VM console, submit six known-wrong passwords for datn_attack and do not enter a correct password.
     expected_observables:
@@ -145,13 +145,13 @@ scenarios:
       max_account_successes: 0
     preconditions:
       - The disposable local account datn_attack exists.
-      - The lockout policy is disabled or safely above ten attempts for this isolated run.
+      - The dedicated lab target has account lockout disabled for the collection window.
     execution_steps:
       - At the VM console, submit ten known-wrong passwords for datn_attack and do not enter a correct password.
     expected_observables:
       - Ten Security events 4625 and no later 4624 for datn_attack in the run window.
     cleanup_steps:
-      - Restore the documented lockout policy after the run.
+      - Verify datn_attack is unlocked; keep the documented lab collection policy until the dataset closes.
 
   - scenario_id: ACCOUNT-MALICIOUS-PASSWORD-SPRAY
     family: account
@@ -210,7 +210,7 @@ scenarios:
       max_account_successes: 0
     preconditions:
       - The disposable local account datn_attack exists.
-      - The account lockout policy permits three attempts.
+      - The dedicated lab target has account lockout disabled for the collection window.
     execution_steps:
       - Submit three known-wrong passwords for datn_attack and do not enter a correct password.
     expected_observables:
