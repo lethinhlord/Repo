@@ -614,6 +614,96 @@ def test_start_rejects_archive_cursor_that_is_not_on_a_line_boundary(tmp_path: P
     assert result["status"] == "STARTED"
 
 
+def test_start_rejects_legacy_or_incomplete_raw_dataset_layout(tmp_path: Path) -> None:
+    config = source_config(tmp_path)
+    draft = write_draft(
+        tmp_path,
+        run_id="C2-MALICIOUS-LEGACY-GATE-001",
+        family="c2",
+        label="malicious",
+        attribution={
+            "source_ips": ["10.20.0.10"],
+            "destination_ips": ["10.40.0.10"],
+            "destination_ports": [8081],
+        },
+    )
+    legacy_run = tmp_path / "data/raw/C2/HTTP_Beacon_run01"
+    legacy_run.mkdir(parents=True)
+    (legacy_run / "metadata.json").write_text("{}\n", encoding="utf-8")
+    (legacy_run / "events_raw.jsonl").write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(CollectionError, match="incompatible raw dataset layout"):
+        start_run(draft, config, tmp_path)
+
+    assert not (tmp_path / "evidence/scenario-runs/.active-run.json").exists()
+    assert not (
+        tmp_path
+        / "evidence/scenario-runs/C2-MALICIOUS-LEGACY-GATE-001"
+    ).exists()
+
+
+def test_start_rejects_orphan_current_schema_raw_run(tmp_path: Path) -> None:
+    config = source_config(tmp_path)
+    draft = write_draft(
+        tmp_path,
+        run_id="ACCOUNT-BENIGN-ORPHAN-GATE-001",
+        family="account",
+        label="benign",
+        attribution={"account_names": ["labuser"]},
+    )
+    orphan = tmp_path / "data/raw/ACCOUNT-BENIGN-ORPHAN-000"
+    orphan.mkdir(parents=True)
+    (orphan / "scenario_manifest.json").write_text("{}\n", encoding="utf-8")
+    (orphan / "incidents.jsonl").write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(CollectionError, match="incompatible raw dataset layout"):
+        start_run(draft, config, tmp_path)
+
+    assert not (tmp_path / "evidence/scenario-runs/.active-run.json").exists()
+
+
+def test_start_accepts_collection_root_with_prior_valid_run(tmp_path: Path) -> None:
+    config = source_config(tmp_path)
+    first = write_draft(
+        tmp_path,
+        run_id="ACCOUNT-BENIGN-VALID-ROOT-001",
+        family="account",
+        label="benign",
+        attribution={"account_names": ["labuser"]},
+        quality_gates={
+            "min_account_successes": 1,
+            "max_account_successes": 1,
+        },
+    )
+    started = datetime(2026, 10, 16, 14, 0, tzinfo=UTC)
+    start_run(first, config, tmp_path, now=started)
+    append_jsonl(
+        tmp_path / "archives.json",
+        [windows_event(4624, started + timedelta(seconds=5), {"targetUserName": "labuser"})],
+    )
+    finalize_run(
+        "ACCOUNT-BENIGN-VALID-ROOT-001",
+        tmp_path,
+        now=started + timedelta(seconds=10),
+    )
+    second = write_draft(
+        tmp_path,
+        run_id="ACCOUNT-BENIGN-VALID-ROOT-002",
+        family="account",
+        label="benign",
+        attribution={"account_names": ["labuser"]},
+    )
+
+    result = start_run(
+        second,
+        config,
+        tmp_path,
+        now=started + timedelta(seconds=20),
+    )
+
+    assert result["status"] == "STARTED"
+
+
 def test_finalize_rejects_incomplete_archive_tail_and_allows_retry(tmp_path: Path) -> None:
     config = source_config(tmp_path)
     draft = write_draft(

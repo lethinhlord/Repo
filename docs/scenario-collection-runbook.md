@@ -1,6 +1,6 @@
 # QUY TRÌNH CHUẨN THU THẬP DỮ LIỆU TRAIN TRÊN LAB 4 VM
 
-Phiên bản: 1.2 — 17/10/2026
+Phiên bản: 1.3 — 17/10/2026
 Phạm vi: dữ liệu `account-benign`, `account-malicious`, `c2-benign`,
 `c2-malicious` cho nhánh `feature/week3-model-training`.
 
@@ -20,6 +20,68 @@ Mỗi nhóm dùng đủ **năm** kịch bản trong `config/scenario-catalog.yam
 mỗi kịch bản chạy đúng hai lần. Ở mốc 11, chọn một kịch bản để chạy lần thứ ba; ở mốc
 12, chọn thêm một kịch bản khác để chạy lần thứ ba. Vì vậy phân bố luôn cân bằng và
 không kịch bản nào vượt 27,3% số run của nhóm. Không nhân bản file để tăng số mẫu.
+
+## 1.1 Cổng chuyển đổi bắt buộc khỏi bộ thu cũ
+
+Thư mục host `D:\SOC_AI_SOAR_dataset_v2\SOC_Dataset_v2` là **evidence tham khảo của
+quy trình cũ**, không phải đầu vào hợp lệ của pipeline này. Sáu run đang có không được
+tính vào mốc 40–48 vì dùng schema `metadata.json`/`events_raw.jsonl`, agent
+`WIN11-01`/`net-sensor`, traffic C2 trên mạng management và scenario ngoài catalog v1.
+Không xóa bộ cũ, không đổi tên file để hợp thức hóa và không copy `Benign`/`C2` vào
+`data/raw/`.
+
+Trước khi thu run mới, phải hoàn tất cả bốn chuyển đổi sau:
+
+| Thành phần cũ | Trạng thái bắt buộc cho dataset mới |
+|---|---|
+| Windows/Wazuh `WIN11-01` | hostname và Wazuh Agent đều là `WIN11-TARGET` |
+| Wazuh Agent `net-sensor` | hostname và Wazuh Agent đều là `NET-SENSOR` |
+| C2 `192.168.58.148 → 192.168.58.132` | `10.20.0.10 → 10.40.0.10` qua NET-SENSOR |
+| `metadata.json` + `events_raw.jsonl` | collector tạo `scenario_manifest.json`, `incidents.jsonl`, evidence và checksum |
+
+Nếu Dashboard còn agent tên cũ, bảo toàn evidence cần thiết rồi xóa đăng ký cũ trong
+Dashboard và cài/enroll lại agent theo mục 7.3/8.2; không sửa tên trực tiếp trong log đã
+thu. Xác nhận trên SOC-AI:
+
+```bash
+set -euo pipefail
+AGENTS=$(sudo /var/ossec/bin/agent_control -l)
+printf '%s\n' "$AGENTS" | grep -E 'Name: WIN11-TARGET,.*Active'
+printf '%s\n' "$AGENTS" | grep -E 'Name: NET-SENSOR,.*Active'
+if printf '%s\n' "$AGENTS" | grep -E 'Name: (WIN11-01|net-sensor),'; then
+  echo 'FAIL: legacy Wazuh agent registration remains' >&2
+  exit 1
+fi
+```
+
+Trong checkout mới trên SOC-AI, `data/raw/` phải rỗng hoặc chỉ chứa run mới đã finalize.
+Kiểm tra chỉ đọc; lệnh phải không in đường dẫn nào:
+
+```bash
+set -euo pipefail
+cd "$HOME/datn-ai-soar"
+if [ -d data/raw ]; then
+  LEGACY_MARKERS=$(find data/raw -type f \
+    \( -name events_raw.jsonl -o -name metadata.json \) -print)
+  test -z "$LEGACY_MARKERS" || {
+    printf 'FAIL: legacy files found:\n%s\n' "$LEGACY_MARKERS" >&2
+    exit 1
+  }
+  while IFS= read -r RUN_DIR; do
+    test -f "$RUN_DIR/scenario_manifest.json"
+    test -f "$RUN_DIR/incidents.jsonl"
+    .venv-ml/bin/python -m scripts.scenario_session validate \
+      --run-id "$(basename "$RUN_DIR")" >/dev/null
+  done < <(find data/raw -mindepth 1 -maxdepth 1 -type d -print)
+fi
+echo 'LEGACY_DATASET_NOT_ACCEPTED=PASS'
+```
+
+Lệnh `scenario_session start` cũng từ chối fail-closed với lỗi
+`incompatible raw dataset layout` nếu phát hiện marker cũ hoặc run trước không còn
+validate được đầy đủ cả raw/evidence/checksum. Nếu bị từ chối, không xóa dữ liệu tại chỗ:
+sao lưu, xác minh checksum rồi chuyển toàn bộ bộ cũ ra ngoài repo dưới tên riêng. Chỉ sau
+đó mới chạy lại preflight và hai pilot ở G5.
 
 ## 2. Kiến trúc 4 VM
 

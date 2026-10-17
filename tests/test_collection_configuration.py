@@ -54,6 +54,10 @@ def test_collection_runbook_is_portable_isolated_and_failure_safe() -> None:
     assert "0CCE9215-69AE-11D9-BED3-505054503030" in runbook
     assert "LogonType=2" in runbook
     assert "3-2-2-2-2" in runbook
+    assert "LEGACY_DATASET_NOT_ACCEPTED=PASS" in runbook
+    assert "events_raw.jsonl" in runbook
+    assert "WIN11-01" in runbook
+    assert "incompatible raw dataset layout" in runbook
     assert "enable --now suricata" not in runbook
     assert "enable --now wazuh-agent" not in runbook
     assert 'echo "audit_exit=$?"' not in runbook

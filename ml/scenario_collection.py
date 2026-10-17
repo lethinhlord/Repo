@@ -384,6 +384,33 @@ def _release_active_run(evidence_root: Path, run_id: str) -> None:
     lock_path.unlink()
 
 
+def _assert_raw_dataset_layout(project_root: Path) -> None:
+    raw_root = project_root / "data/raw"
+    if not raw_root.is_dir():
+        return
+    issues: set[str] = set()
+    for marker_name in ("events_raw.jsonl", "metadata.json"):
+        for marker in raw_root.rglob(marker_name):
+            issues.add(str(marker.relative_to(project_root)))
+    for run_dir in raw_root.iterdir():
+        if not run_dir.is_dir():
+            continue
+        required = (run_dir / "scenario_manifest.json", run_dir / "incidents.jsonl")
+        if not all(path.is_file() for path in required):
+            issues.add(str(run_dir.relative_to(project_root)))
+            continue
+        try:
+            validate_run(run_dir.name, project_root)
+        except CollectionError as exc:
+            issues.add(f"{run_dir.relative_to(project_root)} ({exc})")
+    if issues:
+        details = ", ".join(sorted(issues))
+        raise CollectionError(
+            "incompatible raw dataset layout; quarantine legacy/incomplete data "
+            f"outside data/raw before collection: {details}"
+        )
+
+
 def start_run(
     draft_path: Path,
     source_config_path: Path,
@@ -410,6 +437,8 @@ def start_run(
         if not catalog_path.is_file():
             raise CollectionError(f"scenario catalog does not exist: {catalog_path}")
         _validate_draft_against_catalog(draft, catalog_path)
+
+    _assert_raw_dataset_layout(project_root)
 
     evidence_dir = project_root / "evidence/scenario-runs" / draft.run_id
     output_dir = project_root / "data/raw" / draft.run_id
