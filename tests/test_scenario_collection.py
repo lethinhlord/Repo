@@ -435,7 +435,32 @@ def test_dns_only_attribution_rejects_unrelated_non_dns_suricata_events() -> Non
         attribution,
     )
 
+def test_suricata8_dns_queries_attribution() -> None:
+    attribution = Attribution(dns_suffixes=["beacon.datn.test"])
 
+    assert _matches_suricata(
+        {
+            "event_type": "dns",
+            "dns": {
+                "queries": [
+                    {"rrname": "a.beacon.datn.test"}
+                ]
+            },
+        },
+        attribution,
+    )
+
+    assert not _matches_suricata(
+        {
+            "event_type": "dns",
+            "dns": {
+                "queries": [
+                    {"rrname": "unrelated.example.com"}
+                ]
+            },
+        },
+        attribution,
+    )
 def test_finalize_fails_if_declared_execution_log_is_missing(tmp_path: Path) -> None:
     config = source_config(tmp_path)
     draft = write_draft(
