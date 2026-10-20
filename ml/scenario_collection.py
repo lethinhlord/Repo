@@ -633,13 +633,33 @@ def _matches_suricata(payload: dict[str, Any], attribution: Attribution) -> bool
         return False
     if attribution.dns_suffixes and event_type == "dns":
         dns = payload.get("dns") or {}
-        query = str(dns.get("rrname", "")).strip(".").casefold()
-        suffixes = [value.strip(".").casefold() for value in attribution.dns_suffixes]
-        if not any(query == suffix or query.endswith(f".{suffix}") for suffix in suffixes):
+
+        queries = [dns.get("rrname", "")]
+        queries.extend(
+            item.get("rrname", "")
+            for item in dns.get("queries", [])
+            if isinstance(item, dict)
+        )
+
+        queries = [
+            str(name).strip(".").casefold()
+            for name in queries
+            if isinstance(name, str) and name
+        ]
+
+        suffixes = [
+            value.strip(".").casefold()
+            for value in attribution.dns_suffixes
+        ]
+
+        if not any(
+            query == suffix or query.endswith(f".{suffix}")
+            for query in queries
+            for suffix in suffixes
+        ):
             return False
+
     return event_type in {"alert", "flow", "dns", "http", "tls"}
-
-
 def _load_taxonomy(path: Path) -> dict[str, Any]:
     payload = _read_yaml(path)
     if not isinstance(payload.get("revision"), str) or not isinstance(payload.get("rules"), list):
