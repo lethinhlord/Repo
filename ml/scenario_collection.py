@@ -611,47 +611,78 @@ def _suricata_payload(event: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def _suricata_dns_names(dns: object) -> list[str]:
+    if not isinstance(dns, dict):
+        return []
+
+    raw_names: list[object] = [dns.get("rrname")]
+    for field in ("queries", "query"):
+        records = dns.get(field)
+        if isinstance(records, dict):
+            records = [records]
+        if isinstance(records, list):
+            raw_names.extend(
+                record.get("rrname")
+                for record in records
+                if isinstance(record, dict)
+            )
+
+    legacy_answer = dns.get("answer")
+    if isinstance(legacy_answer, dict):
+        raw_names.append(legacy_answer.get("rrname"))
+
+    normalized = [
+        name.strip().strip(".").casefold()
+        for name in raw_names
+        if isinstance(name, str) and name.strip().strip(".")
+    ]
+    return list(dict.fromkeys(normalized))
+
+
+def _suricata_dns_is_response(dns: object) -> bool:
+    if not isinstance(dns, dict):
+        return False
+    message_type = str(dns.get("type", "")).casefold()
+    if message_type in {"answer", "response"}:
+        return True
+    legacy_answer = dns.get("answer")
+    return isinstance(legacy_answer, dict) and str(
+        legacy_answer.get("type", "")
+    ).casefold() in {"answer", "response"}
+
+
 def _matches_suricata(payload: dict[str, Any], attribution: Attribution) -> bool:
     event_type = payload.get("event_type")
+    dns = payload.get("dns")
+    dns_response = _suricata_dns_is_response(dns)
     source_ips = _casefold_set(attribution.source_ips)
-    if source_ips and str(payload.get("src_ip", "")).casefold() not in source_ips:
+    source_field = "dest_ip" if dns_response else "src_ip"
+    if source_ips and str(payload.get(source_field, "")).casefold() not in source_ips:
         return False
     destination_ips = _casefold_set(attribution.destination_ips)
-    if destination_ips and str(payload.get("dest_ip", "")).casefold() not in destination_ips:
+    destination_field = "src_ip" if dns_response else "dest_ip"
+    if (
+        destination_ips
+        and str(payload.get(destination_field, "")).casefold() not in destination_ips
+    ):
         return False
     if attribution.destination_ports:
+        port_field = "src_port" if dns_response else "dest_port"
         try:
-            port = int(payload.get("dest_port"))
+            port = int(payload.get(port_field))
         except (TypeError, ValueError):
             return False
         if port not in set(attribution.destination_ports):
             return False
-    dns_only = bool(attribution.dns_suffixes) and not (
-        attribution.destination_ips or attribution.destination_ports
-    )
-    if dns_only and event_type != "dns":
-        return False
-    if attribution.dns_suffixes and event_type == "dns":
-        dns = payload.get("dns") or {}
-
-        queries = [dns.get("rrname", "")]
-        queries.extend(
-            item.get("rrname", "")
-            for item in dns.get("queries", [])
-            if isinstance(item, dict)
-        )
-
-        queries = [
-            str(name).strip(".").casefold()
-            for name in queries
-            if isinstance(name, str) and name
-        ]
-
+    if attribution.dns_suffixes:
+        if event_type not in {"dns", "alert"}:
+            return False
+        queries = _suricata_dns_names(dns)
         suffixes = [
             value.strip(".").casefold()
             for value in attribution.dns_suffixes
+            if value.strip(".")
         ]
-
         if not any(
             query == suffix or query.endswith(f".{suffix}")
             for query in queries
@@ -660,6 +691,8 @@ def _matches_suricata(payload: dict[str, Any], attribution: Attribution) -> bool
             return False
 
     return event_type in {"alert", "flow", "dns", "http", "tls"}
+
+
 def _load_taxonomy(path: Path) -> dict[str, Any]:
     payload = _read_yaml(path)
     if not isinstance(payload.get("revision"), str) or not isinstance(payload.get("rules"), list):

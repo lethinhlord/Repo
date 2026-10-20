@@ -461,6 +461,203 @@ def test_suricata8_dns_queries_attribution() -> None:
         },
         attribution,
     )
+
+
+def test_suricata8_dns_alert_attribution() -> None:
+    attribution = Attribution(
+        source_ips=["10.20.0.10"],
+        dns_suffixes=["beacon.datn.test"],
+    )
+
+    assert _matches_suricata(
+        {
+            "event_type": "alert",
+            "src_ip": "10.20.0.10",
+            "dest_ip": "10.40.0.10",
+            "dns": {
+                "version": 3,
+                "type": "request",
+                "queries": [{"rrname": "r01.beacon.datn.test"}],
+            },
+            "alert": {"signature_id": 900002},
+        },
+        attribution,
+    )
+
+
+def test_suricata8_dns_response_matches_target_as_destination() -> None:
+    attribution = Attribution(
+        source_ips=["10.20.0.10"],
+        dns_suffixes=["beacon.datn.test"],
+    )
+
+    assert _matches_suricata(
+        {
+            "event_type": "dns",
+            "src_ip": "10.40.0.10",
+            "dest_ip": "10.20.0.10",
+            "dns": {
+                "version": 3,
+                "type": "response",
+                "queries": [{"rrname": "r01.beacon.datn.test"}],
+            },
+        },
+        attribution,
+    )
+
+
+def test_suricata8_dns_response_reverses_all_attributed_endpoints() -> None:
+    attribution = Attribution(
+        source_ips=["10.20.0.10"],
+        destination_ips=["10.40.0.10"],
+        destination_ports=[53],
+        dns_suffixes=["beacon.datn.test"],
+    )
+
+    assert _matches_suricata(
+        {
+            "event_type": "dns",
+            "src_ip": "10.40.0.10",
+            "src_port": 53,
+            "dest_ip": "10.20.0.10",
+            "dest_port": 53000,
+            "dns": {
+                "version": 3,
+                "type": "response",
+                "queries": [{"rrname": "r01.beacon.datn.test"}],
+            },
+        },
+        attribution,
+    )
+
+
+@pytest.mark.parametrize(
+    "dns",
+    [
+        {
+            "query": [
+                {
+                    "type": "query",
+                    "rrname": "r01.beacon.datn.test",
+                }
+            ]
+        },
+        {
+            "answer": {
+                "type": "answer",
+                "rrname": "r01.beacon.datn.test",
+            }
+        },
+    ],
+)
+def test_suricata_legacy_dns_alert_formats_remain_attributable(dns: dict) -> None:
+    attribution = Attribution(dns_suffixes=["beacon.datn.test"])
+
+    assert _matches_suricata(
+        {"event_type": "alert", "dns": dns},
+        attribution,
+    )
+
+
+def test_suricata_dns_attribution_tolerates_malformed_query_collections() -> None:
+    attribution = Attribution(dns_suffixes=["beacon.datn.test"])
+
+    assert not _matches_suricata(
+        {"event_type": "dns", "dns": {"queries": None}},
+        attribution,
+    )
+
+
+def test_dns_c2_finalize_accepts_suricata8_request_response_and_alert(
+    tmp_path: Path,
+) -> None:
+    config = source_config(tmp_path)
+    draft = write_draft(
+        tmp_path,
+        run_id="C2-MALICIOUS-DNS-001",
+        family="c2",
+        label="malicious",
+        attribution={
+            "process_names": ["powershell.exe"],
+            "source_ips": ["10.20.0.10"],
+            "dns_suffixes": ["beacon.datn.test"],
+        },
+        quality_gates={
+            "min_dns_events": 1,
+            "min_suricata_events": 3,
+            "required_suricata_signature_ids": [900002],
+        },
+    )
+    started = datetime(2026, 10, 20, 4, 0, tzinfo=UTC)
+    start_run(draft, config, tmp_path, now=started)
+    dns = {
+        "version": 3,
+        "queries": [{"rrname": "r01.beacon.datn.test", "rrtype": "A"}],
+    }
+    append_jsonl(
+        tmp_path / "archives.json",
+        [
+            windows_event(
+                22,
+                started + timedelta(seconds=1),
+                {
+                    "image": (
+                        r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+                    ),
+                    "queryName": "r01.beacon.datn.test",
+                },
+            ),
+            suricata_event(
+                started + timedelta(seconds=2),
+                {
+                    "event_type": "dns",
+                    "src_ip": "10.20.0.10",
+                    "dest_ip": "10.40.0.10",
+                    "dns": {**dns, "type": "request"},
+                },
+            ),
+            suricata_event(
+                started + timedelta(seconds=3),
+                {
+                    "event_type": "dns",
+                    "src_ip": "10.40.0.10",
+                    "dest_ip": "10.20.0.10",
+                    "dns": {**dns, "type": "response"},
+                },
+            ),
+            suricata_event(
+                started + timedelta(seconds=4),
+                {
+                    "event_type": "alert",
+                    "src_ip": "10.20.0.10",
+                    "dest_ip": "10.40.0.10",
+                    "dns": {**dns, "type": "request"},
+                    "alert": {"signature_id": 900002},
+                },
+            ),
+        ],
+    )
+
+    result = finalize_run(
+        "C2-MALICIOUS-DNS-001",
+        tmp_path,
+        now=started + timedelta(seconds=10),
+    )
+
+    assert result["status"] == "FINALIZED"
+    incident = json.loads(
+        (tmp_path / "data/raw/C2-MALICIOUS-DNS-001/incidents.jsonl").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert incident["features"]["suricata_alert_count"] == 1.0
+    suricata_rows = (
+        tmp_path
+        / "evidence/scenario-runs/C2-MALICIOUS-DNS-001/suricata_eve.jsonl"
+    ).read_text(encoding="utf-8").splitlines()
+    assert len(suricata_rows) == 3
+
+
 def test_finalize_fails_if_declared_execution_log_is_missing(tmp_path: Path) -> None:
     config = source_config(tmp_path)
     draft = write_draft(
