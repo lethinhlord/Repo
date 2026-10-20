@@ -1,0 +1,38 @@
+project: datn-ai-soar
+experiment_name: week3-smoke-only
+random_seed: 42
+feature_schema: ml/feature_schema.json
+data:
+  raw_dir: artifacts/runtime/smoke-data/raw
+  processed_dir: artifacts/runtime/smoke-data/processed
+  splits_dir: artifacts/runtime/smoke-data/splits
+  manifest_name: scenario_manifest.json
+  records_name: incidents.jsonl
+  group_key: scenario_id
+  minimum_groups_per_family_label: 5
+  require_collection_audit: false
+split:
+  train_folds: [0, 1, 2]
+  validation_folds: [3]
+  locked_test_folds: [4]
+  number_of_folds: 5
+selection:
+  minimum_precision: 0.90
+  bootstrap_iterations: 50
+  bootstrap_confidence: 0.95
+  latency_repeats: 10
+models:
+  logistic_regression:
+    C: 1.0
+    max_iter: 1000
+  random_forest:
+    n_estimators: 40
+    min_samples_leaf: 1
+    max_features: sqrt
+  xgboost:
+    n_estimators: 40
+    max_depth: 3
+    learning_rate: 0.1
+    subsample: 0.9
+    colsample_bytree: 0.9
+package_dir: artifacts/runtime/smoke-model-package

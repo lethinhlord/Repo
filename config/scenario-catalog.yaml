@@ -1,0 +1,465 @@
+version: scenario-catalog-v1
+lab_only: true
+scenarios:
+  - scenario_id: ACCOUNT-BENIGN-NORMAL-LOGON
+    family: account
+    label: benign
+    expected_behavior: One successful interactive logon by the dedicated benign lab account.
+    attribution:
+      account_names: [datn_benign]
+    quality_gates:
+      min_account_failures: 0
+      max_account_failures: 0
+      min_account_successes: 1
+      max_account_successes: 1
+      require_success_after_failure: false
+    preconditions:
+      - The local account datn_benign exists and is enabled on WIN11-TARGET.
+      - Security log auditing for Logon/Logoff is enabled.
+    execution_steps:
+      - Sign out of datn_benign and sign in once with the correct password at the VM console.
+    expected_observables:
+      - Windows Security event 4624 for datn_benign inside the run window.
+    cleanup_steps:
+      - Sign out and return WIN11-TARGET to the clean lab desktop.
+
+  - scenario_id: ACCOUNT-BENIGN-TYPO-THEN-SUCCESS
+    family: account
+    label: benign
+    expected_behavior: One accidental password typo followed by a successful interactive logon.
+    attribution:
+      account_names: [datn_benign]
+    quality_gates:
+      min_account_failures: 1
+      max_account_failures: 1
+      min_account_successes: 1
+      max_account_successes: 1
+      require_success_after_failure: true
+    preconditions:
+      - The local account datn_benign exists and is enabled on WIN11-TARGET.
+      - Security log auditing for Logon/Logoff is enabled.
+    execution_steps:
+      - Enter one incorrect password for datn_benign, then enter the correct password once.
+    expected_observables:
+      - One event 4625 followed by event 4624 for datn_benign.
+    cleanup_steps:
+      - Sign out and return WIN11-TARGET to the clean lab desktop.
+
+  - scenario_id: ACCOUNT-BENIGN-TWO-TYPOS-THEN-SUCCESS
+    family: account
+    label: benign
+    expected_behavior: Two accidental password typos followed by a successful interactive logon.
+    attribution:
+      account_names: [datn_benign]
+    quality_gates:
+      min_account_failures: 2
+      max_account_failures: 2
+      min_account_successes: 1
+      max_account_successes: 1
+      require_success_after_failure: true
+    preconditions:
+      - The dedicated lab target has account lockout disabled for the collection window.
+      - Security log auditing for Logon/Logoff is enabled.
+    execution_steps:
+      - Enter two incorrect passwords for datn_benign, then enter the correct password once.
+    expected_observables:
+      - Two events 4625 followed by event 4624 for datn_benign.
+    cleanup_steps:
+      - Sign out and return WIN11-TARGET to the clean lab desktop.
+
+  - scenario_id: ACCOUNT-BENIGN-RUNAS
+    family: account
+    label: benign
+    expected_behavior: A legitimate secondary logon starts whoami under the benign lab account.
+    attribution:
+      account_names: [datn_benign]
+    quality_gates:
+      min_account_failures: 0
+      max_account_failures: 0
+      min_account_successes: 1
+      max_account_successes: 1
+      require_success_after_failure: false
+    preconditions:
+      - The local account datn_benign exists and its password is known to the operator.
+      - Security log auditing for Logon/Logoff is enabled.
+    execution_steps:
+      - Run runas /user:.\datn_benign "cmd /c whoami" and enter the correct lab password.
+    expected_observables:
+      - A successful Security logon event 4624 for datn_benign.
+    cleanup_steps:
+      - Close the spawned command window.
+
+  - scenario_id: ACCOUNT-BENIGN-THREE-TYPOS-THEN-SUCCESS
+    family: account
+    label: benign
+    expected_behavior: Three accidental password typos followed by a successful interactive logon.
+    attribution:
+      account_names: [datn_benign]
+    quality_gates:
+      min_account_failures: 3
+      max_account_failures: 3
+      min_account_successes: 1
+      max_account_successes: 1
+      require_success_after_failure: true
+    preconditions:
+      - The dedicated lab target has account lockout disabled for the collection window.
+      - Security log auditing for Logon/Logoff is enabled.
+    execution_steps:
+      - Enter three incorrect passwords for datn_benign, then enter the correct password once.
+    expected_observables:
+      - Three events 4625 followed by event 4624 for datn_benign.
+    cleanup_steps:
+      - Sign out and return WIN11-TARGET to the clean lab desktop.
+
+  - scenario_id: ACCOUNT-MALICIOUS-REPEATED-FAILURES-6
+    family: account
+    label: malicious
+    expected_behavior: Six controlled invalid password attempts against one decoy lab account.
+    attribution:
+      account_names: [datn_attack]
+    quality_gates:
+      min_account_failures: 6
+      max_account_failures: 6
+      min_account_successes: 0
+      max_account_successes: 0
+    preconditions:
+      - The disposable local account datn_attack exists.
+      - The dedicated lab target has account lockout disabled for the collection window.
+    execution_steps:
+      - At the VM console, submit six known-wrong passwords for datn_attack and do not enter a correct password.
+    expected_observables:
+      - Six Security events 4625 and no later 4624 for datn_attack in the run window.
+    cleanup_steps:
+      - Stop attempts and verify the account is not unintentionally locked.
+
+  - scenario_id: ACCOUNT-MALICIOUS-REPEATED-FAILURES-10
+    family: account
+    label: malicious
+    expected_behavior: Ten controlled invalid password attempts against one decoy lab account.
+    attribution:
+      account_names: [datn_attack]
+    quality_gates:
+      min_account_failures: 10
+      max_account_failures: 10
+      min_account_successes: 0
+      max_account_successes: 0
+    preconditions:
+      - The disposable local account datn_attack exists.
+      - The dedicated lab target has account lockout disabled for the collection window.
+    execution_steps:
+      - At the VM console, submit ten known-wrong passwords for datn_attack and do not enter a correct password.
+    expected_observables:
+      - Ten Security events 4625 and no later 4624 for datn_attack in the run window.
+    cleanup_steps:
+      - Verify datn_attack is unlocked; keep the documented lab collection policy until the dataset closes.
+
+  - scenario_id: ACCOUNT-MALICIOUS-PASSWORD-SPRAY
+    family: account
+    label: malicious
+    expected_behavior: A controlled password-spray simulation sends one known-wrong password to three decoy accounts.
+    attribution:
+      account_names: [datn_spray01, datn_spray02, datn_spray03]
+    quality_gates:
+      min_account_failures: 3
+      max_account_failures: 3
+      min_account_successes: 0
+      max_account_successes: 0
+      require_all_accounts_observed: true
+    preconditions:
+      - Three disposable local decoy accounts exist and contain no real data.
+      - The test remains inside the isolated Windows lab VM.
+    execution_steps:
+      - Submit one known-wrong interactive password for each of datn_spray01, datn_spray02 and datn_spray03.
+    expected_observables:
+      - At least one Security event 4625 for each of the three declared accounts.
+    cleanup_steps:
+      - Verify no decoy account is locked and record the actual event count.
+
+  - scenario_id: ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS
+    family: account
+    label: malicious
+    expected_behavior: One controlled invalid attempt followed by one successful logon to simulate a low-noise account compromise.
+    attribution:
+      account_names: [datn_attack]
+    quality_gates:
+      min_account_failures: 1
+      max_account_failures: 1
+      min_account_successes: 1
+      max_account_successes: 1
+      require_success_after_failure: true
+    preconditions:
+      - The disposable local account datn_attack exists and its correct password is available.
+      - The disposable account is unlocked before the run.
+    execution_steps:
+      - Enter one known-wrong password for datn_attack, then enter its correct lab password once.
+    expected_observables:
+      - One event 4625 followed by one event 4624 for datn_attack.
+    cleanup_steps:
+      - Sign out of datn_attack and restore the clean snapshot if required.
+
+  - scenario_id: ACCOUNT-MALICIOUS-REPEATED-FAILURES-3
+    family: account
+    label: malicious
+    expected_behavior: Three controlled invalid attempts against a decoy account without a successful logon.
+    attribution:
+      account_names: [datn_attack]
+    quality_gates:
+      min_account_failures: 3
+      max_account_failures: 3
+      min_account_successes: 0
+      max_account_successes: 0
+    preconditions:
+      - The disposable local account datn_attack exists.
+      - The dedicated lab target has account lockout disabled for the collection window.
+    execution_steps:
+      - Submit three known-wrong passwords for datn_attack and do not enter a correct password.
+    expected_observables:
+      - Exactly three Security events 4625 and no 4624 for datn_attack in the run window.
+    cleanup_steps:
+      - Stop attempts and verify the account is not locked.
+
+  - scenario_id: C2-BENIGN-HEALTH-POLL
+    family: c2
+    label: benign
+    expected_behavior: Regular curl health checks to the approved Kali lab web service.
+    attribution:
+      process_names: [curl.exe]
+      source_ips: [10.20.0.10]
+      destination_ips: [10.40.0.10]
+      destination_ports: [8080]
+      command_contains_any: [/health]
+    quality_gates:
+      min_process_events: 5
+      min_network_events: 5
+      min_suricata_events: 5
+      forbidden_suricata_signature_ids: [900001, 900002]
+    preconditions:
+      - Kali serves the benign web root on 10.40.0.10 port 8080.
+      - Traffic from 10.20.0.10 to 10.40.0.10 is routed through NET-SENSOR.
+    execution_steps:
+      - In Windows PowerShell, run 5 curl.exe requests to http://10.40.0.10:8080/health at 30-second intervals.
+    expected_observables:
+      - Sysmon event 3 and Suricata flow or HTTP records for port 8080 with no local C2 signature.
+    cleanup_steps:
+      - Stop the loop and leave the Kali benign service available for the next run.
+
+  - scenario_id: C2-BENIGN-SINGLE-DOWNLOAD
+    family: c2
+    label: benign
+    expected_behavior: One approved curl download of a harmless text artifact from the Kali lab web service.
+    attribution:
+      process_names: [curl.exe]
+      source_ips: [10.20.0.10]
+      destination_ips: [10.40.0.10]
+      destination_ports: [8080]
+      command_contains_any: [/payload-benign.txt]
+    quality_gates:
+      min_process_events: 1
+      min_network_events: 1
+      min_suricata_events: 1
+      forbidden_suricata_signature_ids: [900001, 900002]
+    preconditions:
+      - Kali serves payload-benign.txt on 10.40.0.10 port 8080.
+      - The file contains only a fixed harmless marker string.
+    execution_steps:
+      - Run curl.exe http://10.40.0.10:8080/payload-benign.txt -o $env:TEMP\\payload-benign.txt once.
+    expected_observables:
+      - One or more Sysmon event 3 records and matching Suricata flow or HTTP records.
+    cleanup_steps:
+      - Delete $env:TEMP\\payload-benign.txt and verify its SHA-256 if retained as evidence.
+
+  - scenario_id: C2-BENIGN-IRREGULAR-API
+    family: c2
+    label: benign
+    expected_behavior: Four approved API requests with deliberately irregular gaps.
+    attribution:
+      process_names: [curl.exe]
+      source_ips: [10.20.0.10]
+      destination_ips: [10.40.0.10]
+      destination_ports: [8080]
+      command_contains_any: [/api/status]
+    quality_gates:
+      min_process_events: 4
+      min_network_events: 4
+      min_suricata_events: 4
+      forbidden_suricata_signature_ids: [900001, 900002]
+    preconditions:
+      - Kali serves the benign web root on 10.40.0.10 port 8080.
+      - NET-SENSOR is recording EVE flow and HTTP events.
+    execution_steps:
+      - Request /api/status four times with gaps of 10, 35 and 20 seconds.
+    expected_observables:
+      - At least four matching network records with a lower periodicity score than the regular poll.
+    cleanup_steps:
+      - Stop the command after the fourth request.
+
+  - scenario_id: C2-BENIGN-DNS
+    family: c2
+    label: benign
+    expected_behavior: Approved DNS lookups for a benign lab-only name through the Kali DNS service.
+    attribution:
+      process_names: [powershell.exe, pwsh.exe]
+      source_ips: [10.20.0.10]
+      dns_suffixes: [www.datn.test]
+      command_contains_any: [www.datn.test]
+    quality_gates:
+      min_dns_events: 4
+      min_suricata_events: 4
+      required_suricata_signature_ids: [900004]
+    preconditions:
+      - Kali dnsmasq answers www.datn.test on 10.40.0.10.
+      - Windows can route UDP and TCP port 53 through NET-SENSOR.
+    execution_steps:
+      - Query b01 through b04.www.datn.test through 10.40.0.10 with irregular pauses.
+    expected_observables:
+      - Four Sysmon event 22 and matching Suricata DNS records, including local benign-canary SID 900004.
+    cleanup_steps:
+      - Clear only the lab DNS cache with Clear-DnsClientCache if needed.
+
+  - scenario_id: C2-BENIGN-API-BURST
+    family: c2
+    label: benign
+    expected_behavior: Six approved API health requests in a short administrative burst.
+    attribution:
+      process_names: [curl.exe]
+      source_ips: [10.20.0.10]
+      destination_ips: [10.40.0.10]
+      destination_ports: [8080]
+      command_contains_any: [/api/status]
+    quality_gates:
+      min_process_events: 6
+      min_network_events: 6
+      min_suricata_events: 6
+      forbidden_suricata_signature_ids: [900001, 900002]
+    preconditions:
+      - Kali serves /api/status on 10.40.0.10 port 8080.
+      - NET-SENSOR is recording EVE flow and HTTP events.
+    execution_steps:
+      - Send six curl.exe requests to /api/status at two-second intervals.
+    expected_observables:
+      - Six Sysmon process/network records and matching Suricata HTTP records without a DATN malicious SID.
+    cleanup_steps:
+      - Stop after exactly six requests.
+
+  - scenario_id: C2-MALICIOUS-HTTP-BEACON
+    family: c2
+    label: malicious
+    expected_behavior: A safe lab-only periodic HTTP beacon simulation to the Kali listener.
+    attribution:
+      process_names: [curl.exe, powershell.exe, pwsh.exe]
+      source_ips: [10.20.0.10]
+      destination_ips: [10.40.0.10]
+      destination_ports: [8081]
+      command_contains_any: [/beacon]
+    quality_gates:
+      min_process_events: 8
+      min_network_events: 8
+      min_suricata_events: 8
+      required_suricata_signature_ids: [900001]
+    preconditions:
+      - Kali serves the isolated beacon web root on 10.40.0.10 port 8081.
+      - The custom Suricata HTTP beacon rule is loaded.
+    execution_steps:
+      - Send 8 curl.exe requests to http://10.40.0.10:8081/beacon at 15-second intervals.
+    expected_observables:
+      - Periodic Sysmon event 3 records, Suricata flow or HTTP records and at least one local alert.
+    cleanup_steps:
+      - Stop the loop and preserve the Kali access log as optional supporting evidence.
+
+  - scenario_id: C2-MALICIOUS-JITTER-BEACON
+    family: c2
+    label: malicious
+    expected_behavior: A safe lab-only HTTP beacon simulation with deterministic jitter.
+    attribution:
+      process_names: [curl.exe, powershell.exe, pwsh.exe]
+      source_ips: [10.20.0.10]
+      destination_ips: [10.40.0.10]
+      destination_ports: [8081]
+      command_contains_any: [/beacon]
+    quality_gates:
+      min_process_events: 8
+      min_network_events: 8
+      min_suricata_events: 8
+      required_suricata_signature_ids: [900001]
+    preconditions:
+      - Kali serves the isolated beacon web root on 10.40.0.10 port 8081.
+      - The custom Suricata HTTP beacon rule is loaded.
+    execution_steps:
+      - Send 8 /beacon requests with fixed gaps of 8, 21, 13, 30, 11, 24 and 17 seconds.
+    expected_observables:
+      - Matching Sysmon and Suricata evidence with a lower periodicity score than the fixed beacon.
+    cleanup_steps:
+      - Stop after exactly eight requests.
+
+  - scenario_id: C2-MALICIOUS-DNS-BEACON
+    family: c2
+    label: malicious
+    expected_behavior: A safe lab-only DNS beacon simulation using unique subdomains.
+    attribution:
+      process_names: [powershell.exe, pwsh.exe]
+      source_ips: [10.20.0.10]
+      dns_suffixes: [beacon.datn.test]
+      command_contains_any: [beacon.datn.test]
+    quality_gates:
+      min_dns_events: 8
+      min_suricata_events: 8
+      required_suricata_signature_ids: [900002]
+    preconditions:
+      - Kali dnsmasq answers the beacon.datn.test lab zone on 10.40.0.10.
+      - The custom Suricata DNS beacon rule is loaded.
+    execution_steps:
+      - Query r01 through r08.beacon.datn.test via 10.40.0.10 at 15-second intervals.
+    expected_observables:
+      - Sysmon event 22, matching Suricata DNS records and at least one local alert.
+    cleanup_steps:
+      - Stop after eight unique lab-only queries and clear the lab DNS cache if required.
+
+  - scenario_id: C2-MALICIOUS-STAGED-TRANSFER
+    family: c2
+    label: malicious
+    expected_behavior: A safe lab-only staged-transfer simulation downloads a harmless fixed test file.
+    attribution:
+      process_names: [curl.exe, powershell.exe, pwsh.exe]
+      source_ips: [10.20.0.10]
+      destination_ips: [10.40.0.10]
+      destination_ports: [9001]
+      command_contains_any: [/stage.bin]
+    quality_gates:
+      min_process_events: 1
+      min_network_events: 1
+      min_suricata_events: 1
+      forbidden_suricata_signature_ids: [900001, 900002, 900004]
+    preconditions:
+      - Kali serves a harmless fixed stage.bin marker file on 10.40.0.10 port 9001.
+      - No custom Suricata signature targets stage.bin; only flow or HTTP telemetry is expected.
+    execution_steps:
+      - Download http://10.40.0.10:9001/stage.bin to $env:TEMP\\stage.bin once with curl.exe.
+    expected_observables:
+      - Sysmon process/network evidence and Suricata HTTP or flow evidence without a DATN local alert.
+    cleanup_steps:
+      - Delete $env:TEMP\\stage.bin and verify no executable content was introduced.
+
+  - scenario_id: C2-MALICIOUS-STAGED-TRANSFER-RETRY
+    family: c2
+    label: malicious
+    expected_behavior: Three repeated downloads of a harmless staged marker simulate retry behavior without a signature alert.
+    attribution:
+      process_names: [curl.exe, powershell.exe, pwsh.exe]
+      source_ips: [10.20.0.10]
+      destination_ips: [10.40.0.10]
+      destination_ports: [9001]
+      command_contains_any: [/stage.bin]
+    quality_gates:
+      min_process_events: 3
+      min_network_events: 3
+      min_suricata_events: 3
+      forbidden_suricata_signature_ids: [900001, 900002, 900004]
+    preconditions:
+      - Kali serves the harmless fixed stage.bin marker on 10.40.0.10 port 9001.
+      - No DATN local signature targets stage.bin.
+    execution_steps:
+      - Download stage.bin three times to distinct temporary names with 20-second intervals.
+    expected_observables:
+      - Three Sysmon process/network records and matching Suricata HTTP or flow evidence without a DATN local alert.
+    cleanup_steps:
+      - Delete all three temporary marker files.

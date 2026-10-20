@@ -1,0 +1,11 @@
+revision: risk-week2-v1
+weights:
+  ai: 0.40
+  observed_evidence: 0.20
+  threat_intelligence: 0.15
+  asset: 0.15
+  severity: 0.10
+automation_state: SHADOW
+strong_actions_enabled: false
+allowed_playbooks:
+  - create_update_incident_notify

@@ -1,0 +1,127 @@
+n8n-1  | Initializing n8n process
+n8n-1  | n8n ready on 0.0.0.0, port 5678
+api-1  | INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+api-1  | INFO:     172.18.0.1:55702 - "GET /ready HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:53358 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:53362 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:49480 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.1:49564 - "GET /ready HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:49504 - "GET /health HTTP/1.1" 200 OK
+n8n-1  | n8n Task Broker ready on 127.0.0.1, port 5679
+api-1  | INFO:     127.0.0.1:56428 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:56440 - "GET /health HTTP/1.1" 200 OK
+n8n-1  | Failed to start Python task runner in internal mode. because Python 3 is missing from this system. Launching a Python runner in internal mode is intended only for debugging and is not recommended for production. Users are encouraged to deploy in external mode. See: https://docs.n8n.io/hosting/configuration/task-runners/#setting-up-external-mode
+n8n-1  | 
+n8n-1  | There are deprecations related to your n8n setup. Please take the recommended actions to update your configuration:
+n8n-1  |  - WEBHOOK_URL -> Use N8N_WEBHOOK_URL instead, which sets the base URL for both test and production webhooks.
+n8n-1  |  - N8N_UNVERIFIED_PACKAGES_ENABLED -> The default for this variable will change to `false` in a future version. Set it to `true` explicitly to keep installing unverified community packages.
+n8n-1  |  - N8N_RUNNERS_MODE -> Internal task runner mode is deprecated and will be removed in a future version. For isolation and scaling, run the task runner launcher as a separate process, set this variable to `external` and share `N8N_RUNNERS_AUTH_TOKEN` with the launcher. See https://docs.n8n.io/deploy/host-n8n/configure-n8n/set-up-task-runners
+n8n-1  |  - N8N_RUNNERS_TASK_TIMEOUT -> The default for this variable will be reduced from 300 (5 minutes) to 60 (1 minute) in a future version. Set it explicitly to keep your current task timeout.
+n8n-1  |  - N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES -> The default for this variable will be reduced from 2 GiB to 256 MiB in a future version. Set it explicitly to keep your current limit.
+n8n-1  |  - N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES -> The default for this variable will be reduced from 5000 to 1000 in a future version. Set it explicitly to keep your current limit.
+n8n-1  | 
+n8n-1  | [license SDK] Skipping renewal on init: license cert is not initialized
+n8n-1  | [runner:js] (node:19) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+n8n-1  | (Use `node --trace-warnings ...` to show where the warning was created)
+n8n-1  | Registered runner "JS Task Runner" (DWB_0ABrQDY-MNF-iKETj) 
+n8n-1  | Instance registered
+n8n-1  | Discovered 4 cluster checks
+n8n-1  | Sandbox: enabled=false provider=n8n-sandbox (from env)
+n8n-1  | Version: 2.41.7
+n8n-1  | Building workflow dependency index...
+n8n-1  | 
+n8n-1  | Editor is now accessible via:
+n8n-1  | http://192.168.149.128:5678
+n8n-1  | Finished building workflow dependency index. Processed 0 draft workflows, 1 published workflows.
+n8n-1  | Skipped invalid MCP registry entries
+api-1  | INFO:     172.18.0.1:60090 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.1:60106 - "GET /ready HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.1:60108 - "POST /features/wazuh HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.3:33250 - "POST /features/wazuh HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:40538 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.3:33260 - "POST /predict HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.3:33272 - "POST /ti/lookup HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.3:33282 - "GET /assets/linux-endpoint-01 HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.3:33296 - "POST /risk/evaluate HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.3:33298 - "POST /features/wazuh HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.3:33304 - "POST /predict HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.3:33316 - "POST /ti/lookup HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.3:33324 - "GET /assets/WIN11-01 HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.3:33338 - "POST /risk/evaluate HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.3:33348 - "POST /features/wazuh HTTP/1.1" 422 Unprocessable Entity
+api-1  | INFO:     172.18.0.3:33356 - "POST /predict HTTP/1.1" 422 Unprocessable Entity
+api-1  | INFO:     172.18.0.3:33360 - "POST /ti/lookup HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.3:33366 - "GET /assets/unknown-asset HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.3:33372 - "POST /risk/evaluate HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:56656 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:56664 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:47162 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:47170 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:41534 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:41548 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:53784 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:36548 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:36558 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:37224 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:37236 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:56280 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:56294 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:60982 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:60986 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:42860 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:42868 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:39340 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:60202 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:60214 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:40680 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:40696 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:40710 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:40722 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:46152 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:59310 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:59316 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:58178 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:58188 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:32844 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:32854 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:54468 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:54474 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:39948 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:38524 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:38532 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:40056 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:40060 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:51742 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:51750 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:38014 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:38016 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:51180 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:51196 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:58370 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:48188 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:48192 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:58062 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:58068 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:45852 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:45860 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:42996 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:43002 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:56516 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:36254 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:36270 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     172.18.0.1:47250 - "GET /ready HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:57800 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:57804 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:37602 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:37616 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:44852 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:44856 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:40694 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:40710 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:38348 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:60770 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:60786 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:46094 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:46100 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:36566 - "GET /health HTTP/1.1" 200 OK
+api-1  | INFO:     127.0.0.1:36576 - "GET /health HTTP/1.1" 200 OK

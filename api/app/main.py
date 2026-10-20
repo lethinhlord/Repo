@@ -1,22 +1,59 @@
+import os
 from datetime import UTC, datetime
+from functools import lru_cache
+from pathlib import Path
+from typing import Annotated
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi import Path as ApiPath
 
+from api.app.asset_context import AssetContextRepository
 from api.app.contracts import (
+    AssetContext,
     AuditRecord,
     DecisionRecord,
+    FeatureBatchResponse,
+    FeaturePipelineResponse,
     HealthResponse,
     IncidentRequest,
+    ModelReadinessResponse,
     PredictionResponse,
+    ReadinessResponse,
+    RiskEvaluation,
+    RiskEvaluationRequest,
+    ThreatIntelligenceResult,
+    ThreatLookupRequest,
+    WazuhAlert,
+    WazuhAlertBatch,
 )
 from api.app.mock_services import lookup_ti_mock, predict_mock
 from api.app.risk import calculate_risk
+from api.app.risk_policy import RiskPolicyRepository
+from api.app.threat_intelligence import (
+    ThreatIntelligencePolicy,
+    lookup_threat_intelligence,
+)
+from ml.feature_pipeline import aggregate_wazuh_alerts, extract_wazuh_features
+from ml.inference import InferenceInputError, ModelPackageError, ModelRuntime
 
 app = FastAPI(
-    title="DATN AI SOAR Mock API",
-    summary="Week 1 contract-first mock inference and orchestration API",
-    version="1.0.0",
+    title="DATN AI SOAR API",
+    summary="Week 1/2 compatibility services plus Week 3 trained-model inference",
+    version="3.0.0-week3",
 )
+
+CONFIG_DIR = Path(__file__).resolve().parents[2] / "config"
+ASSET_CONTEXT_PATH = CONFIG_DIR / "asset-context.yaml"
+asset_context_repository = AssetContextRepository(ASSET_CONTEXT_PATH)
+risk_policy_repository = RiskPolicyRepository(CONFIG_DIR / "risk-policy-week2.yaml")
+ti_policy = ThreatIntelligencePolicy.load(CONFIG_DIR / "ti-policy.yaml")
+
+
+@lru_cache(maxsize=4)
+def load_model_runtime(package_dir: str) -> ModelRuntime:
+    """Load once per configured path; deployments restart when a package changes."""
+
+    return ModelRuntime(Path(package_dir))
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -24,9 +61,104 @@ def health() -> HealthResponse:
     return HealthResponse()
 
 
+@app.get("/ready", response_model=ReadinessResponse)
+def readiness() -> ReadinessResponse:
+    raw_mode = os.getenv("VT_MODE", "mock").strip().lower()
+    mode = raw_mode if raw_mode in {"mock", "live", "disabled"} else "invalid"
+    degraded = mode == "invalid" or (mode == "live" and not os.getenv("VT_API_KEY"))
+    return ReadinessResponse(
+        status="degraded" if degraded else "ready",
+        ti_mode=mode,
+    )
+
+
 @app.post("/predict", response_model=PredictionResponse)
 def predict(incident: IncidentRequest) -> PredictionResponse:
+    package_dir = os.getenv("MODEL_PACKAGE_DIR", "").strip()
+    if package_dir:
+        try:
+            return load_model_runtime(package_dir).predict(incident)
+        except InferenceInputError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (ModelPackageError, OSError, ValueError) as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
     return predict_mock(incident)
+
+
+@app.get("/model/ready", response_model=ModelReadinessResponse)
+def model_readiness() -> ModelReadinessResponse:
+    package_dir = os.getenv("MODEL_PACKAGE_DIR", "").strip()
+    if not package_dir:
+        return ModelReadinessResponse(
+            status="not_configured",
+            mode="mock",
+            model_version="mock-v1",
+            feature_schema_version="features-v1",
+            locked_test_status="UNOPENED",
+            detail="MODEL_PACKAGE_DIR is not configured; deterministic mock inference is active.",
+        )
+    try:
+        runtime = load_model_runtime(package_dir)
+    except (ModelPackageError, OSError, ValueError) as exc:
+        return ModelReadinessResponse(
+            status="invalid",
+            mode="mock",
+            model_version="unavailable",
+            feature_schema_version="features-v1",
+            locked_test_status="UNKNOWN",
+            detail=str(exc),
+        )
+    return ModelReadinessResponse(
+        status="ready",
+        mode="trained",
+        model_version=runtime.metadata["model_version"],
+        feature_schema_version=runtime.metadata["feature_schema_version"],
+        locked_test_status=runtime.metadata["locked_test_status"],
+        detail="Validated trained model package is active.",
+    )
+
+
+@app.post("/features/wazuh", response_model=FeaturePipelineResponse)
+def features_from_wazuh(alert: WazuhAlert) -> FeaturePipelineResponse:
+    return extract_wazuh_features(alert)
+
+
+@app.post("/features/wazuh/batch", response_model=FeatureBatchResponse)
+def features_from_wazuh_batch(batch: WazuhAlertBatch) -> FeatureBatchResponse:
+    return aggregate_wazuh_alerts(
+        batch.alerts,
+        window_minutes=batch.window_minutes,
+    )
+
+
+@app.get("/assets/{asset_id}", response_model=AssetContext)
+def asset_context(
+    asset_id: Annotated[str, ApiPath(min_length=1, max_length=128)],
+) -> AssetContext:
+    return asset_context_repository.get(asset_id)
+
+
+@app.post("/ti/lookup", response_model=ThreatIntelligenceResult)
+def threat_intelligence(request: ThreatLookupRequest) -> ThreatIntelligenceResult:
+    settings = ti_policy.virustotal
+    timeout_value = os.getenv("VT_TIMEOUT_SECONDS", str(settings.timeout_seconds))
+    try:
+        timeout_seconds = float(timeout_value)
+    except ValueError:
+        timeout_seconds = settings.timeout_seconds
+    return lookup_threat_intelligence(
+        request.indicator,
+        mode=os.getenv("VT_MODE", "mock"),
+        api_key=os.getenv("VT_API_KEY"),
+        timeout_seconds=timeout_seconds,
+        minimum_engines=settings.minimum_engines,
+        max_report_age_days=settings.max_report_age_days,
+    )
+
+
+@app.post("/risk/evaluate", response_model=RiskEvaluation)
+def evaluate_risk(request: RiskEvaluationRequest) -> RiskEvaluation:
+    return risk_policy_repository.evaluate(**request.model_dump())
 
 
 @app.post("/orchestrate/mock", response_model=DecisionRecord)

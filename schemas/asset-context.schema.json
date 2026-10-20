@@ -1,0 +1,85 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "asset_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Asset Id",
+      "type": "string"
+    },
+    "role": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Role",
+      "type": "string"
+    },
+    "criticality": {
+      "anyOf": [
+        {
+          "maximum": 5,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Criticality"
+    },
+    "protected": {
+      "title": "Protected",
+      "type": "boolean"
+    },
+    "risk_score": {
+      "anyOf": [
+        {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Risk Score"
+    },
+    "source": {
+      "enum": [
+        "inventory",
+        "default"
+      ],
+      "title": "Source",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "FOUND",
+        "UNKNOWN"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "review_required": {
+      "title": "Review Required",
+      "type": "boolean"
+    },
+    "context_revision": {
+      "const": "asset-context-v1",
+      "default": "asset-context-v1",
+      "title": "Context Revision",
+      "type": "string"
+    }
+  },
+  "required": [
+    "asset_id",
+    "role",
+    "protected",
+    "source",
+    "status",
+    "review_required"
+  ],
+  "title": "AssetContext",
+  "type": "object"
+}

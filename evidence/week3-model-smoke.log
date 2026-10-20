@@ -1,0 +1,7 @@
+SMOKE_ONLY dataset generated at artifacts/runtime/smoke-data/raw
+Dataset ready: 609a94cb4b1838e28116db1bca6ee72c34e67b850474bfe122ce7c9ad9c3e3e0
+Locked test remains UNOPENED.
+Model package ready: week3-20261011T120910Z
+Selection used validation only; locked test remains UNOPENED.
+Inference verified: week3-20261011T120910Z -> malicious
+PASS: LR/RF/XGBoost benchmark, package, and inference smoke test

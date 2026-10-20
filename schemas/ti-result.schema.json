@@ -1,0 +1,132 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "provider": {
+      "enum": [
+        "mock-ti-v2",
+        "virustotal-v3",
+        "disabled"
+      ],
+      "title": "Provider",
+      "type": "string"
+    },
+    "indicator": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Indicator"
+    },
+    "status": {
+      "enum": [
+        "MALICIOUS",
+        "BENIGN",
+        "UNKNOWN"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "available": {
+      "title": "Available",
+      "type": "boolean"
+    },
+    "score": {
+      "anyOf": [
+        {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Score"
+    },
+    "reason_code": {
+      "enum": [
+        "DETECTED",
+        "NO_DETECTIONS",
+        "INSUFFICIENT_DATA",
+        "NO_INDICATOR",
+        "NON_PUBLIC_INDICATOR",
+        "RATE_LIMITED",
+        "AUTH_ERROR",
+        "NOT_FOUND",
+        "PROVIDER_UNAVAILABLE",
+        "INVALID_RESPONSE",
+        "STALE_REPORT",
+        "TIMEOUT",
+        "NOT_CONFIGURED",
+        "DISABLED",
+        "INVALID_MODE"
+      ],
+      "title": "Reason Code",
+      "type": "string"
+    },
+    "rationale": {
+      "title": "Rationale",
+      "type": "string"
+    },
+    "detections": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Detections"
+    },
+    "total_votes": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Total Votes"
+    },
+    "last_analysis_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Last Analysis At"
+    },
+    "policy_revision": {
+      "const": "ti-week2-v1",
+      "default": "ti-week2-v1",
+      "title": "Policy Revision",
+      "type": "string"
+    }
+  },
+  "required": [
+    "provider",
+    "indicator",
+    "status",
+    "available",
+    "reason_code",
+    "rationale"
+  ],
+  "title": "ThreatIntelligenceResult",
+  "type": "object"
+}

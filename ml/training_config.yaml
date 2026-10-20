@@ -1,0 +1,45 @@
+project: datn-ai-soar
+experiment_name: week3-benchmark-v1
+random_seed: 42
+feature_schema: ml/feature_schema.json
+data:
+  raw_dir: data/raw
+  processed_dir: data/processed
+  splits_dir: ml/splits
+  manifest_name: scenario_manifest.json
+  records_name: incidents.jsonl
+  group_key: scenario_id
+  minimum_groups_per_family_label: 5
+  require_collection_audit: true
+  evidence_dir: evidence/scenario-runs
+  scenario_catalog: config/scenario-catalog.yaml
+  audit_report: evidence/dataset-audit.json
+  minimum_runs: 10
+  target_runs: 12
+  minimum_scenarios: 5
+  maximum_scenario_share: 0.30
+split:
+  train_folds: [0, 1, 2]
+  validation_folds: [3]
+  locked_test_folds: [4]
+  number_of_folds: 5
+selection:
+  minimum_precision: 0.90
+  bootstrap_iterations: 300
+  bootstrap_confidence: 0.95
+  latency_repeats: 50
+models:
+  logistic_regression:
+    C: 1.0
+    max_iter: 2000
+  random_forest:
+    n_estimators: 300
+    min_samples_leaf: 2
+    max_features: sqrt
+  xgboost:
+    n_estimators: 300
+    max_depth: 4
+    learning_rate: 0.05
+    subsample: 0.9
+    colsample_bytree: 0.9
+package_dir: ml/model-package

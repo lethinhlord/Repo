@@ -1,0 +1,25 @@
+{
+  "id": "WAZUH-W2-C2-0001",
+  "timestamp": "2026-10-06T12:10:00Z",
+  "rule": {
+    "id": "86601",
+    "level": 10,
+    "description": "Synthetic periodic outbound traffic with process evidence"
+  },
+  "agent": {
+    "id": "002",
+    "name": "WIN11-02"
+  },
+  "decoder": {
+    "name": "suricata"
+  },
+  "data": {
+    "destination_ip": "198.51.100.77",
+    "suspicious_process": 1,
+    "periodicity_score": 0.87,
+    "suricata_alert_count": 2,
+    "outbound_connection_count": 15,
+    "destination_port_count": 1
+  },
+  "location": "/var/log/suricata/eve.json"
+}

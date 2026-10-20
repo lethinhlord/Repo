@@ -1,0 +1,187 @@
+{
+  "name": "Week 2 - Feature TI Asset Risk (SHADOW)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wazuh-alert-week2",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "1e537cba-9c4e-4dbc-91d9-22a134063ae1",
+      "name": "Wazuh Alert Webhook v2",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [-500, -140],
+      "webhookId": "week2-wazuh-alert"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://api:8000/features/wazuh",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json.body ?? $json) }}",
+        "options": {"timeout": 10000}
+      },
+      "id": "f4a99d50-aaf9-4d5c-bd15-34ac28f07ce1",
+      "name": "Extract Incident Features",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-340, -140],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://api:8000/predict",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($node[\"Extract Incident Features\"].json.incident ?? {}) }}",
+        "options": {"timeout": 10000}
+      },
+      "id": "f8e58d43-01d4-4d43-8ce0-a404e86fcbd1",
+      "name": "Call Mock AI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-180, -140],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://api:8000/ti/lookup",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ indicator: $node[\"Extract Incident Features\"].json.incident?.indicator ?? null }) }}",
+        "options": {"timeout": 10000}
+      },
+      "id": "b10a86c4-20f6-422b-a789-563dadc205be",
+      "name": "Lookup Threat Intelligence",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-20, -140],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ 'http://api:8000/assets/' + encodeURIComponent($node[\"Extract Incident Features\"].json.incident?.asset_id ?? 'unknown-asset') }}",
+        "options": {"timeout": 10000}
+      },
+      "id": "a2254564-fef0-4334-ac19-a40335ad1271",
+      "name": "Load Asset Context",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [140, -140],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://api:8000/risk/evaluate",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ ai_probability: $node[\"Call Mock AI\"].json.malicious_probability ?? 0, observed_evidence: Math.min(($node[\"Extract Incident Features\"].json.incident?.evidence_sources ?? []).length / 2, 1), threat_intelligence_score: $node[\"Lookup Threat Intelligence\"].json.available === true ? $node[\"Lookup Threat Intelligence\"].json.score : null, asset_score: $node[\"Load Asset Context\"].json.status === 'FOUND' ? $node[\"Load Asset Context\"].json.risk_score : null, severity_score: Math.min(($node[\"Extract Incident Features\"].json.incident?.base_severity ?? 0) / 15, 1) }) }}",
+        "options": {"timeout": 10000}
+      },
+      "id": "96b3099c-0f6a-4a68-9ee9-e1c12a7b2b4f",
+      "name": "Evaluate Risk",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [300, -140],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const feature = $node[\"Extract Incident Features\"].json ?? {};\nconst prediction = $node[\"Call Mock AI\"].json ?? {};\nconst ti = $node[\"Lookup Threat Intelligence\"].json ?? {};\nconst asset = $node[\"Load Asset Context\"].json ?? {};\nconst risk = $node[\"Evaluate Risk\"].json ?? {};\nconst complete = Boolean(feature.incident && prediction.model_version && ti.policy_revision && asset.context_revision && risk.policy_revision);\nconst reviewRequired = !complete || feature.quality_status !== 'COMPLETE' || ti.status === 'UNKNOWN' || asset.status === 'UNKNOWN' || risk.review_required === true || asset.protected === true;\nreturn [{ json: {\n  route: complete ? 'shadow' : 'degraded',\n  incident_id: feature.incident?.incident_id ?? 'unavailable',\n  feature_schema_version: feature.feature_schema_version ?? null,\n  prediction: complete ? prediction : null,\n  ti_context: complete ? ti : null,\n  asset_context: complete ? asset : null,\n  risk: complete ? risk : null,\n  automation_state: 'SHADOW',\n  selected_playbook: 'create_update_incident_notify',\n  strong_action_allowed: false,\n  review_required: reviewRequired,\n  rationale: complete ? ['Week 2 context services completed.', 'SHADOW guard prohibits strong actions.'] : ['A required context service failed.', 'Manual review is required; no response action was executed.'],\n  audit: { workflow_revision: 'week2-shadow-v1', outcome: complete ? 'NOTIFIED' : 'DEGRADED_REVIEW' }\n}}];"
+      },
+      "id": "5dc84d8d-3372-4697-b46d-d51e66adee0d",
+      "name": "Enforce Shadow Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 140]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"},
+          "conditions": [
+            {
+              "id": "c9c4d559-421f-4691-87d3-70dde54e0ee1",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "shadow",
+              "operator": {"type": "string", "operation": "equals"}
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b5d9aab4-c9ad-4d6c-9792-efb6096aff69",
+      "name": "Decision Ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [140, 140]
+    },
+    {
+      "parameters": {
+        "jsCode": "const decision = $json;\nreturn [{ json: { status: 'notified', notification: `[SHADOW] Incident ${decision.incident_id}: risk ${decision.risk?.display ?? 'N/A'}/10, class ${decision.prediction?.predicted_class ?? 'unknown'}, review=${decision.review_required}`, automation_state: 'SHADOW', strong_action_allowed: false, review_required: decision.review_required, decision } }];"
+      },
+      "id": "9d40d1ef-217f-41fb-aa4d-bcc082ae21c6",
+      "name": "Build Shadow Notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-20, 50]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { status: 'review_required', notification: '[SHADOW] Pipeline degraded; manual review required. No response action was executed.', automation_state: 'SHADOW', strong_action_allowed: false, review_required: true, decision: $json } }];"
+      },
+      "id": "75711b39-57d0-49ae-9aa9-4896a1ac9602",
+      "name": "Build Degraded Review",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-20, 230]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {"responseCode": 200}
+      },
+      "id": "b4c4a67c-bfe1-44f0-a623-f5b45419323e",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [-180, 140]
+    }
+  ],
+  "connections": {
+    "Wazuh Alert Webhook v2": {"main": [[{"node": "Extract Incident Features", "type": "main", "index": 0}]]},
+    "Extract Incident Features": {"main": [[{"node": "Call Mock AI", "type": "main", "index": 0}]]},
+    "Call Mock AI": {"main": [[{"node": "Lookup Threat Intelligence", "type": "main", "index": 0}]]},
+    "Lookup Threat Intelligence": {"main": [[{"node": "Load Asset Context", "type": "main", "index": 0}]]},
+    "Load Asset Context": {"main": [[{"node": "Evaluate Risk", "type": "main", "index": 0}]]},
+    "Evaluate Risk": {"main": [[{"node": "Enforce Shadow Gate", "type": "main", "index": 0}]]},
+    "Enforce Shadow Gate": {"main": [[{"node": "Decision Ready?", "type": "main", "index": 0}]]},
+    "Decision Ready?": {"main": [[{"node": "Build Shadow Notification", "type": "main", "index": 0}], [{"node": "Build Degraded Review", "type": "main", "index": 0}]]},
+    "Build Shadow Notification": {"main": [[{"node": "Respond to Webhook", "type": "main", "index": 0}]]},
+    "Build Degraded Review": {"main": [[{"node": "Respond to Webhook", "type": "main", "index": 0}]]}
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  },
+  "versionId": "fef71711-eab0-4d08-86d7-92b20de0d94c",
+  "id": "week2FeatureTiAssetShadow",
+  "meta": {"templateCredsSetupCompleted": true},
+  "tags": []
+}

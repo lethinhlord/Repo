@@ -1,0 +1,20 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "indicator": {
+      "anyOf": [
+        {
+          "maxLength": 512,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Indicator"
+    }
+  },
+  "title": "ThreatLookupRequest",
+  "type": "object"
+}

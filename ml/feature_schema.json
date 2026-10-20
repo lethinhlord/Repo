@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datn.local/schemas/features-v1.json",
+  "title": "DATN Week 2 behavioral feature vector",
+  "version": "features-v1",
+  "description": "Observed telemetry only; TI, asset context and labels are excluded.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "failed_login_count",
+    "success_after_fail",
+    "suspicious_process",
+    "periodicity_score",
+    "suricata_alert_count",
+    "outbound_connection_count",
+    "destination_port_count"
+  ],
+  "properties": {
+    "failed_login_count": {"type": "number", "minimum": 0, "maximum": 1000000},
+    "success_after_fail": {"type": "number", "minimum": 0, "maximum": 1},
+    "suspicious_process": {"type": "number", "minimum": 0, "maximum": 1},
+    "periodicity_score": {"type": "number", "minimum": 0, "maximum": 1},
+    "suricata_alert_count": {"type": "number", "minimum": 0, "maximum": 1000000},
+    "outbound_connection_count": {"type": "number", "minimum": 0, "maximum": 1000000},
+    "destination_port_count": {"type": "number", "minimum": 0, "maximum": 65535}
+  },
+  "x-feature-order": [
+    "failed_login_count",
+    "success_after_fail",
+    "suspicious_process",
+    "periodicity_score",
+    "suricata_alert_count",
+    "outbound_connection_count",
+    "destination_port_count"
+  ],
+  "x-family-features": {
+    "account": ["failed_login_count", "success_after_fail"],
+    "c2": [
+      "periodicity_score",
+      "suricata_alert_count",
+      "outbound_connection_count",
+      "destination_port_count"
+    ]
+  },
+  "x-excluded-context": [
+    "threat_intelligence",
+    "asset_criticality",
+    "scenario_label",
+    "ground_truth"
+  ]
+}

@@ -1,0 +1,132 @@
+from __future__ import annotations
+
+import time
+from collections.abc import Callable
+from typing import Any
+
+import numpy as np
+from sklearn.metrics import (
+    average_precision_score,
+    brier_score_loss,
+    confusion_matrix,
+    f1_score,
+    precision_score,
+    recall_score,
+)
+
+
+def select_threshold(
+    labels: np.ndarray,
+    probabilities: np.ndarray,
+    *,
+    minimum_precision: float,
+) -> dict[str, Any]:
+    candidates = sorted({0.0, 1.0, *map(float, probabilities)})
+    rows = []
+    for threshold in candidates:
+        predictions = (probabilities >= threshold).astype(int)
+        rows.append(
+            {
+                "threshold": threshold,
+                "precision": precision_score(labels, predictions, zero_division=0),
+                "recall": recall_score(labels, predictions, zero_division=0),
+                "f1": f1_score(labels, predictions, zero_division=0),
+            }
+        )
+    eligible = [row for row in rows if row["precision"] >= minimum_precision]
+    if eligible:
+        selected = max(
+            eligible,
+            key=lambda row: (row["recall"], row["f1"], row["precision"], row["threshold"]),
+        )
+        automation_eligible = True
+        reason = "precision_target_met"
+    else:
+        selected = max(rows, key=lambda row: (row["f1"], row["precision"], row["recall"]))
+        automation_eligible = False
+        reason = "precision_target_not_met"
+    return {
+        **selected,
+        "minimum_precision": minimum_precision,
+        "automation_eligible": automation_eligible,
+        "selection_reason": reason,
+    }
+
+
+def classification_metrics(
+    labels: np.ndarray,
+    probabilities: np.ndarray,
+    threshold: float,
+) -> dict[str, Any]:
+    predictions = (probabilities >= threshold).astype(int)
+    tn, fp, fn, tp = confusion_matrix(labels, predictions, labels=[0, 1]).ravel()
+    return {
+        "precision": precision_score(labels, predictions, zero_division=0),
+        "recall": recall_score(labels, predictions, zero_division=0),
+        "f1": f1_score(labels, predictions, zero_division=0),
+        "pr_auc": average_precision_score(labels, probabilities),
+        "fpr": float(fp / (fp + tn)) if fp + tn else 0.0,
+        "brier": brier_score_loss(labels, probabilities),
+        "confusion_matrix": {"tn": int(tn), "fp": int(fp), "fn": int(fn), "tp": int(tp)},
+    }
+
+
+def grouped_bootstrap_intervals(
+    labels: np.ndarray,
+    probabilities: np.ndarray,
+    groups: np.ndarray,
+    threshold: float,
+    *,
+    iterations: int,
+    confidence: float,
+    random_seed: int,
+) -> dict[str, dict[str, float | None]]:
+    unique_groups = np.unique(groups)
+    if len(unique_groups) < 2:
+        raise ValueError("bootstrap uncertainty requires at least two independent groups")
+    rng = np.random.default_rng(random_seed)
+    samples: dict[str, list[float]] = {
+        name: [] for name in ("precision", "recall", "f1", "pr_auc", "fpr", "brier")
+    }
+    for _ in range(iterations):
+        selected_groups = rng.choice(unique_groups, size=len(unique_groups), replace=True)
+        selected_indices = np.concatenate(
+            [np.flatnonzero(groups == group) for group in selected_groups]
+        )
+        sample_labels = labels[selected_indices]
+        if len(np.unique(sample_labels)) < 2:
+            continue
+        result = classification_metrics(
+            sample_labels,
+            probabilities[selected_indices],
+            threshold,
+        )
+        for name in samples:
+            samples[name].append(float(result[name]))
+    alpha = (1.0 - confidence) / 2.0
+    intervals: dict[str, dict[str, float | None]] = {}
+    for name, values in samples.items():
+        if not values:
+            intervals[name] = {"low": None, "high": None}
+        else:
+            intervals[name] = {
+                "low": float(np.quantile(values, alpha)),
+                "high": float(np.quantile(values, 1.0 - alpha)),
+            }
+    return intervals
+
+
+def measure_latency_ms(
+    predict_probability: Callable[[], np.ndarray], *, repeats: int
+) -> dict[str, float]:
+    durations = []
+    for _ in range(repeats):
+        started = time.perf_counter_ns()
+        probabilities = predict_probability()
+        elapsed = time.perf_counter_ns() - started
+        durations.append(elapsed / max(len(probabilities), 1) / 1_000_000)
+    return {
+        "median_per_record_ms": float(np.median(durations)),
+        "p95_per_record_ms": float(np.quantile(durations, 0.95)),
+        "repeats": repeats,
+    }

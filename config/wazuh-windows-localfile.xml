@@ -1,0 +1,8 @@
+<!-- Insert this block once inside <ossec_config> on WIN11-TARGET.
+     The Wazuh Windows agent already monitors the Security channel by default.
+     Do not add a second Security localfile block. -->
+<localfile>
+  <location>Microsoft-Windows-Sysmon/Operational</location>
+  <log_format>eventchannel</log_format>
+  <query>Event/System[(EventID=1 or EventID=3 or EventID=22)]</query>
+</localfile>

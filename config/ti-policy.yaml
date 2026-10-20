@@ -1,0 +1,5 @@
+revision: ti-week2-v1
+virustotal:
+  minimum_engines: 10
+  max_report_age_days: 30
+  timeout_seconds: 5

@@ -9,6 +9,7 @@ __pycache__/
 .coverage
 htmlcov/
 .venv/
+.venv-*/
 venv/
 dist/
 build/
@@ -17,7 +18,14 @@ build/
 *.onnx
 data/raw/
 data/processed/
+evidence/scenario-runs/
+evidence/dataset-audit.json
+run-drafts/
+operator-logs/
 n8n/data/
 artifacts/runtime/
+ml/splits/*.txt
+ml/model-package/*
+!ml/model-package/README.md
 *.pem
 *.key
