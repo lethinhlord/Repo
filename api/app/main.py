@@ -17,6 +17,8 @@ from api.app.contracts import (
     FeaturePipelineResponse,
     FeatureStateResponse,
     HealthResponse,
+    IncidentRecordRequest,
+    IncidentRecordResponse,
     IncidentRequest,
     ModelReadinessResponse,
     PredictionResponse,
@@ -29,6 +31,7 @@ from api.app.contracts import (
     WazuhAlertBatch,
 )
 from api.app.feature_state import FeatureStateConflictError, FeatureStateStore
+from api.app.incident_store import IncidentStore
 from api.app.mock_services import lookup_ti_mock, predict_mock
 from api.app.risk import calculate_risk
 from api.app.risk_policy import RiskPolicyRepository
@@ -62,6 +65,11 @@ def load_model_runtime(package_dir: str) -> ModelRuntime:
 @lru_cache(maxsize=4)
 def load_feature_state_store(path: str, retention_seconds: int) -> FeatureStateStore:
     return FeatureStateStore(Path(path), retention_seconds=retention_seconds)
+
+
+@lru_cache(maxsize=4)
+def load_incident_store(path: str) -> IncidentStore:
+    return IncidentStore(Path(path))
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -210,6 +218,17 @@ def threat_intelligence(request: ThreatLookupRequest) -> ThreatIntelligenceResul
 @app.post("/risk/evaluate", response_model=RiskEvaluation)
 def evaluate_risk(request: RiskEvaluationRequest) -> RiskEvaluation:
     return risk_policy_repository.evaluate(**request.model_dump())
+
+
+@app.post("/incidents/record", response_model=IncidentRecordResponse)
+def record_incident(request: IncidentRecordRequest) -> IncidentRecordResponse:
+    path = os.getenv("INCIDENT_DB", "/tmp/datn-incidents.sqlite3").strip()
+    try:
+        return load_incident_store(path).record(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, sqlite3.Error) as exc:
+        raise HTTPException(status_code=503, detail=f"incident store unavailable: {exc}") from exc
 
 
 @app.post("/orchestrate/mock", response_model=DecisionRecord)

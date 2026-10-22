@@ -329,6 +329,44 @@
         }
       }
     },
+    "/incidents/record": {
+      "post": {
+        "summary": "Record Incident",
+        "operationId": "record_incident_incidents_record_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IncidentRecordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentRecordResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/orchestrate/mock": {
       "post": {
         "summary": "Orchestrate Mock",
@@ -731,6 +769,100 @@
         "additionalProperties": false,
         "type": "object",
         "title": "HealthResponse"
+      },
+      "IncidentRecordRequest": {
+        "properties": {
+          "incident_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Incident Id"
+          },
+          "source_event_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Source Event Id"
+          },
+          "route": {
+            "type": "string",
+            "enum": [
+              "shadow",
+              "review"
+            ],
+            "title": "Route"
+          },
+          "review_required": {
+            "type": "boolean",
+            "title": "Review Required"
+          },
+          "notification": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Notification"
+          },
+          "decision": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Decision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "incident_id",
+          "source_event_id",
+          "route",
+          "review_required",
+          "notification",
+          "decision"
+        ],
+        "title": "IncidentRecordRequest"
+      },
+      "IncidentRecordResponse": {
+        "properties": {
+          "incident_id": {
+            "type": "string",
+            "title": "Incident Id"
+          },
+          "source_event_id": {
+            "type": "string",
+            "title": "Source Event Id"
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "created",
+              "updated",
+              "duplicate"
+            ],
+            "title": "Disposition"
+          },
+          "notification_status": {
+            "type": "string",
+            "enum": [
+              "QUEUED",
+              "ALREADY_QUEUED"
+            ],
+            "title": "Notification Status"
+          },
+          "recorded_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Recorded At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "incident_id",
+          "source_event_id",
+          "disposition",
+          "notification_status",
+          "recorded_at"
+        ],
+        "title": "IncidentRecordResponse"
       },
       "IncidentRequest": {
         "properties": {

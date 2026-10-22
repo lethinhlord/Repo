@@ -1,0 +1,50 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "incident_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Incident Id",
+      "type": "string"
+    },
+    "source_event_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Source Event Id",
+      "type": "string"
+    },
+    "route": {
+      "enum": [
+        "shadow",
+        "review"
+      ],
+      "title": "Route",
+      "type": "string"
+    },
+    "review_required": {
+      "title": "Review Required",
+      "type": "boolean"
+    },
+    "notification": {
+      "maxLength": 4096,
+      "minLength": 1,
+      "title": "Notification",
+      "type": "string"
+    },
+    "decision": {
+      "additionalProperties": true,
+      "title": "Decision",
+      "type": "object"
+    }
+  },
+  "required": [
+    "incident_id",
+    "source_event_id",
+    "route",
+    "review_required",
+    "notification",
+    "decision"
+  ],
+  "title": "IncidentRecordRequest",
+  "type": "object"
+}

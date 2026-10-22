@@ -6,6 +6,8 @@ from api.app.contracts import (
     FeatureBatchResponse,
     FeaturePipelineResponse,
     FeatureStateResponse,
+    IncidentRecordRequest,
+    IncidentRecordResponse,
     RiskEvaluation,
     RiskEvaluationRequest,
     ThreatIntelligenceResult,
@@ -32,6 +34,8 @@ if __name__ == "__main__":
     )
     write_json("feature-batch-response.schema.json", FeatureBatchResponse.model_json_schema())
     write_json("feature-state-response.schema.json", FeatureStateResponse.model_json_schema())
+    write_json("incident-record-request.schema.json", IncidentRecordRequest.model_json_schema())
+    write_json("incident-record-response.schema.json", IncidentRecordResponse.model_json_schema())
     write_json("asset-context.schema.json", AssetContext.model_json_schema())
     write_json("ti-lookup.schema.json", ThreatLookupRequest.model_json_schema())
     write_json("ti-result.schema.json", ThreatIntelligenceResult.model_json_schema())

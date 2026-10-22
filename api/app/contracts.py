@@ -272,6 +272,32 @@ class RiskEvaluation(StrictModel):
     review_reasons: list[str]
 
 
+class IncidentRecordRequest(StrictModel):
+    incident_id: str = Field(min_length=1, max_length=128)
+    source_event_id: str = Field(min_length=1, max_length=128)
+    route: Literal["shadow", "review"]
+    review_required: bool
+    notification: str = Field(min_length=1, max_length=4096)
+    decision: dict[str, object]
+
+    @field_validator("decision")
+    @classmethod
+    def bound_decision_document(cls, value: dict[str, object]) -> dict[str, object]:
+        import json
+
+        if len(json.dumps(value, default=str).encode()) > 1_000_000:
+            raise ValueError("decision document exceeds 1 MB")
+        return value
+
+
+class IncidentRecordResponse(StrictModel):
+    incident_id: str
+    source_event_id: str
+    disposition: Literal["created", "updated", "duplicate"]
+    notification_status: Literal["QUEUED", "ALREADY_QUEUED"]
+    recorded_at: datetime
+
+
 class ReadinessResponse(StrictModel):
     status: Literal["ready", "degraded"]
     service: Literal["datn-ai-soar-api"] = "datn-ai-soar-api"

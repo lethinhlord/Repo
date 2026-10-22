@@ -44,6 +44,7 @@ def test_state_store_correlates_sequential_webhook_events(tmp_path: Path) -> Non
     assert result.feature.incident.features["failed_login_count"] == 2.0
     assert result.feature.incident.features["successful_login_count"] == 1.0
     assert result.feature.incident.features["success_after_fail"] == 1.0
+    assert first.feature.incident.incident_id == result.feature.incident.incident_id
 
 
 def test_state_store_is_idempotent_across_process_restart(tmp_path: Path) -> None:

@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from api.app.main import app, load_feature_state_store
+from api.app.main import app, load_feature_state_store, load_incident_store
 
 ROOT = Path(__file__).resolve().parents[1]
 client = TestClient(app)
@@ -69,6 +69,28 @@ def test_stateful_feature_endpoint_rejects_conflicting_replay(
     response = client.post("/features/wazuh/stateful", json=conflicting)
 
     assert response.status_code == 409
+
+
+def test_incident_record_endpoint_is_idempotent(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("INCIDENT_DB", str(tmp_path / "incidents.sqlite3"))
+    load_incident_store.cache_clear()
+    payload = {
+        "incident_id": "INC-API-1",
+        "source_event_id": "EVENT-API-1",
+        "route": "review",
+        "review_required": True,
+        "notification": "manual review required",
+        "decision": {"risk": {"display": 6.2}},
+    }
+
+    first = client.post("/incidents/record", json=payload)
+    replay = client.post("/incidents/record", json=payload)
+
+    assert first.status_code == 200
+    assert first.json()["disposition"] == "created"
+    assert first.json()["notification_status"] == "QUEUED"
+    assert replay.status_code == 200
+    assert replay.json()["disposition"] == "duplicate"
 
 
 def test_readiness_exposes_week2_revisions_and_safe_gate(monkeypatch) -> None:

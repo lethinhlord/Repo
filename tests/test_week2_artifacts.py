@@ -18,6 +18,8 @@ def test_week2_required_artifacts_exist() -> None:
         "n8n/workflows/week2-feature-ti-asset-shadow.json",
         "schemas/feature-pipeline-response.schema.json",
         "schemas/feature-state-response.schema.json",
+        "schemas/incident-record-request.schema.json",
+        "schemas/incident-record-response.schema.json",
         "schemas/asset-context.schema.json",
         "schemas/ti-lookup.schema.json",
         "docs/week2-runbook.md",

@@ -25,6 +25,15 @@
 - API/network failures route to a degraded manual-review response.
 - Protected assets always require review regardless of calculated risk.
 
+## Durable response boundary
+
+`POST /incidents/record` upserts the correlated incident in SQLite and inserts
+one durable notification-outbox row per incident. A repeated source event with
+the identical decision is reported as `duplicate`; reuse of that event ID with a
+different decision is rejected. The API therefore provides an auditable local
+response queue without claiming that an external email/chat integration has
+already delivered the notification.
+
 ## Lab exposure
 
 FastAPI is published only on `127.0.0.1:8000` and remains reachable to n8n on

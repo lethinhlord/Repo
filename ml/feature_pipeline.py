@@ -272,8 +272,9 @@ def _build_response(alerts: list[WazuhAlert]) -> FeaturePipelineResponse:
         if PurePath(alert.location.replace("\\", "/")).name
     ]
     refs.extend(f"source-log:{name}" for name in dict.fromkeys(location_names))
+    bucket = int(ordered_alerts[0].timestamp.timestamp()) // 300
     digest = hashlib.sha256(
-        "|".join([_asset_id(first).casefold(), family, *sorted(refs)]).encode()
+        "|".join([*_aggregation_key(first), str(bucket)]).encode()
     ).hexdigest()[:12].upper()
     sources = ["wazuh"]
     if any(_suricata_payload(alert) is not None for alert in alerts):
