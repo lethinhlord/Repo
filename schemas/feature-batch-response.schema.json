@@ -4,8 +4,8 @@
       "additionalProperties": false,
       "properties": {
         "feature_schema_version": {
-          "const": "features-v1",
-          "default": "features-v1",
+          "const": "features-v2",
+          "default": "features-v2",
           "title": "Feature Schema Version",
           "type": "string"
         },
@@ -152,8 +152,8 @@
   "additionalProperties": false,
   "properties": {
     "feature_schema_version": {
-      "const": "features-v1",
-      "default": "features-v1",
+      "const": "features-v2",
+      "default": "features-v2",
       "title": "Feature Schema Version",
       "type": "string"
     },

@@ -489,9 +489,9 @@
         "properties": {
           "feature_schema_version": {
             "type": "string",
-            "const": "features-v1",
+            "const": "features-v2",
             "title": "Feature Schema Version",
-            "default": "features-v1"
+            "default": "features-v2"
           },
           "input_alert_count": {
             "type": "integer",
@@ -531,9 +531,9 @@
         "properties": {
           "feature_schema_version": {
             "type": "string",
-            "const": "features-v1",
+            "const": "features-v2",
             "title": "Feature Schema Version",
-            "default": "features-v1"
+            "default": "features-v2"
           },
           "feature_order": {
             "items": {
@@ -795,9 +795,9 @@
           },
           "feature_schema_version": {
             "type": "string",
-            "const": "features-v1",
+            "const": "features-v2",
             "title": "Feature Schema Version",
-            "default": "features-v1"
+            "default": "features-v2"
           },
           "asset_context_revision": {
             "type": "string",

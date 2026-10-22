@@ -18,7 +18,7 @@ def test_feature_endpoint_normalizes_raw_wazuh_alert() -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert body["feature_schema_version"] == "features-v1"
+    assert body["feature_schema_version"] == "features-v2"
     assert body["incident"]["family_hint"] == "c2"
     assert body["incident"]["features"]["periodicity_score"] == 0.87
 
@@ -50,7 +50,7 @@ def test_readiness_exposes_week2_revisions_and_safe_gate(monkeypatch) -> None:
         "status": "degraded",
         "service": "datn-ai-soar-api",
         "api_version": "3.1.0",
-        "feature_schema_version": "features-v1",
+        "feature_schema_version": "features-v2",
         "asset_context_revision": "asset-context-v1",
         "risk_policy_revision": "risk-week2-v1",
         "ti_policy_revision": "ti-week2-v1",

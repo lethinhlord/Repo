@@ -120,7 +120,7 @@ def model_readiness() -> ModelReadinessResponse:
             status="not_configured",
             mode="mock" if _allow_mock_inference() else "unconfigured",
             model_version="mock-v1",
-            feature_schema_version="features-v1",
+            feature_schema_version="features-v2",
             locked_test_status="UNOPENED",
             detail=(
                 "MODEL_PACKAGE_DIR is not configured; explicit lab mock inference is active."
@@ -135,7 +135,7 @@ def model_readiness() -> ModelReadinessResponse:
             status="invalid",
             mode="unconfigured",
             model_version="unavailable",
-            feature_schema_version="features-v1",
+            feature_schema_version="features-v2",
             locked_test_status="UNKNOWN",
             detail=str(exc),
         )

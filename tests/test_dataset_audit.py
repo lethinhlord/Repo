@@ -11,12 +11,25 @@ from ml.dataset_audit import audit_dataset
 
 FEATURES = {
     "failed_login_count": 0.0,
+    "successful_login_count": 0.0,
     "success_after_fail": 0.0,
+    "unique_target_account_count": 0.0,
+    "unique_source_count": 0.0,
+    "remote_logon_ratio": 0.0,
+    "failure_window_seconds": 0.0,
+    "attempt_rate_per_minute": 0.0,
     "suspicious_process": 0.0,
     "periodicity_score": 0.0,
+    "connection_interval_cv": 0.0,
+    "mean_interval_seconds": 0.0,
     "suricata_alert_count": 0.0,
+    "suricata_severity_score": 0.0,
     "outbound_connection_count": 1.0,
+    "unique_destination_count": 1.0,
     "destination_port_count": 1.0,
+    "dns_query_count": 0.0,
+    "dns_unique_query_ratio": 0.0,
+    "flow_total_bytes_log1p": 0.0,
 }
 
 

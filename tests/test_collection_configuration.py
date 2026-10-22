@@ -18,13 +18,15 @@ from ml.scenario_collection import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_c2_model_excludes_taxonomy_derived_suspicious_process_proxy() -> None:
+def test_c2_model_includes_observed_process_behavior_without_identity() -> None:
     schema = json.loads(
         (PROJECT_ROOT / "ml/feature_schema.json").read_text(encoding="utf-8")
     )
 
     assert "suspicious_process" in schema["properties"]
-    assert "suspicious_process" not in schema["x-family-features"]["c2"]
+    assert "suspicious_process" in schema["x-family-features"]["c2"]
+    assert "account_identity" in schema["x-excluded-context"]
+    assert "exact_destination_identity" in schema["x-excluded-context"]
 
 
 def test_collection_runbook_is_portable_isolated_and_failure_safe() -> None:

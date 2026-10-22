@@ -73,7 +73,7 @@ curl -sS -H 'Content-Type: application/json' \
 
 Checkpoint W2-03: `/health` proves Week 1 compatibility. `/ready` proves the
 Week 2 policy revisions, feature schema, mock TI mode and disabled strong
-actions. The feature response must show `features-v1`, `COMPLETE`, one Wazuh
+actions. The feature response must show `features-v2`, `COMPLETE`, one Wazuh
 evidence source and no TI/asset/label field inside the ML vector.
 
 ## 5. Prove asset and TI failure-safe behavior
@@ -97,7 +97,7 @@ Open `http://192.168.149.128:5678` inside the Ubuntu browser and select
 
 1. Wazuh Alert Webhook v2
 2. Extract Incident Features
-3. Call Mock AI
+3. Call AI Model
 4. Lookup Threat Intelligence
 5. Load Asset Context
 6. Evaluate Risk

@@ -6,6 +6,8 @@ import random
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from ml.behavior_features import empty_feature_vector
+
 
 def generate(output_dir: Path, *, random_seed: int = 42) -> None:
     rng = random.Random(random_seed)
@@ -37,30 +39,61 @@ def generate(output_dir: Path, *, random_seed: int = 42) -> None:
                 records = []
                 for incident_number in range(4):
                     noise = rng.uniform(-0.25, 0.25)
+                    features = empty_feature_vector()
                     if family == "account":
-                        features = {
-                            "failed_login_count": max(0.0, (3.0 if not label else 18.0) + noise),
-                            "success_after_fail": float(label and incident_number % 2 == 0),
-                            "suspicious_process": 0.0,
-                            "periodicity_score": 0.0,
-                            "suricata_alert_count": 0.0,
-                            "outbound_connection_count": 0.0,
-                            "destination_port_count": 0.0,
-                        }
+                        features.update(
+                            {
+                                "failed_login_count": max(
+                                    0.0, (3.0 if not label else 18.0) + noise
+                                ),
+                                "successful_login_count": float(
+                                    incident_number % 2 == 0
+                                ),
+                                "success_after_fail": float(
+                                    label and incident_number % 2 == 0
+                                ),
+                                "unique_target_account_count": float(1 + label),
+                                "unique_source_count": float(1 + label),
+                                "remote_logon_ratio": float(label) * 0.75,
+                                "failure_window_seconds": float(
+                                    (incident_number + 1) * (10 if not label else 45)
+                                ),
+                                "attempt_rate_per_minute": max(
+                                    0.0, (2.0 if not label else 12.0) + noise
+                                ),
+                            }
+                        )
                     else:
-                        features = {
-                            "failed_login_count": 0.0,
-                            "success_after_fail": 0.0,
-                            "suspicious_process": float(label),
-                            "periodicity_score": max(
-                                0.0, (0.12 if not label else 0.86) + noise / 5
-                            ),
-                            "suricata_alert_count": float(label * 2),
-                            "outbound_connection_count": max(
-                                0.0, (3.0 if not label else 35.0) + noise
-                            ),
-                            "destination_port_count": float(2 if not label else 12),
-                        }
+                        features.update(
+                            {
+                                "suspicious_process": float(label),
+                                "periodicity_score": max(
+                                    0.0, (0.12 if not label else 0.86) + noise / 5
+                                ),
+                                "connection_interval_cv": max(
+                                    0.0, (0.9 if not label else 0.1) + noise / 5
+                                ),
+                                "mean_interval_seconds": float(
+                                    30 if not label else 15
+                                ),
+                                "suricata_alert_count": float(label * 2),
+                                "suricata_severity_score": float(label) * 0.66,
+                                "outbound_connection_count": max(
+                                    0.0, (3.0 if not label else 35.0) + noise
+                                ),
+                                "unique_destination_count": float(
+                                    2 if not label else 5
+                                ),
+                                "destination_port_count": float(
+                                    2 if not label else 12
+                                ),
+                                "dns_query_count": float(incident_number),
+                                "dns_unique_query_ratio": 1.0,
+                                "flow_total_bytes_log1p": float(
+                                    5 if not label else 9
+                                ),
+                            }
+                        )
                     incident_time = started + timedelta(hours=run_number, minutes=incident_number)
                     records.append(
                         {

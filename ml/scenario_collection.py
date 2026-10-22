@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import os
 import shutil
-import statistics
 import tempfile
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -16,13 +14,20 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from api.app.contracts import IncidentRequest
+from ml.behavior_features import (
+    AccountObservation,
+    NetworkObservation,
+    SuricataObservation,
+    derive_account_features,
+    derive_c2_features,
+    interval_features,
+)
 from ml.dataset import (
     DatasetRecord,
     ScenarioManifest,
     load_feature_schema,
     validate_feature_contract,
 )
-from ml.feature_pipeline import FEATURE_ORDER
 
 
 class CollectionError(RuntimeError):
@@ -718,18 +723,7 @@ def _taxonomy_match(eventdata: dict[str, Any], taxonomy: dict[str, Any]) -> bool
 
 
 def periodicity_score(timestamps: list[datetime]) -> float:
-    ordered = sorted(set(timestamps))
-    if len(ordered) < 3:
-        return 0.0
-    intervals = [
-        (current - previous).total_seconds()
-        for previous, current in zip(ordered, ordered[1:], strict=False)
-    ]
-    mean = statistics.fmean(intervals)
-    if mean <= 0 or not math.isfinite(mean):
-        return 0.0
-    score = 1.0 - statistics.pstdev(intervals) / (mean + 1e-9)
-    return round(max(0.0, min(1.0, score)), 6)
+    return interval_features(timestamps)[0]
 
 
 def _derive_account(
@@ -737,8 +731,7 @@ def _derive_account(
 ) -> tuple[dict[str, float], list[dict[str, Any]], str | None]:
     users = _casefold_set(draft.attribution.account_names)
     selected: list[dict[str, Any]] = []
-    failures: list[datetime] = []
-    successes: list[datetime] = []
+    observations: list[AccountObservation] = []
     observed_accounts: set[str] = set()
     for event in events:
         if str((event.get("agent") or {}).get("name")) != windows_agent:
@@ -755,27 +748,50 @@ def _derive_account(
             continue
         selected.append(event)
         observed_accounts.add(_account_user(eventdata))
-        (failures if event_id == "4625" else successes).append(timestamp)
+        account = _account_user(eventdata)
+        source = str(
+            eventdata.get("ipAddress")
+            or eventdata.get("IpAddress")
+            or eventdata.get("sourceIp")
+            or eventdata.get("workstationName")
+            or eventdata.get("WorkstationName")
+            or "local-console"
+        ).strip().casefold()
+        logon_type = str(
+            eventdata.get("logonType", eventdata.get("LogonType", "unknown"))
+        ).strip()
+        observations.append(
+            AccountObservation(
+                timestamp=timestamp,
+                account=account,
+                source=source,
+                logon_type=logon_type,
+                success=event_id == "4624",
+            )
+        )
     if not selected:
         raise CollectionError("no attributable Windows account events were collected")
-    success_after_fail = any(success > failure for failure in failures for success in successes)
+    features = derive_account_features(observations)
+    failures = int(features["failed_login_count"])
+    successes = int(features["successful_login_count"])
+    success_after_fail = bool(features["success_after_fail"])
     gates = draft.quality_gates
-    if len(failures) < gates.min_account_failures or (
+    if failures < gates.min_account_failures or (
         gates.max_account_failures is not None
-        and len(failures) > gates.max_account_failures
+        and failures > gates.max_account_failures
     ):
         raise CollectionError(
             "account failure count failed quality gate: "
-            f"observed={len(failures)}, expected="
+            f"observed={failures}, expected="
             f"[{gates.min_account_failures}, {gates.max_account_failures}]"
         )
-    if len(successes) < gates.min_account_successes or (
+    if successes < gates.min_account_successes or (
         gates.max_account_successes is not None
-        and len(successes) > gates.max_account_successes
+        and successes > gates.max_account_successes
     ):
         raise CollectionError(
             "account success count failed quality gate: "
-            f"observed={len(successes)}, expected="
+            f"observed={successes}, expected="
             f"[{gates.min_account_successes}, {gates.max_account_successes}]"
         )
     if (
@@ -793,9 +809,6 @@ def _derive_account(
             raise CollectionError(
                 f"account evidence is missing declared accounts: {missing_accounts}"
             )
-    features = {name: 0.0 for name in FEATURE_ORDER}
-    features["failed_login_count"] = float(len(failures))
-    features["success_after_fail"] = float(success_after_fail)
     return features, selected, draft.attribution.account_names[0]
 
 
@@ -803,10 +816,9 @@ def _derive_c2(
     events: list[dict[str, Any]], draft: RunDraft, source: SourceConfig, taxonomy: dict[str, Any]
 ) -> tuple[dict[str, float], list[dict[str, Any]], list[dict[str, Any]], str | None]:
     windows: list[dict[str, Any]] = []
-    network_times: list[datetime] = []
+    network_observations: list[NetworkObservation] = []
     process_events = 0
     dns_events = 0
-    ports: set[int] = set()
     suspicious = False
     for event in events:
         if str((event.get("agent") or {}).get("name")) != source.windows_agent_name:
@@ -827,20 +839,30 @@ def _derive_c2(
             if timestamp is None:
                 continue
             windows.append(event)
-            network_times.append(timestamp)
+            destination = str(eventdata.get("destinationIp", "")).strip()
+            destination_port = None
             with suppress(TypeError, ValueError):
-                ports.add(int(eventdata.get("destinationPort")))
+                destination_port = int(eventdata.get("destinationPort"))
+            network_observations.append(
+                NetworkObservation(timestamp, destination, destination_port)
+            )
             suspicious = suspicious or _taxonomy_match(eventdata, taxonomy)
         elif event_id == "22" and _matches_dns(eventdata, draft.attribution):
+            timestamp = _event_time(event)
+            if timestamp is None:
+                continue
             windows.append(event)
             dns_events += 1
+            query = str(eventdata.get("queryName", "")).strip(".")
+            network_observations.append(
+                NetworkObservation(timestamp, query, 53, dns_query=query)
+            )
             suspicious = suspicious or _taxonomy_match(eventdata, taxonomy)
-    if not network_times and not any(_windows_fields(event)[0] == "22" for event in windows):
+    if not network_observations:
         raise CollectionError("no attributable Sysmon network or DNS telemetry was collected")
 
     suricata: list[dict[str, Any]] = []
     seen: set[str] = set()
-    alerts = 0
     signature_ids: set[int] = set()
     for event in events:
         if str((event.get("agent") or {}).get("name")) != source.suricata_agent_name:
@@ -855,7 +877,6 @@ def _derive_c2(
         seen.add(digest)
         suricata.append(payload)
         if payload.get("event_type") == "alert":
-            alerts += 1
             with suppress(TypeError, ValueError):
                 signature_ids.add(int((payload.get("alert") or {}).get("signature_id")))
     if not suricata:
@@ -864,7 +885,7 @@ def _derive_c2(
     gates = draft.quality_gates
     observed_counts = {
         "process": process_events,
-        "network": len(network_times),
+        "network": sum(item.dns_query is None for item in network_observations),
         "DNS": dns_events,
         "Suricata": len(suricata),
     }
@@ -895,15 +916,28 @@ def _derive_c2(
             f"forbidden Suricata signatures were observed: {forbidden_signatures}"
         )
 
-    features = {name: 0.0 for name in FEATURE_ORDER}
-    features.update(
-        {
-            "suspicious_process": float(suspicious),
-            "periodicity_score": periodicity_score(network_times),
-            "suricata_alert_count": float(alerts),
-            "outbound_connection_count": float(len(network_times)),
-            "destination_port_count": float(len(ports)),
-        }
+    suricata_observations: list[SuricataObservation] = []
+    for payload in suricata:
+        flow = payload.get("flow") if isinstance(payload.get("flow"), dict) else {}
+        total_bytes = 0
+        for field in ("bytes_toserver", "bytes_toclient"):
+            with suppress(TypeError, ValueError):
+                total_bytes += max(0, int(flow.get(field, 0)))
+        severity = None
+        if payload.get("event_type") == "alert":
+            with suppress(TypeError, ValueError):
+                severity = int((payload.get("alert") or {}).get("severity"))
+        suricata_observations.append(
+            SuricataObservation(
+                is_alert=payload.get("event_type") == "alert",
+                severity=severity,
+                total_bytes=total_bytes,
+            )
+        )
+    features = derive_c2_features(
+        network_observations,
+        suricata_observations,
+        suspicious_process=suspicious,
     )
     indicator = next(iter(draft.attribution.destination_ips), None)
     if indicator is None:

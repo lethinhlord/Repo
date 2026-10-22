@@ -80,6 +80,7 @@ class WazuhAlertData(ExternalModel):
     suricata_alert_count: float | None = Field(default=None, ge=0, le=1_000_000)
     outbound_connection_count: float | None = Field(default=None, ge=0, le=1_000_000)
     destination_port_count: float | None = Field(default=None, ge=0, le=65_535)
+    win: dict[str, object] | None = None
 
 
 class WazuhAlert(ExternalModel):
@@ -90,6 +91,7 @@ class WazuhAlert(ExternalModel):
     decoder: WazuhDecoder = Field(default_factory=WazuhDecoder)
     data: WazuhAlertData = Field(default_factory=WazuhAlertData)
     location: str = Field(default="unknown-log", max_length=1024)
+    full_log: str | None = Field(default=None, max_length=2_000_000)
 
     @field_validator("timestamp")
     @classmethod
@@ -100,7 +102,7 @@ class WazuhAlert(ExternalModel):
 
 
 class FeaturePipelineResponse(StrictModel):
-    feature_schema_version: Literal["features-v1"] = "features-v1"
+    feature_schema_version: Literal["features-v2"] = "features-v2"
     feature_order: list[str]
     ordered_vector: list[float]
     quality_status: Literal["COMPLETE", "PARTIAL"]
@@ -115,7 +117,7 @@ class WazuhAlertBatch(StrictModel):
 
 
 class FeatureBatchResponse(StrictModel):
-    feature_schema_version: Literal["features-v1"] = "features-v1"
+    feature_schema_version: Literal["features-v2"] = "features-v2"
     input_alert_count: int = Field(ge=1)
     unique_alert_count: int = Field(ge=1)
     duplicate_alert_count: int = Field(ge=0)
@@ -245,7 +247,7 @@ class ReadinessResponse(StrictModel):
     status: Literal["ready", "degraded"]
     service: Literal["datn-ai-soar-api"] = "datn-ai-soar-api"
     api_version: Literal["3.1.0"] = "3.1.0"
-    feature_schema_version: Literal["features-v1"] = "features-v1"
+    feature_schema_version: Literal["features-v2"] = "features-v2"
     asset_context_revision: Literal["asset-context-v1"] = "asset-context-v1"
     risk_policy_revision: Literal["risk-week2-v1"] = "risk-week2-v1"
     ti_policy_revision: Literal["ti-week2-v1"] = "ti-week2-v1"

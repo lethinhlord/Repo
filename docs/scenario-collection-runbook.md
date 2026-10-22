@@ -1444,10 +1444,11 @@ REQUIRE_TARGET=1 ./scripts/verify_collection_dataset.sh
 
 Phải báo `TARGET_MET`, 48 valid run, 0 invalid. Sau đó mới build:
 
-Collector vẫn lưu `suspicious_process` để truy vết telemetry, nhưng schema chủ động loại
-feature này khỏi model C2 vì taxonomy chứa chính chuỗi lệnh của scenario và có thể làm
-lộ nhãn. Auditor đồng thời từ chối feature đơn hoặc cặp feature low-cardinality phân
-tách hoàn hảo nhãn trong cùng family. Không bỏ qua cổng này để ép train.
+Collector lưu `suspicious_process` như một tín hiệu hành vi, nhưng không được
+gán nó trực tiếp từ nhãn scenario. Giá trị phải được suy ra từ telemetry Sysmon
+và taxonomy đã đóng băng. Auditor từ chối feature đơn hoặc cặp feature
+low-cardinality phân tách hoàn hảo nhãn trong cùng family; nếu cổng này
+thất bại thì phải sửa kịch bản/thu lại dữ liệu, không được bỏ qua.
 
 ```bash
 set -euo pipefail

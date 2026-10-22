@@ -41,7 +41,7 @@ feature = json.loads(Path("evidence/week2-feature-response.json").read_text())
 result = json.loads(Path("evidence/week2-e2e-response.json").read_text())
 benign = json.loads(Path("evidence/week2-e2e-benign-response.json").read_text())
 degraded = json.loads(Path("evidence/week2-e2e-degraded-response.json").read_text())
-assert feature["feature_schema_version"] == "features-v1"
+assert feature["feature_schema_version"] == "features-v2"
 assert feature["quality_status"] == "COMPLETE"
 assert result["status"] == "notified"
 assert result["automation_state"] == "SHADOW"
