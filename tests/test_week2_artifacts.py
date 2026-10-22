@@ -17,6 +17,7 @@ def test_week2_required_artifacts_exist() -> None:
         "ml/feature_schema.json",
         "n8n/workflows/week2-feature-ti-asset-shadow.json",
         "schemas/feature-pipeline-response.schema.json",
+        "schemas/feature-state-response.schema.json",
         "schemas/asset-context.schema.json",
         "schemas/ti-lookup.schema.json",
         "docs/week2-runbook.md",
@@ -114,6 +115,8 @@ def test_compose_limits_api_host_exposure_and_drops_capabilities() -> None:
     assert api["ports"] == ["127.0.0.1:8000:8000"]
     assert api["cap_drop"] == ["ALL"]
     assert "no-new-privileges:true" in api["security_opt"]
+    assert api["environment"]["FEATURE_STATE_DB"] == "/app/state/feature-state.sqlite3"
+    assert "feature_state:/app/state" in api["volumes"]
 
 
 def test_week3_ml_toolchain_is_selected_and_version_pinned() -> None:

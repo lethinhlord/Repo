@@ -124,6 +124,13 @@ class FeatureBatchResponse(StrictModel):
     incidents: list[FeaturePipelineResponse] = Field(min_length=1)
 
 
+class FeatureStateResponse(StrictModel):
+    ingest_status: Literal["new", "duplicate"]
+    stored_event_count: int = Field(ge=1)
+    window_minutes: int = Field(ge=1, le=5)
+    feature: FeaturePipelineResponse
+
+
 class PredictionResponse(StrictModel):
     model_version: str = Field(default="mock-v1", min_length=1, max_length=128)
     predicted_class: Literal["malicious", "benign"]

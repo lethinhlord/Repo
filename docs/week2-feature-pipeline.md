@@ -5,6 +5,10 @@ The pipeline has two explicit stages:
 1. `extract_wazuh_features` validates and normalizes one raw Wazuh alert.
 2. `aggregate_wazuh_alerts` deduplicates by alert ID and groups compatible raw
    events into a configurable half-open 1–5 minute window.
+3. `POST /features/wazuh/stateful` persists individual webhook events in SQLite,
+   rejects conflicting replays and re-derives the incident from the complete
+   five-minute window after every event. The Docker volume survives API restarts;
+   old rows are pruned by receive time after 24 hours by default.
 
 Account events correlate failures and successes by normalized asset, target
 account and source. C2 events combine Sysmon network/DNS observations with

@@ -1,4 +1,5 @@
 import os
+import sqlite3
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -14,6 +15,7 @@ from api.app.contracts import (
     DecisionRecord,
     FeatureBatchResponse,
     FeaturePipelineResponse,
+    FeatureStateResponse,
     HealthResponse,
     IncidentRequest,
     ModelReadinessResponse,
@@ -26,6 +28,7 @@ from api.app.contracts import (
     WazuhAlert,
     WazuhAlertBatch,
 )
+from api.app.feature_state import FeatureStateConflictError, FeatureStateStore
 from api.app.mock_services import lookup_ti_mock, predict_mock
 from api.app.risk import calculate_risk
 from api.app.risk_policy import RiskPolicyRepository
@@ -54,6 +57,11 @@ def load_model_runtime(package_dir: str) -> ModelRuntime:
     """Load once per configured path; deployments restart when a package changes."""
 
     return ModelRuntime(Path(package_dir))
+
+
+@lru_cache(maxsize=4)
+def load_feature_state_store(path: str, retention_seconds: int) -> FeatureStateStore:
+    return FeatureStateStore(Path(path), retention_seconds=retention_seconds)
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -160,6 +168,18 @@ def features_from_wazuh_batch(batch: WazuhAlertBatch) -> FeatureBatchResponse:
         batch.alerts,
         window_minutes=batch.window_minutes,
     )
+
+
+@app.post("/features/wazuh/stateful", response_model=FeatureStateResponse)
+def features_from_wazuh_stateful(alert: WazuhAlert) -> FeatureStateResponse:
+    path = os.getenv("FEATURE_STATE_DB", "/tmp/datn-feature-state.sqlite3").strip()
+    try:
+        retention_seconds = int(os.getenv("FEATURE_STATE_RETENTION_SECONDS", "86400"))
+        return load_feature_state_store(path, retention_seconds).ingest(alert)
+    except FeatureStateConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=f"feature state unavailable: {exc}") from exc
 
 
 @app.get("/assets/{asset_id}", response_model=AssetContext)

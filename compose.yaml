@@ -12,8 +12,11 @@ services:
       VT_API_KEY: "${VT_API_KEY:-}"
       VT_TIMEOUT_SECONDS: "${VT_TIMEOUT_SECONDS:-5}"
       MODEL_PACKAGE_DIR: "${MODEL_PACKAGE_DIR:-}"
+      FEATURE_STATE_DB: "/app/state/feature-state.sqlite3"
+      FEATURE_STATE_RETENTION_SECONDS: "${FEATURE_STATE_RETENTION_SECONDS:-86400}"
     volumes:
       - ./ml/model-package:/app/ml/model-package:ro
+      - feature_state:/app/state
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -62,6 +65,7 @@ services:
 
 volumes:
   n8n_data:
+  feature_state:
 
 networks:
   soar:

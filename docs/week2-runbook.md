@@ -69,12 +69,17 @@ curl -sS http://127.0.0.1:8000/ready | python3 -m json.tool
 curl -sS -H 'Content-Type: application/json' \
   --data-binary @fixtures/wazuh-alert-account.json \
   http://127.0.0.1:8000/features/wazuh | python3 -m json.tool
+curl -sS -H 'Content-Type: application/json' \
+  --data-binary @fixtures/wazuh-alert-account.json \
+  http://127.0.0.1:8000/features/wazuh/stateful | python3 -m json.tool
 ```
 
 Checkpoint W2-03: `/health` proves Week 1 compatibility. `/ready` proves the
 Week 2 policy revisions, feature schema, mock TI mode and disabled strong
 actions. The feature response must show `features-v2`, `COMPLETE`, one Wazuh
-evidence source and no TI/asset/label field inside the ML vector.
+evidence source and no TI/asset/label field inside the ML vector. Repeating the
+stateful request must report `duplicate`; changing a payload while retaining the
+same alert ID must return HTTP 409.
 
 ## 5. Prove asset and TI failure-safe behavior
 

@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from api.app.main import app
+from api.app.main import app, load_feature_state_store
 
 ROOT = Path(__file__).resolve().parents[1]
 client = TestClient(app)
@@ -36,6 +36,37 @@ def test_batch_feature_endpoint_reports_duplicate_count() -> None:
     assert body["unique_alert_count"] == 1
     assert body["duplicate_alert_count"] == 1
     assert len(body["incidents"]) == 1
+
+
+def test_stateful_feature_endpoint_persists_and_deduplicates(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("FEATURE_STATE_DB", str(tmp_path / "state.sqlite3"))
+    load_feature_state_store.cache_clear()
+    alert = fixture("wazuh-alert-account.json")
+
+    first = client.post("/features/wazuh/stateful", json=alert)
+    replay = client.post("/features/wazuh/stateful", json=alert)
+
+    assert first.status_code == 200
+    assert first.json()["ingest_status"] == "new"
+    assert replay.status_code == 200
+    assert replay.json()["ingest_status"] == "duplicate"
+
+
+def test_stateful_feature_endpoint_rejects_conflicting_replay(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("FEATURE_STATE_DB", str(tmp_path / "state.sqlite3"))
+    load_feature_state_store.cache_clear()
+    first = fixture("wazuh-alert-account.json")
+    conflicting = fixture("wazuh-alert-account.json")
+    conflicting["timestamp"] = "2026-10-05T12:00:01Z"
+
+    assert client.post("/features/wazuh/stateful", json=first).status_code == 200
+    response = client.post("/features/wazuh/stateful", json=conflicting)
+
+    assert response.status_code == 409
 
 
 def test_readiness_exposes_week2_revisions_and_safe_gate(monkeypatch) -> None:
