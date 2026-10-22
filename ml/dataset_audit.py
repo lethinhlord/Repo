@@ -377,6 +377,25 @@ def audit_dataset(
                 if value is not None:
                     labels[manifest.label].append(float(value))
     for family, feature_values in family_feature_values.items():
+        feature_names = sorted(feature_values)
+        vectors: dict[tuple[float, ...], dict[str, list[str]]] = {}
+        for run_id, (manifest, incidents) in valid.items():
+            if manifest.family != family:
+                continue
+            for incident in incidents:
+                vector = tuple(float(incident.features[name]) for name in feature_names)
+                labels = vectors.setdefault(vector, {"benign": [], "malicious": []})
+                labels[manifest.label].append(run_id)
+        for vector, labels in vectors.items():
+            if labels["benign"] and labels["malicious"]:
+                _issue(
+                    issues,
+                    "CROSS_LABEL_COLLISION",
+                    f"identical {family} feature vector has conflicting labels; "
+                    f"features={dict(zip(feature_names, vector, strict=True))}, "
+                    f"benign_runs={sorted(set(labels['benign']))}, "
+                    f"malicious_runs={sorted(set(labels['malicious']))}",
+                )
         for feature, labels in feature_values.items():
             benign_values = labels["benign"]
             malicious_values = labels["malicious"]
@@ -396,7 +415,6 @@ def audit_dataset(
                     "whose benign and malicious value ranges overlap before training "
                     f"(benign={benign_range}, malicious={malicious_range})",
                 )
-        feature_names = sorted(feature_values)
         family_rows: dict[str, list[dict[str, float]]] = {"benign": [], "malicious": []}
         for manifest, incidents in valid.values():
             if manifest.family != family:

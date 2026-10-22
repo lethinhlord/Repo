@@ -77,6 +77,13 @@ def write_run(
         "raw_refs": [f"evidence:{run_id}"],
         "indicator": "10.40.0.10" if family == "c2" else None,
     }
+    offset = 0.1 if label == "benign" else 0.2
+    if family == "account":
+        incident["features"]["failed_login_count"] = index + offset
+        incident["features"]["success_after_fail"] = float(index % 2)
+    else:
+        incident["features"]["periodicity_score"] = (index + offset) / 12.0
+        incident["features"]["outbound_connection_count"] = float(index + 1)
     (run_dir / "incidents.jsonl").write_text(json.dumps(incident) + "\n", encoding="utf-8")
 
     evidence_dir = root / "evidence/scenario-runs" / run_id
@@ -416,3 +423,29 @@ def test_audit_detects_low_cardinality_joint_label_separation(tmp_path: Path) ->
 
     assert report["status"] == "NOT_READY"
     assert any(issue["code"] == "JOINT_FEATURE_LABEL_SEPARATION" for issue in report["issues"])
+
+
+def test_audit_rejects_cross_label_full_vector_collision(tmp_path: Path) -> None:
+    populate(tmp_path, count=10)
+    benign_path = tmp_path / "data/raw/ACCOUNT-BENIGN-00/incidents.jsonl"
+    malicious_path = tmp_path / "data/raw/ACCOUNT-MALICIOUS-00/incidents.jsonl"
+    benign = json.loads(benign_path.read_text(encoding="utf-8"))
+    malicious = json.loads(malicious_path.read_text(encoding="utf-8"))
+    malicious["features"] = benign["features"]
+    malicious_path.write_text(json.dumps(malicious) + "\n", encoding="utf-8")
+    evidence = tmp_path / "evidence/scenario-runs/ACCOUNT-MALICIOUS-00"
+    metadata_path = evidence / "collection_metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["incidents_sha256"] = hashlib.sha256(malicious_path.read_bytes()).hexdigest()
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    checksums(evidence)
+
+    report = run_audit(tmp_path)
+
+    assert report["status"] == "NOT_READY"
+    collisions = [
+        issue for issue in report["issues"] if issue["code"] == "CROSS_LABEL_COLLISION"
+    ]
+    assert len(collisions) == 1
+    assert "ACCOUNT-BENIGN-00" in collisions[0]["message"]
+    assert "ACCOUNT-MALICIOUS-00" in collisions[0]["message"]
