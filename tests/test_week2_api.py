@@ -21,6 +21,8 @@ def test_feature_endpoint_normalizes_raw_wazuh_alert() -> None:
     assert body["feature_schema_version"] == "features-v2"
     assert body["incident"]["family_hint"] == "c2"
     assert body["incident"]["features"]["periodicity_score"] == 0.87
+    assert 0.0 <= body["evidence_quality"] <= 1.0
+    assert body["evidence_quality_reasons"]
 
 
 def test_batch_feature_endpoint_reports_duplicate_count() -> None:
@@ -83,7 +85,7 @@ def test_readiness_exposes_week2_revisions_and_safe_gate(monkeypatch) -> None:
         "api_version": "3.1.0",
         "feature_schema_version": "features-v2",
         "asset_context_revision": "asset-context-v1",
-        "risk_policy_revision": "risk-week2-v1",
+        "risk_policy_revision": "risk-week2-v2",
         "ti_policy_revision": "ti-week2-v1",
         "ti_mode": "mock",
         "model_status": "not_configured",
@@ -147,7 +149,7 @@ def test_ti_endpoint_rejects_extra_input_fields() -> None:
     assert response.status_code == 422
 
 
-def test_risk_endpoint_renormalizes_missing_context_and_requires_review() -> None:
+def test_risk_endpoint_penalizes_missing_context_and_requires_review() -> None:
     response = client.post(
         "/risk/evaluate",
         json={
@@ -156,14 +158,20 @@ def test_risk_endpoint_renormalizes_missing_context_and_requires_review() -> Non
             "threat_intelligence_score": None,
             "asset_score": None,
             "severity_score": 0.8,
+            "feature_quality": "COMPLETE",
+            "model_automation_eligible": True,
+            "model_review_required": False,
+            "threat_intelligence_status": "UNKNOWN",
+            "asset_review_required": True,
         },
     )
 
     assert response.status_code == 200
     body = response.json()
-    assert body["policy_revision"] == "risk-week2-v1"
+    assert body["policy_revision"] == "risk-week2-v2"
     assert body["review_required"] is True
     assert set(body["missing_signals"]) == {"threat_intelligence", "asset"}
     assert body["available_weight"] == 0.7
-    assert body["internal"] == 0.714286
-    assert body["display"] == 7.1
+    assert body["internal"] == 0.5
+    assert body["display"] == 5.0
+    assert "asset:review_required" in body["review_reasons"]

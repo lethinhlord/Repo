@@ -87,7 +87,7 @@ def test_week2_risk_policy_keeps_frozen_weights_and_shadow_gate() -> None:
         (ROOT / "config/risk-policy-week2.yaml").read_text(encoding="utf-8")
     )
 
-    assert policy["revision"] == "risk-week2-v1"
+    assert policy["revision"] == "risk-week2-v2"
     assert policy["weights"] == {
         "ai": 0.40,
         "observed_evidence": 0.20,
@@ -98,6 +98,7 @@ def test_week2_risk_policy_keeps_frozen_weights_and_shadow_gate() -> None:
     assert sum(policy["weights"].values()) == 1.0
     assert policy["automation_state"] == "SHADOW"
     assert policy["strong_actions_enabled"] is False
+    assert policy["missing_signal_strategy"] == "zero_contribution_review"
 
 
 def test_environment_template_defaults_to_offline_reproducible_ti() -> None:

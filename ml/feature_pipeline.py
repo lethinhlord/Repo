@@ -278,6 +278,34 @@ def _build_response(alerts: list[WazuhAlert]) -> FeaturePipelineResponse:
     sources = ["wazuh"]
     if any(_suricata_payload(alert) is not None for alert in alerts):
         sources.append("suricata-eve")
+    applicable = ACCOUNT_FEATURES if family == "account" else C2_FEATURES
+    completeness = (
+        (len(applicable) - len(set(missing) & set(applicable))) / len(applicable)
+        if family in {"account", "c2"}
+        else 0.0
+    )
+    if family == "account":
+        source_coverage = float("wazuh" in sources)
+        relevant_events = sum(_windows_fields(alert)[0] in {"4624", "4625"} for alert in alerts)
+        correlation = min(relevant_events / 3.0, 1.0)
+    elif family == "c2":
+        source_coverage = len(set(sources) & {"wazuh", "suricata-eve"}) / 2.0
+        has_network = any(_windows_fields(alert)[0] in {"3", "22"} for alert in alerts)
+        has_suricata = any(_suricata_payload(alert) is not None for alert in alerts)
+        correlation = (int(has_network) + int(has_suricata)) / 2.0
+    else:
+        source_coverage = 0.0
+        correlation = 0.0
+    evidence_quality = round(
+        0.4 * completeness + 0.3 * source_coverage + 0.2 * correlation + 0.1,
+        6,
+    )
+    evidence_reasons = [
+        f"feature_completeness={completeness:.3f}",
+        f"required_source_coverage={source_coverage:.3f}",
+        f"correlation_strength={correlation:.3f}",
+        "validated_envelope=1.000",
+    ]
     incident = IncidentRequest(
         incident_id=f"INC-FV2-{digest}",
         asset_id=_asset_id(first),
@@ -296,6 +324,8 @@ def _build_response(alerts: list[WazuhAlert]) -> FeaturePipelineResponse:
         quality_status="PARTIAL" if missing or family == "unknown" else "COMPLETE",
         missing_required_features=missing,
         structural_zero_features=structural,
+        evidence_quality=evidence_quality,
+        evidence_quality_reasons=evidence_reasons,
         incident=incident,
     )
 

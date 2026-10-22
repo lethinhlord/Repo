@@ -31,6 +31,16 @@ def test_security_platform_is_critical_and_protected() -> None:
     assert context.criticality == 5
     assert context.protected is True
     assert context.risk_score == 1.0
+    assert context.review_required is True
+
+
+def test_collection_target_resolves_to_canonical_inventory() -> None:
+    context = repository().get("WIN11-TARGET")
+
+    assert context.status == "FOUND"
+    assert context.asset_id == "WIN11-TARGET"
+    assert context.role == "workstation"
+    assert context.review_required is False
 
 
 def test_unknown_asset_uses_conservative_review_required_default() -> None:

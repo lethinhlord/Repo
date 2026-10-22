@@ -15,8 +15,11 @@
 
 - Unknown TI and unknown assets carry `score=null`, not zero. Missingness cannot
   masquerade as benign context.
-- Risk v2 renormalizes only over available signals and marks missing TI/asset as
-  `review_required=true`.
+- Risk policy `risk-week2-v2` keeps the original denominator when TI or asset
+  context is missing. Missing signals contribute zero and force
+  `review_required=true`; this prevents the AI weight from increasing implicitly.
+- `PARTIAL` features, an ineligible/uncertain model, malicious TI, unknown TI and
+  protected assets all force review through explicit request fields and reasons.
 - The n8n gate always emits `automation_state=SHADOW` and
   `strong_action_allowed=false`.
 - API/network failures route to a degraded manual-review response.

@@ -19,11 +19,15 @@ SIGNAL_NAMES = (
 class _RiskPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    revision: Literal["risk-week2-v1"]
+    revision: Literal["risk-week2-v2"]
     weights: dict[str, float]
     automation_state: Literal["SHADOW"]
     strong_actions_enabled: Literal[False]
     allowed_playbooks: list[Literal["create_update_incident_notify"]]
+    missing_signal_strategy: Literal["zero_contribution_review"]
+    malicious_ti_strategy: Literal["review"]
+    partial_feature_strategy: Literal["review"]
+    ineligible_model_strategy: Literal["review"]
 
     @model_validator(mode="after")
     def validate_weights(self) -> "_RiskPolicy":
@@ -51,6 +55,11 @@ class RiskPolicyRepository:
         threat_intelligence_score: float | None,
         asset_score: float | None,
         severity_score: float,
+        feature_quality: Literal["COMPLETE", "PARTIAL"],
+        model_automation_eligible: bool,
+        model_review_required: bool,
+        threat_intelligence_status: Literal["MALICIOUS", "BENIGN", "UNKNOWN"],
+        asset_review_required: bool,
     ) -> RiskEvaluation:
         values: dict[str, float | None] = {
             "ai": ai_probability,
@@ -81,18 +90,31 @@ class RiskPolicyRepository:
             ),
             6,
         )
-        numerator = sum(contributions.values())
-        internal = round(numerator / available_weight, 6)
+        internal = round(sum(contributions.values()), 6)
         display = float(
             Decimal(str(10 * internal)).quantize(
                 Decimal("0.1"), rounding=ROUND_HALF_UP
             )
         )
+        review_reasons = [f"missing_signal:{name}" for name in missing]
+        if feature_quality == "PARTIAL":
+            review_reasons.append("feature_quality:PARTIAL")
+        if not model_automation_eligible:
+            review_reasons.append("model:automation_ineligible")
+        if model_review_required:
+            review_reasons.append("model:review_required")
+        if threat_intelligence_status == "MALICIOUS":
+            review_reasons.append("threat_intelligence:MALICIOUS")
+        if threat_intelligence_status == "UNKNOWN" and "threat_intelligence" not in missing:
+            review_reasons.append("threat_intelligence:UNKNOWN")
+        if asset_review_required:
+            review_reasons.append("asset:review_required")
         return RiskEvaluation(
             internal=internal,
             display=display,
             available_weight=available_weight,
             missing_signals=missing,
             contributions=contributions,
-            review_required=bool(missing),
+            review_required=bool(review_reasons),
+            review_reasons=review_reasons,
         )

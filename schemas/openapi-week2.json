@@ -627,6 +627,20 @@
             "type": "array",
             "title": "Structural Zero Features"
           },
+          "evidence_quality": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Evidence Quality"
+          },
+          "evidence_quality_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Evidence Quality Reasons"
+          },
           "incident": {
             "$ref": "#/components/schemas/IncidentRequest"
           }
@@ -639,6 +653,8 @@
           "quality_status",
           "missing_required_features",
           "structural_zero_features",
+          "evidence_quality",
+          "evidence_quality_reasons",
           "incident"
         ],
         "title": "FeaturePipelineResponse"
@@ -956,9 +972,9 @@
           },
           "risk_policy_revision": {
             "type": "string",
-            "const": "risk-week2-v1",
+            "const": "risk-week2-v2",
             "title": "Risk Policy Revision",
-            "default": "risk-week2-v1"
+            "default": "risk-week2-v2"
           },
           "ti_policy_revision": {
             "type": "string",
@@ -1015,9 +1031,9 @@
         "properties": {
           "policy_revision": {
             "type": "string",
-            "const": "risk-week2-v1",
+            "const": "risk-week2-v2",
             "title": "Policy Revision",
-            "default": "risk-week2-v1"
+            "default": "risk-week2-v2"
           },
           "internal": {
             "type": "number",
@@ -1058,6 +1074,13 @@
           "review_required": {
             "type": "boolean",
             "title": "Review Required"
+          },
+          "review_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Review Reasons"
           }
         },
         "additionalProperties": false,
@@ -1068,7 +1091,8 @@
           "available_weight",
           "missing_signals",
           "contributions",
-          "review_required"
+          "review_required",
+          "review_reasons"
         ],
         "title": "RiskEvaluation"
       },
@@ -1117,6 +1141,35 @@
             "maximum": 1.0,
             "minimum": 0.0,
             "title": "Severity Score"
+          },
+          "feature_quality": {
+            "type": "string",
+            "enum": [
+              "COMPLETE",
+              "PARTIAL"
+            ],
+            "title": "Feature Quality"
+          },
+          "model_automation_eligible": {
+            "type": "boolean",
+            "title": "Model Automation Eligible"
+          },
+          "model_review_required": {
+            "type": "boolean",
+            "title": "Model Review Required"
+          },
+          "threat_intelligence_status": {
+            "type": "string",
+            "enum": [
+              "MALICIOUS",
+              "BENIGN",
+              "UNKNOWN"
+            ],
+            "title": "Threat Intelligence Status"
+          },
+          "asset_review_required": {
+            "type": "boolean",
+            "title": "Asset Review Required"
           }
         },
         "additionalProperties": false,
@@ -1124,7 +1177,12 @@
         "required": [
           "ai_probability",
           "observed_evidence",
-          "severity_score"
+          "severity_score",
+          "feature_quality",
+          "model_automation_eligible",
+          "model_review_required",
+          "threat_intelligence_status",
+          "asset_review_required"
         ],
         "title": "RiskEvaluationRequest"
       },

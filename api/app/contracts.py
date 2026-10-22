@@ -108,6 +108,8 @@ class FeaturePipelineResponse(StrictModel):
     quality_status: Literal["COMPLETE", "PARTIAL"]
     missing_required_features: list[str]
     structural_zero_features: list[str]
+    evidence_quality: float = Field(ge=0.0, le=1.0)
+    evidence_quality_reasons: list[str] = Field(min_length=1)
     incident: IncidentRequest
 
 
@@ -226,9 +228,13 @@ class AssetContext(StrictModel):
         ):
             raise ValueError("UNKNOWN assets must be protected, unscored, and require review")
         if self.status == "FOUND" and (
-            self.criticality is None or self.risk_score is None or self.review_required
+            self.criticality is None
+            or self.risk_score is None
+            or self.review_required != self.protected
         ):
-            raise ValueError("FOUND assets require a score and must not force review")
+            raise ValueError(
+                "FOUND assets require a score; protected assets alone require review"
+            )
         return self
 
 
@@ -238,16 +244,32 @@ class RiskEvaluationRequest(StrictModel):
     threat_intelligence_score: float | None = Field(default=None, ge=0.0, le=1.0)
     asset_score: float | None = Field(default=None, ge=0.0, le=1.0)
     severity_score: float = Field(ge=0.0, le=1.0)
+    feature_quality: Literal["COMPLETE", "PARTIAL"]
+    model_automation_eligible: bool
+    model_review_required: bool
+    threat_intelligence_status: Literal["MALICIOUS", "BENIGN", "UNKNOWN"]
+    asset_review_required: bool
+
+    @model_validator(mode="after")
+    def validate_context_statuses(self) -> "RiskEvaluationRequest":
+        if (self.threat_intelligence_status == "UNKNOWN") != (
+            self.threat_intelligence_score is None
+        ):
+            raise ValueError("UNKNOWN TI requires a null score and known TI requires a score")
+        if self.asset_score is None and not self.asset_review_required:
+            raise ValueError("missing asset context must require review")
+        return self
 
 
 class RiskEvaluation(StrictModel):
-    policy_revision: Literal["risk-week2-v1"] = "risk-week2-v1"
+    policy_revision: Literal["risk-week2-v2"] = "risk-week2-v2"
     internal: float = Field(ge=0.0, le=1.0)
     display: float = Field(ge=0.0, le=10.0)
     available_weight: float = Field(gt=0.0, le=1.0)
     missing_signals: list[Literal["threat_intelligence", "asset"]]
     contributions: dict[str, float]
     review_required: bool
+    review_reasons: list[str]
 
 
 class ReadinessResponse(StrictModel):
@@ -256,7 +278,7 @@ class ReadinessResponse(StrictModel):
     api_version: Literal["3.1.0"] = "3.1.0"
     feature_schema_version: Literal["features-v2"] = "features-v2"
     asset_context_revision: Literal["asset-context-v1"] = "asset-context-v1"
-    risk_policy_revision: Literal["risk-week2-v1"] = "risk-week2-v1"
+    risk_policy_revision: Literal["risk-week2-v2"] = "risk-week2-v2"
     ti_policy_revision: Literal["ti-week2-v1"] = "ti-week2-v1"
     ti_mode: Literal["mock", "live", "disabled", "invalid"]
     model_status: Literal["ready", "not_configured", "invalid"]

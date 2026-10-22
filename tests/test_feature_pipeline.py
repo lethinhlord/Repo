@@ -34,6 +34,8 @@ def test_account_fixture_produces_versioned_deterministic_features() -> None:
     assert first.incident.features["success_after_fail"] == 1.0
     assert first.incident.indicator == "203.0.113.66"
     assert first.incident.evidence_sources == ["wazuh"]
+    assert first.evidence_quality < 1.0
+    assert first.evidence_quality_reasons
     assert "source-log:auth.log" in first.incident.raw_refs
     assert (first.incident.end_time - first.incident.start_time).total_seconds() == 0
 
@@ -50,6 +52,7 @@ def test_c2_fixture_produces_only_observed_behavioral_features() -> None:
     assert result.incident.features["outbound_connection_count"] == 15.0
     assert result.incident.features["destination_port_count"] == 1.0
     assert result.quality_status == "PARTIAL"
+    assert result.evidence_quality < 1.0
     forbidden = {"label", "ground_truth", "asset_criticality", "ti_score"}
     assert forbidden.isdisjoint(result.incident.features)
 
@@ -196,6 +199,7 @@ def test_raw_account_events_are_correlated_before_deriving_features() -> None:
     result = aggregate_wazuh_alerts(alerts).incidents[0]
 
     assert result.quality_status == "COMPLETE"
+    assert result.evidence_quality == 1.0
     assert result.incident.features["failed_login_count"] == 2.0
     assert result.incident.features["successful_login_count"] == 1.0
     assert result.incident.features["success_after_fail"] == 1.0
