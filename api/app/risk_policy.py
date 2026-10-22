@@ -23,7 +23,7 @@ class _RiskPolicy(BaseModel):
     weights: dict[str, float]
     automation_state: Literal["SHADOW"]
     strong_actions_enabled: Literal[False]
-    allowed_playbooks: list[Literal["create_update_incident_notify"]]
+    allowed_playbooks: list[Literal["persist_incident_queue_review"]]
     missing_signal_strategy: Literal["zero_contribution_review"]
     malicious_ti_strategy: Literal["review"]
     partial_feature_strategy: Literal["review"]
@@ -37,8 +37,8 @@ class _RiskPolicy(BaseModel):
             raise ValueError("risk policy weights must be between 0 and 1")
         if abs(sum(self.weights.values()) - 1.0) > 1e-9:
             raise ValueError("risk policy weights must sum to 1")
-        if self.allowed_playbooks != ["create_update_incident_notify"]:
-            raise ValueError("Week 2 permits only the notify-only playbook")
+        if self.allowed_playbooks != ["persist_incident_queue_review"]:
+            raise ValueError("Week 2 permits only the durable review-queue playbook")
         return self
 
 

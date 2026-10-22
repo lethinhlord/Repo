@@ -10,6 +10,8 @@ from api.app.contracts import (
     IncidentRecordResponse,
     RiskEvaluation,
     RiskEvaluationRequest,
+    SignedWazuhIngestRequest,
+    SignedWazuhIngestResponse,
     ThreatIntelligenceResult,
     ThreatLookupRequest,
 )
@@ -36,6 +38,8 @@ if __name__ == "__main__":
     write_json("feature-state-response.schema.json", FeatureStateResponse.model_json_schema())
     write_json("incident-record-request.schema.json", IncidentRecordRequest.model_json_schema())
     write_json("incident-record-response.schema.json", IncidentRecordResponse.model_json_schema())
+    write_json("signed-ingest-request.schema.json", SignedWazuhIngestRequest.model_json_schema())
+    write_json("signed-ingest-response.schema.json", SignedWazuhIngestResponse.model_json_schema())
     write_json("asset-context.schema.json", AssetContext.model_json_schema())
     write_json("ti-lookup.schema.json", ThreatLookupRequest.model_json_schema())
     write_json("ti-result.schema.json", ThreatIntelligenceResult.model_json_schema())

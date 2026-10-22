@@ -24,7 +24,7 @@ def test_compose_pins_services_and_keeps_api_internal_to_n8n() -> None:
 
     assert services["n8n"]["image"] == "docker.n8n.io/n8nio/n8n:2.41.7"
     assert services["api"]["build"]["dockerfile"] == "api/Dockerfile"
-    assert "5678:5678" in services["n8n"]["ports"]
+    assert "${N8N_BIND_ADDRESS:-127.0.0.1}:5678:5678" in services["n8n"]["ports"]
     assert "127.0.0.1:8000:8000" in services["api"]["ports"]
     assert services["n8n"]["depends_on"]["api"]["condition"] == "service_healthy"
 

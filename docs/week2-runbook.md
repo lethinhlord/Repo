@@ -101,15 +101,19 @@ Open `http://192.168.149.128:5678` inside the Ubuntu browser and select
 **Week 2 - Feature TI Asset Risk (SHADOW)**. Confirm the visible chain:
 
 1. Wazuh Alert Webhook v2
-2. Extract Incident Features
-3. Call AI Model
-4. Lookup Threat Intelligence
-5. Load Asset Context
-6. Evaluate Risk
-7. Enforce Shadow Gate
-8. Decision Ready?
-9. SHADOW notification or degraded review
-10. Respond to Webhook
+2. Verify Signed Ingress
+3. Ingress Verified?
+4. Extract Incident Features (stateful)
+5. Call AI Model
+6. Lookup Threat Intelligence
+7. Load Asset Context
+8. Evaluate Risk
+9. Enforce Shadow Gate
+10. Decision Ready?
+11. Build SHADOW or review decision
+12. Persist Incident And Queue
+13. Finalize Response
+14. Respond to Webhook
 
 Checkpoint W2-05: capture the complete VMware screen with the entire workflow.
 No isolation, IP blocking, process termination or account-disabling node may
@@ -117,16 +121,26 @@ exist.
 
 ## 7. Execute the end-to-end fixture
 
+Never paste or display the webhook secret. Load it from the root-owned `.env`
+and use the canonical signing client:
+
 ```bash
-curl -sS -H 'Content-Type: application/json' \
-  --data-binary @fixtures/wazuh-alert-account.json \
-  http://127.0.0.1:5678/webhook/wazuh-alert-week2 | python3 -m json.tool
+set -a
+. ./.env
+set +a
+python3 scripts/send_signed_webhook.py fixtures/wazuh-alert-account.json \
+  --url http://127.0.0.1:5678/webhook/wazuh-alert-week2 \
+  --output evidence/week2-e2e-response.json
+python3 -m json.tool evidence/week2-e2e-response.json
 ```
 
 Checkpoint W2-06: capture the terminal result and the matching n8n execution.
-The response must be `notified`, `SHADOW`, `strong_action_allowed=false`, and
-contain the feature, TI, asset, Risk and audit revisions. A missing service or
-context must route to `review_required`, never to an action.
+The response must be `shadow_queued` or `review_queued`, `SHADOW`,
+`strong_action_allowed=false`, and contain a durable persistence disposition.
+An invalid/expired/replayed signature is HTTP 401 and is never processed. A
+missing service, partial feature, ineligible model, malicious/unknown TI,
+protected asset or missing context must route to the review queue, never to an
+action.
 
 ## 8. Run the complete verification gate
 

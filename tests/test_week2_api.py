@@ -1,9 +1,16 @@
 import json
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from api.app.main import app, load_feature_state_store, load_incident_store
+from api.app.main import (
+    app,
+    load_feature_state_store,
+    load_incident_store,
+    load_webhook_authenticator,
+)
+from api.app.webhook_auth import sign_payload
 
 ROOT = Path(__file__).resolve().parents[1]
 client = TestClient(app)
@@ -91,6 +98,36 @@ def test_incident_record_endpoint_is_idempotent(monkeypatch, tmp_path: Path) -> 
     assert first.json()["notification_status"] == "QUEUED"
     assert replay.status_code == 200
     assert replay.json()["disposition"] == "duplicate"
+
+
+def test_signed_ingress_endpoint_authenticates_and_blocks_replay(
+    monkeypatch, tmp_path: Path
+) -> None:
+    secret = "api-test-webhook-secret-that-is-at-least-32-bytes"
+    monkeypatch.setenv("WAZUH_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("INGRESS_NONCE_DB", str(tmp_path / "nonces.sqlite3"))
+    load_webhook_authenticator.cache_clear()
+    payload = fixture("wazuh-alert-account.json")
+    timestamp = int(time.time())
+    nonce = "api-nonce-0000000001"
+    request = {
+        "timestamp": timestamp,
+        "nonce": nonce,
+        "signature": sign_payload(
+            secret,
+            timestamp=timestamp,
+            nonce=nonce,
+            payload=payload,
+        ),
+        "payload": payload,
+    }
+
+    first = client.post("/ingress/wazuh/verify", json=request)
+    replay = client.post("/ingress/wazuh/verify", json=request)
+
+    assert first.status_code == 200
+    assert first.json()["verified"] is True
+    assert replay.status_code == 401
 
 
 def test_readiness_exposes_week2_revisions_and_safe_gate(monkeypatch) -> None:

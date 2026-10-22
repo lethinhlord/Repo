@@ -104,7 +104,7 @@ weights:
   severity: 0.1
 automation_state: SHADOW
 strong_actions_enabled: false
-allowed_playbooks: [create_update_incident_notify]
+allowed_playbooks: [persist_incident_queue_review]
 missing_signal_strategy: zero_contribution_review
 malicious_ti_strategy: review
 partial_feature_strategy: review

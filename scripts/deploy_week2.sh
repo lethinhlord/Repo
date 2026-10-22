@@ -5,12 +5,16 @@ cd "$(dirname "$0")/.."
 
 if [ ! -f .env ]; then
   umask 077
-  printf 'N8N_ENCRYPTION_KEY=%s\nN8N_PUBLIC_HOST=%s\nVT_MODE=mock\nVT_API_KEY=\nVT_TIMEOUT_SECONDS=5\n' \
-    "$(openssl rand -hex 32)" "${N8N_PUBLIC_HOST:-192.168.149.128}" > .env
+  printf 'N8N_ENCRYPTION_KEY=%s\nWAZUH_WEBHOOK_SECRET=%s\nN8N_PUBLIC_HOST=%s\nVT_MODE=mock\nVT_API_KEY=\nVT_TIMEOUT_SECONDS=5\n' \
+    "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" \
+    "${N8N_PUBLIC_HOST:-192.168.149.128}" > .env
 fi
 
 if ! grep -q '^VT_MODE=' .env; then
   printf '\nVT_MODE=mock\nVT_API_KEY=\nVT_TIMEOUT_SECONDS=5\n' >> .env
+fi
+if ! grep -q '^WAZUH_WEBHOOK_SECRET=' .env; then
+  printf 'WAZUH_WEBHOOK_SECRET=%s\n' "$(openssl rand -hex 32)" >> .env
 fi
 
 docker compose config --quiet

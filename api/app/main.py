@@ -25,6 +25,8 @@ from api.app.contracts import (
     ReadinessResponse,
     RiskEvaluation,
     RiskEvaluationRequest,
+    SignedWazuhIngestRequest,
+    SignedWazuhIngestResponse,
     ThreatIntelligenceResult,
     ThreatLookupRequest,
     WazuhAlert,
@@ -39,6 +41,7 @@ from api.app.threat_intelligence import (
     ThreatIntelligencePolicy,
     lookup_threat_intelligence,
 )
+from api.app.webhook_auth import WebhookAuthenticationError, WebhookAuthenticator
 from ml.feature_pipeline import aggregate_wazuh_alerts, extract_wazuh_features
 from ml.inference import InferenceInputError, ModelPackageError, ModelRuntime
 
@@ -70,6 +73,17 @@ def load_feature_state_store(path: str, retention_seconds: int) -> FeatureStateS
 @lru_cache(maxsize=4)
 def load_incident_store(path: str) -> IncidentStore:
     return IncidentStore(Path(path))
+
+
+@lru_cache(maxsize=4)
+def load_webhook_authenticator(
+    path: str, secret: str, max_skew_seconds: int
+) -> WebhookAuthenticator:
+    return WebhookAuthenticator(
+        Path(path),
+        secret,
+        max_skew_seconds=max_skew_seconds,
+    )
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -168,6 +182,19 @@ def model_readiness() -> ModelReadinessResponse:
 @app.post("/features/wazuh", response_model=FeaturePipelineResponse)
 def features_from_wazuh(alert: WazuhAlert) -> FeaturePipelineResponse:
     return extract_wazuh_features(alert)
+
+
+@app.post("/ingress/wazuh/verify", response_model=SignedWazuhIngestResponse)
+def verify_wazuh_ingress(request: SignedWazuhIngestRequest) -> SignedWazuhIngestResponse:
+    path = os.getenv("INGRESS_NONCE_DB", "/tmp/datn-ingress-nonces.sqlite3").strip()
+    secret = os.getenv("WAZUH_WEBHOOK_SECRET", "")
+    try:
+        max_skew = int(os.getenv("WAZUH_WEBHOOK_MAX_SKEW_SECONDS", "300"))
+        return load_webhook_authenticator(path, secret, max_skew).verify(request)
+    except WebhookAuthenticationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=f"webhook verifier unavailable: {exc}") from exc
 
 
 @app.post("/features/wazuh/batch", response_model=FeatureBatchResponse)

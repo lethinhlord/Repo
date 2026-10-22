@@ -27,7 +27,8 @@
 
 ## Durable response boundary
 
-`POST /incidents/record` upserts the correlated incident in SQLite and inserts
+The `persist_incident_queue_review` playbook calls `POST /incidents/record`,
+upserts the correlated incident in SQLite and inserts
 one durable notification-outbox row per incident. A repeated source event with
 the identical decision is reported as `duplicate`; reuse of that event ID with a
 different decision is rejected. The API therefore provides an auditable local
@@ -37,10 +38,13 @@ already delivered the notification.
 ## Lab exposure
 
 FastAPI is published only on `127.0.0.1:8000` and remains reachable to n8n on
-the private Docker network. n8n port 5678 is intentionally available to the VM
-lab browser. `N8N_SECURE_COOKIE=false` and HTTP are acceptable only in this
-isolated lab; use TLS, authenticated ingress and secure cookies before any
-non-lab deployment.
+the private Docker network. n8n binds to `127.0.0.1` by default. A four-VM lab
+may set `N8N_BIND_ADDRESS` to the SOAR interface only after limiting TCP/5678 at
+the host firewall to the Wazuh source and administrator workstation. Webhook
+payloads require a 32-byte HMAC secret, a five-minute timestamp and a one-time
+nonce; payloads are capped at 2 MB. Invalid, expired and replayed requests are
+rejected before feature extraction. For any non-isolated network, terminate TLS
+at a reverse proxy and set `N8N_PROTOCOL=https` and `N8N_SECURE_COOKIE=true`.
 
 ## Secret-safe evidence
 

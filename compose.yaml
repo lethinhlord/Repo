@@ -15,6 +15,9 @@ services:
       FEATURE_STATE_DB: "/app/state/feature-state.sqlite3"
       FEATURE_STATE_RETENTION_SECONDS: "${FEATURE_STATE_RETENTION_SECONDS:-86400}"
       INCIDENT_DB: "/app/state/incidents.sqlite3"
+      INGRESS_NONCE_DB: "/app/state/ingress-nonces.sqlite3"
+      WAZUH_WEBHOOK_SECRET: "${WAZUH_WEBHOOK_SECRET:?Set WAZUH_WEBHOOK_SECRET in .env}"
+      WAZUH_WEBHOOK_MAX_SKEW_SECONDS: "${WAZUH_WEBHOOK_MAX_SKEW_SECONDS:-300}"
     volumes:
       - ./ml/model-package:/app/ml/model-package:ro
       - feature_state:/app/state
@@ -39,20 +42,21 @@ services:
     image: docker.n8n.io/n8nio/n8n:2.41.7
     restart: unless-stopped
     ports:
-      - "5678:5678"
+      - "${N8N_BIND_ADDRESS:-127.0.0.1}:5678:5678"
     environment:
       N8N_ENCRYPTION_KEY: "${N8N_ENCRYPTION_KEY:?Set N8N_ENCRYPTION_KEY in .env}"
       N8N_HOST: "${N8N_PUBLIC_HOST:-localhost}"
       N8N_PORT: "5678"
-      N8N_PROTOCOL: http
+      N8N_PROTOCOL: "${N8N_PROTOCOL:-http}"
       N8N_LISTEN_ADDRESS: 0.0.0.0
-      WEBHOOK_URL: "http://${N8N_PUBLIC_HOST:-localhost}:5678/"
+      WEBHOOK_URL: "${N8N_PROTOCOL:-http}://${N8N_PUBLIC_HOST:-localhost}:5678/"
       GENERIC_TIMEZONE: Asia/Ho_Chi_Minh
       TZ: Asia/Ho_Chi_Minh
       N8N_DIAGNOSTICS_ENABLED: "false"
       N8N_PERSONALIZATION_ENABLED: "false"
       N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
-      N8N_SECURE_COOKIE: "false"
+      N8N_SECURE_COOKIE: "${N8N_SECURE_COOKIE:-false}"
+      N8N_PAYLOAD_SIZE_MAX: "2"
       EXECUTIONS_DATA_PRUNE: "true"
       EXECUTIONS_DATA_MAX_AGE: "168"
     volumes:

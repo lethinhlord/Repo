@@ -136,6 +136,44 @@
         }
       }
     },
+    "/ingress/wazuh/verify": {
+      "post": {
+        "summary": "Verify Wazuh Ingress",
+        "operationId": "verify_wazuh_ingress_ingress_wazuh_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignedWazuhIngestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignedWazuhIngestResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/features/wazuh/batch": {
       "post": {
         "summary": "Features From Wazuh Batch",
@@ -847,6 +885,18 @@
             ],
             "title": "Notification Status"
           },
+          "route": {
+            "type": "string",
+            "enum": [
+              "shadow",
+              "review"
+            ],
+            "title": "Route"
+          },
+          "review_required": {
+            "type": "boolean",
+            "title": "Review Required"
+          },
           "recorded_at": {
             "type": "string",
             "format": "date-time",
@@ -860,6 +910,8 @@
           "source_event_id",
           "disposition",
           "notification_status",
+          "route",
+          "review_required",
           "recorded_at"
         ],
         "title": "IncidentRecordResponse"
@@ -1346,6 +1398,73 @@
           "display"
         ],
         "title": "RiskResult"
+      },
+      "SignedWazuhIngestRequest": {
+        "properties": {
+          "timestamp": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Timestamp"
+          },
+          "nonce": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9._-]+$",
+            "title": "Nonce"
+          },
+          "signature": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{64}$",
+            "title": "Signature"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Payload"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "timestamp",
+          "nonce",
+          "signature",
+          "payload"
+        ],
+        "title": "SignedWazuhIngestRequest"
+      },
+      "SignedWazuhIngestResponse": {
+        "properties": {
+          "verified": {
+            "type": "boolean",
+            "const": true,
+            "title": "Verified",
+            "default": true
+          },
+          "source_event_id": {
+            "type": "string",
+            "title": "Source Event Id"
+          },
+          "payload_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Payload Sha256"
+          },
+          "verified_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Verified At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_event_id",
+          "payload_sha256",
+          "verified_at"
+        ],
+        "title": "SignedWazuhIngestResponse"
       },
       "ThreatIntelligenceContext": {
         "properties": {

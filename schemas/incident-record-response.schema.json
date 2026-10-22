@@ -26,6 +26,18 @@
       "title": "Notification Status",
       "type": "string"
     },
+    "route": {
+      "enum": [
+        "shadow",
+        "review"
+      ],
+      "title": "Route",
+      "type": "string"
+    },
+    "review_required": {
+      "title": "Review Required",
+      "type": "boolean"
+    },
     "recorded_at": {
       "format": "date-time",
       "title": "Recorded At",
@@ -37,6 +49,8 @@
     "source_event_id",
     "disposition",
     "notification_status",
+    "route",
+    "review_required",
     "recorded_at"
   ],
   "title": "IncidentRecordResponse",

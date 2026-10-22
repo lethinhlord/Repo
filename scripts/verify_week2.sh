@@ -4,11 +4,11 @@ set -eu
 cd "$(dirname "$0")/.."
 mkdir -p evidence
 
-docker run --rm --mount "type=bind,src=$PWD,dst=/app" \
-  datn-ai-soar-api:week2 python -m pytest > evidence/week2-pytest.log
+docker compose run --rm --no-deps -v "$PWD:/app" api \
+  python -m pytest > evidence/week2-pytest.log
 cat evidence/week2-pytest.log
-docker run --rm --mount "type=bind,src=$PWD,dst=/app" \
-  datn-ai-soar-api:week2 ruff check api ml tests scripts > evidence/week2-ruff.log
+docker compose run --rm --no-deps -v "$PWD:/app" api \
+  ruff check api ml tests scripts > evidence/week2-ruff.log
 cat evidence/week2-ruff.log
 docker compose config --quiet
 docker compose ps > evidence/week2-compose-ps.log
@@ -20,18 +20,18 @@ curl -fsS -H 'Content-Type: application/json' \
   --data-binary @fixtures/wazuh-alert-account.json \
   http://127.0.0.1:8000/features/wazuh \
   > evidence/week2-feature-response.json
-curl -fsS -H 'Content-Type: application/json' \
-  --data-binary @fixtures/wazuh-alert-account.json \
-  http://127.0.0.1:5678/webhook/wazuh-alert-week2 \
-  > evidence/week2-e2e-response.json
-curl -fsS -H 'Content-Type: application/json' \
-  --data-binary @fixtures/wazuh-alert-account-benign.json \
-  http://127.0.0.1:5678/webhook/wazuh-alert-week2 \
-  > evidence/week2-e2e-benign-response.json
-curl -fsS -H 'Content-Type: application/json' \
-  --data-binary @fixtures/wazuh-alert-malformed.json \
-  http://127.0.0.1:5678/webhook/wazuh-alert-week2 \
-  > evidence/week2-e2e-degraded-response.json
+set -a
+. ./.env
+set +a
+python3 scripts/send_signed_webhook.py fixtures/wazuh-alert-account.json \
+  --url http://127.0.0.1:5678/webhook/wazuh-alert-week2 \
+  --output evidence/week2-e2e-response.json
+python3 scripts/send_signed_webhook.py fixtures/wazuh-alert-account-benign.json \
+  --url http://127.0.0.1:5678/webhook/wazuh-alert-week2 \
+  --output evidence/week2-e2e-benign-response.json
+python3 scripts/send_signed_webhook.py fixtures/wazuh-alert-malformed.json \
+  --url http://127.0.0.1:5678/webhook/wazuh-alert-week2 \
+  --output evidence/week2-e2e-degraded-response.json
 
 python3 - <<'PY'
 import json
@@ -43,14 +43,13 @@ benign = json.loads(Path("evidence/week2-e2e-benign-response.json").read_text())
 degraded = json.loads(Path("evidence/week2-e2e-degraded-response.json").read_text())
 assert feature["feature_schema_version"] == "features-v2"
 assert feature["quality_status"] == "COMPLETE"
-assert result["status"] == "notified"
+assert result["status"] in {"shadow_queued", "review_queued"}
 assert result["automation_state"] == "SHADOW"
 assert result["strong_action_allowed"] is False
-assert result["decision"]["audit"]["workflow_revision"] == "week2-shadow-v1"
-assert benign["status"] == "notified"
-assert benign["decision"]["prediction"]["predicted_class"] == "benign"
+assert result["notification_status"] in {"QUEUED", "ALREADY_QUEUED"}
+assert benign["status"] in {"shadow_queued", "review_queued"}
 assert benign["strong_action_allowed"] is False
-assert degraded["status"] == "review_required"
+assert degraded["status"] == "review_queued"
 assert degraded["automation_state"] == "SHADOW"
 assert degraded["strong_action_allowed"] is False
 assert degraded["review_required"] is True

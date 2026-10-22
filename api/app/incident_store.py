@@ -82,6 +82,8 @@ class IncidentStore:
                     source_event_id=request.source_event_id,
                     disposition="duplicate",
                     notification_status="ALREADY_QUEUED",
+                    route=request.route,
+                    review_required=request.review_required,
                     recorded_at=now,
                 )
 
@@ -132,5 +134,7 @@ class IncidentStore:
             source_event_id=request.source_event_id,
             disposition=disposition,
             notification_status="QUEUED" if queued else "ALREADY_QUEUED",
+            route=request.route,
+            review_required=request.review_required,
             recorded_at=now,
         )

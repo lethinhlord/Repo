@@ -101,6 +101,29 @@ class WazuhAlert(ExternalModel):
         return value.astimezone(UTC)
 
 
+class SignedWazuhIngestRequest(StrictModel):
+    timestamp: int = Field(gt=0)
+    nonce: str = Field(min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._-]+$")
+    signature: str = Field(pattern=r"^[0-9a-fA-F]{64}$")
+    payload: dict[str, object]
+
+    @field_validator("payload")
+    @classmethod
+    def bound_payload(cls, value: dict[str, object]) -> dict[str, object]:
+        import json
+
+        if len(json.dumps(value, default=str).encode()) > 2_000_000:
+            raise ValueError("Wazuh payload exceeds 2 MB")
+        return value
+
+
+class SignedWazuhIngestResponse(StrictModel):
+    verified: Literal[True] = True
+    source_event_id: str
+    payload_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    verified_at: datetime
+
+
 class FeaturePipelineResponse(StrictModel):
     feature_schema_version: Literal["features-v2"] = "features-v2"
     feature_order: list[str]
@@ -295,6 +318,8 @@ class IncidentRecordResponse(StrictModel):
     source_event_id: str
     disposition: Literal["created", "updated", "duplicate"]
     notification_status: Literal["QUEUED", "ALREADY_QUEUED"]
+    route: Literal["shadow", "review"]
+    review_required: bool
     recorded_at: datetime
 
 
