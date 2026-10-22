@@ -23,20 +23,20 @@ def incident_payload() -> dict:
     }
 
 
-def test_health_exposes_mock_service_identity() -> None:
+def test_health_exposes_service_liveness_identity() -> None:
     response = client.get("/health")
 
     assert response.status_code == 200
     assert response.json() == {
         "status": "ok",
         "service": "datn-ai-soar-api",
-        "mode": "mock",
-        "api_version": "1.0.0",
-        "model_version": "mock-v1",
+        "api_version": "3.1.0",
     }
 
 
-def test_predict_returns_deterministic_contract() -> None:
+def test_explicit_lab_mock_returns_deterministic_contract(monkeypatch) -> None:
+    monkeypatch.delenv("MODEL_PACKAGE_DIR", raising=False)
+    monkeypatch.setenv("ALLOW_MOCK_INFERENCE", "true")
     first = client.post("/predict", json=incident_payload())
     second = client.post("/predict", json=incident_payload())
 
@@ -46,6 +46,8 @@ def test_predict_returns_deterministic_contract() -> None:
     assert first.json()["malicious_probability"] == 0.95
     assert first.json()["family"] == "account"
     assert first.json()["threshold_revision"] == "mock-thr-v1"
+    assert first.json()["automation_eligible"] is False
+    assert first.json()["review_required"] is True
 
 
 def test_predict_rejects_end_before_start() -> None:

@@ -30,6 +30,9 @@ def predict_mock(incident: IncidentRequest) -> PredictionResponse:
         predicted_class="malicious" if malicious else "benign",
         malicious_probability=probability,
         family=incident.family_hint,
+        automation_eligible=False,
+        review_required=True,
+        inference_mode="mock",
     )
 
 

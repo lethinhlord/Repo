@@ -40,21 +40,47 @@ def test_batch_feature_endpoint_reports_duplicate_count() -> None:
 
 def test_readiness_exposes_week2_revisions_and_safe_gate(monkeypatch) -> None:
     monkeypatch.setenv("VT_MODE", "mock")
+    monkeypatch.delenv("MODEL_PACKAGE_DIR", raising=False)
+    monkeypatch.setenv("ALLOW_MOCK_INFERENCE", "false")
 
     response = client.get("/ready")
 
     assert response.status_code == 200
     assert response.json() == {
-        "status": "ready",
+        "status": "degraded",
         "service": "datn-ai-soar-api",
-        "api_version": "2.0.0-week2",
+        "api_version": "3.1.0",
         "feature_schema_version": "features-v1",
         "asset_context_revision": "asset-context-v1",
         "risk_policy_revision": "risk-week2-v1",
         "ti_policy_revision": "ti-week2-v1",
         "ti_mode": "mock",
+        "model_status": "not_configured",
+        "inference_mode": "unconfigured",
         "strong_actions_enabled": False,
     }
+
+
+def test_predict_fails_closed_when_model_is_missing(monkeypatch) -> None:
+    monkeypatch.delenv("MODEL_PACKAGE_DIR", raising=False)
+    monkeypatch.setenv("ALLOW_MOCK_INFERENCE", "false")
+
+    response = client.post(
+        "/predict",
+        json={
+            "incident_id": "INC-NO-MODEL",
+            "asset_id": "WIN11-TARGET",
+            "start_time": "2026-10-11T00:00:00Z",
+            "end_time": "2026-10-11T00:01:00Z",
+            "family_hint": "account",
+            "features": {"failed_login_count": 1.0, "success_after_fail": 1.0},
+            "evidence_sources": ["fixture"],
+            "base_severity": 5,
+        },
+    )
+
+    assert response.status_code == 503
+    assert "not configured" in response.json()["detail"]
 
 
 def test_asset_endpoint_returns_inventory_and_safe_default() -> None:

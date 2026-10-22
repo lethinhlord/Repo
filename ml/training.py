@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import platform
+import shutil
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -210,6 +211,7 @@ def train(config_path: Path) -> dict[str, Any]:
         "random_seed": int(config["random_seed"]),
         "git_commit": _git_commit(),
         "locked_test_status": "UNOPENED",
+        "locked_test_sha256": manifest["locked_test_sha256"],
         "selection_partition": "validation",
         "partition_record_counts": manifest["record_counts"],
         "libraries": {
@@ -226,4 +228,5 @@ def train(config_path: Path) -> dict[str, Any]:
     write_json(package_dir / "metrics_validation.json", all_metrics)
     write_json(package_dir / "eda_train.json", eda)
     write_json(package_dir / "leakage_audit.json", audit)
+    shutil.copy2(Path(config["feature_schema"]), package_dir / "feature_schema.json")
     return metadata

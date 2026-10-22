@@ -20,9 +20,7 @@ class ExternalModel(BaseModel):
 class HealthResponse(StrictModel):
     status: Literal["ok"] = "ok"
     service: Literal["datn-ai-soar-api"] = "datn-ai-soar-api"
-    mode: Literal["mock"] = "mock"
-    api_version: Literal["1.0.0"] = "1.0.0"
-    model_version: Literal["mock-v1"] = "mock-v1"
+    api_version: Literal["3.1.0"] = "3.1.0"
 
 
 class IncidentRequest(StrictModel):
@@ -130,11 +128,14 @@ class PredictionResponse(StrictModel):
     malicious_probability: float = Field(ge=0.0, le=1.0)
     family: FamilyHint
     threshold_revision: str = Field(default="mock-thr-v1", min_length=1, max_length=128)
+    automation_eligible: bool = False
+    review_required: bool = True
+    inference_mode: Literal["trained", "mock"] = "mock"
 
 
 class ModelReadinessResponse(StrictModel):
     status: Literal["ready", "not_configured", "invalid"]
-    mode: Literal["trained", "mock"]
+    mode: Literal["trained", "mock", "unconfigured"]
     model_version: str
     feature_schema_version: str
     locked_test_status: str
@@ -243,12 +244,14 @@ class RiskEvaluation(StrictModel):
 class ReadinessResponse(StrictModel):
     status: Literal["ready", "degraded"]
     service: Literal["datn-ai-soar-api"] = "datn-ai-soar-api"
-    api_version: Literal["2.0.0-week2"] = "2.0.0-week2"
+    api_version: Literal["3.1.0"] = "3.1.0"
     feature_schema_version: Literal["features-v1"] = "features-v1"
     asset_context_revision: Literal["asset-context-v1"] = "asset-context-v1"
     risk_policy_revision: Literal["risk-week2-v1"] = "risk-week2-v1"
     ti_policy_revision: Literal["ti-week2-v1"] = "ti-week2-v1"
     ti_mode: Literal["mock", "live", "disabled", "invalid"]
+    model_status: Literal["ready", "not_configured", "invalid"]
+    inference_mode: Literal["trained", "mock", "unconfigured"]
     strong_actions_enabled: Literal[False] = False
 
 

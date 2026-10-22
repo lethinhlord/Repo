@@ -6,7 +6,15 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-PACKAGE_FILES = ("model.joblib", "thresholds.json", "metadata.json", "metrics_validation.json")
+PACKAGE_FILES = (
+    "model.joblib",
+    "thresholds.json",
+    "metadata.json",
+    "metrics_validation.json",
+    "eda_train.json",
+    "leakage_audit.json",
+    "feature_schema.json",
+)
 
 
 def file_hash(path: Path) -> str:
@@ -25,6 +33,7 @@ def freeze(package_dir: Path) -> dict[str, object]:
     if metadata.get("locked_test_status") != "UNOPENED":
         raise ValueError("package must be frozen before the locked test is opened")
     result = {
+        "format_version": "model-package-v2",
         "model_version": metadata["model_version"],
         "frozen_at_utc": datetime.now(UTC).isoformat(),
         "files_sha256": {name: file_hash(package_dir / name) for name in PACKAGE_FILES},

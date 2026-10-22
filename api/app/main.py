@@ -61,14 +61,36 @@ def health() -> HealthResponse:
     return HealthResponse()
 
 
+def _allow_mock_inference() -> bool:
+    return os.getenv("ALLOW_MOCK_INFERENCE", "false").strip().lower() == "true"
+
+
+def _model_state() -> tuple[str, str]:
+    package_dir = os.getenv("MODEL_PACKAGE_DIR", "").strip()
+    if not package_dir:
+        return ("not_configured", "mock" if _allow_mock_inference() else "unconfigured")
+    try:
+        load_model_runtime(package_dir)
+    except (ModelPackageError, OSError, ValueError):
+        return ("invalid", "unconfigured")
+    return ("ready", "trained")
+
+
 @app.get("/ready", response_model=ReadinessResponse)
 def readiness() -> ReadinessResponse:
     raw_mode = os.getenv("VT_MODE", "mock").strip().lower()
     mode = raw_mode if raw_mode in {"mock", "live", "disabled"} else "invalid"
-    degraded = mode == "invalid" or (mode == "live" and not os.getenv("VT_API_KEY"))
+    model_status, inference_mode = _model_state()
+    degraded = (
+        mode == "invalid"
+        or (mode == "live" and not os.getenv("VT_API_KEY"))
+        or model_status != "ready"
+    )
     return ReadinessResponse(
         status="degraded" if degraded else "ready",
         ti_mode=mode,
+        model_status=model_status,
+        inference_mode=inference_mode,
     )
 
 
@@ -82,7 +104,12 @@ def predict(incident: IncidentRequest) -> PredictionResponse:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except (ModelPackageError, OSError, ValueError) as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return predict_mock(incident)
+    if _allow_mock_inference():
+        return predict_mock(incident)
+    raise HTTPException(
+        status_code=503,
+        detail="trained model is not configured; mock inference is disabled",
+    )
 
 
 @app.get("/model/ready", response_model=ModelReadinessResponse)
@@ -91,18 +118,22 @@ def model_readiness() -> ModelReadinessResponse:
     if not package_dir:
         return ModelReadinessResponse(
             status="not_configured",
-            mode="mock",
+            mode="mock" if _allow_mock_inference() else "unconfigured",
             model_version="mock-v1",
             feature_schema_version="features-v1",
             locked_test_status="UNOPENED",
-            detail="MODEL_PACKAGE_DIR is not configured; deterministic mock inference is active.",
+            detail=(
+                "MODEL_PACKAGE_DIR is not configured; explicit lab mock inference is active."
+                if _allow_mock_inference()
+                else "MODEL_PACKAGE_DIR is not configured; inference is unavailable."
+            ),
         )
     try:
         runtime = load_model_runtime(package_dir)
     except (ModelPackageError, OSError, ValueError) as exc:
         return ModelReadinessResponse(
             status="invalid",
-            mode="mock",
+            mode="unconfigured",
             model_version="unavailable",
             feature_schema_version="features-v1",
             locked_test_status="UNKNOWN",
@@ -113,7 +144,7 @@ def model_readiness() -> ModelReadinessResponse:
         mode="trained",
         model_version=runtime.metadata["model_version"],
         feature_schema_version=runtime.metadata["feature_schema_version"],
-        locked_test_status=runtime.metadata["locked_test_status"],
+        locked_test_status=runtime.locked_test_status,
         detail="Validated trained model package is active.",
     )
 
