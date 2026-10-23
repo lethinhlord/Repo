@@ -59,6 +59,8 @@ def test_week2_required_artifacts_exist() -> None:
         "scripts/verify_week2.sh",
         "scripts/generate_runtime_sbom.py",
         "scripts/verify_supply_chain.sh",
+        "scripts/build_reproducible_image.sh",
+        "scripts/verify_reproducible_image.sh",
         "scripts/bootstrap_ml.sh",
         "requirements-ml.lock",
         "requirements-runtime.lock",
@@ -197,6 +199,7 @@ def test_compose_limits_api_host_exposure_and_drops_capabilities() -> None:
     compose = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))
     api = compose["services"]["api"]
 
+    assert "build" not in api
     assert api["ports"] == ["127.0.0.1:8000:8000"]
     assert api["cap_drop"] == ["ALL"]
     assert "no-new-privileges:true" in api["security_opt"]
@@ -232,9 +235,30 @@ def test_runtime_dependencies_and_n8n_image_are_immutable() -> None:
 
     assert "--hash=sha256:" in lock
     assert "docker.n8n.io/n8nio/n8n:2.44.6@sha256:" in compose_text
-    assert "pip install --no-cache-dir --only-binary=:all: --require-hashes" in (
+    assert "pip install --no-cache-dir --no-compile --only-binary=:all: --require-hashes" in (
         ROOT / "api" / "Dockerfile"
     ).read_text(encoding="utf-8")
+
+
+def test_api_image_build_is_timestamp_normalized_and_bytecode_free() -> None:
+    dockerfile = (ROOT / "api" / "Dockerfile").read_text(encoding="utf-8")
+    builder = (ROOT / "scripts" / "build_reproducible_image.sh").read_text(
+        encoding="utf-8"
+    )
+    deploy = (ROOT / "scripts" / "deploy_week2.sh").read_text(encoding="utf-8")
+    legacy_deploy = (ROOT / "scripts" / "deploy_week1.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "--no-compile" in dockerfile
+    assert "SOURCE_DATE_EPOCH" in builder
+    assert "rewrite-timestamp=true" in builder
+    assert "--provenance=false" in builder
+    assert "--sbom=false" in builder
+    assert "type=oci" in builder
+    assert "docker load" in builder
+    assert "build_reproducible_image.sh" in deploy
+    assert "build_reproducible_image.sh" in legacy_deploy
 
 
 def test_deployment_waits_for_functional_webhook_readiness() -> None:

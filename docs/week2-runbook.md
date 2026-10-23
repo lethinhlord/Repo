@@ -165,7 +165,9 @@ Ruff passing, Compose validation passing and the E2E assertion succeeding.
 The scripts write JSON evidence, the CycloneDX runtime SBOM and the Python vulnerability
 audit under `evidence/`. Install the audit tool in the operator environment with
 `.venv-ml/bin/python -m pip install pip-audit==2.10.0`; it is deliberately excluded from
-the production image.
+the production image. The supply-chain gate also performs two clean OCI builds with the
+Git commit timestamp and requires identical manifest digests; this step downloads and
+installs the locked wheels twice and can take several minutes.
 
 ## Optional live VirusTotal check
 

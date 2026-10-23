@@ -32,7 +32,7 @@ fi
 
 docker compose config --quiet
 docker compose down --remove-orphans
-docker compose --progress plain build api
+./scripts/build_reproducible_image.sh datn-ai-soar-api:week3
 docker compose run --rm --no-deps api \
   python -m ml.freeze_model --verify-only --package-dir /app/ml/model-package
 docker compose up -d api

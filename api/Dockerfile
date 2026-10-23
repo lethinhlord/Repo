@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY requirements-runtime.lock /app/requirements-runtime.lock
-RUN pip install --no-cache-dir --only-binary=:all: --require-hashes \
+RUN pip install --no-cache-dir --no-compile --only-binary=:all: --require-hashes \
     -r /app/requirements-runtime.lock
 
 COPY api /app/api

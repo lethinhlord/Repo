@@ -18,6 +18,8 @@
 - Versioned 16-scenario catalog and complete Vietnamese collection runbook.
 - Durable per-model prediction/OOD counters, feature-level drift alerts and
   analyst-feedback quality thresholds for post-deployment monitoring.
+- Timestamp-normalized OCI builds with bytecode-free dependency installation and a
+  two-build digest verification gate.
 
 ### Security
 

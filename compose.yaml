@@ -1,8 +1,5 @@
 services:
   api:
-    build:
-      context: .
-      dockerfile: api/Dockerfile
     image: datn-ai-soar-api:week3
     restart: unless-stopped
     ports:

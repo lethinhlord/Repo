@@ -17,5 +17,6 @@ EXPECTED_N8N_DIGEST="sha256:d02752c6ab446ae9db8deec2f9cc887c378f77cdcad31650814d
 ACTUAL_N8N_DIGEST="$(docker buildx imagetools inspect docker.n8n.io/n8nio/n8n:2.44.6 --format '{{json .Manifest.Digest}}' | tr -d '"')"
 test "$ACTUAL_N8N_DIGEST" = "$EXPECTED_N8N_DIGEST"
 docker compose config --quiet
+./scripts/verify_reproducible_image.sh
 
-printf 'Supply-chain gate passed: hashed Python lock, SBOM, vulnerability audit, pinned image digest.\n'
+printf 'Supply-chain gate passed: locks, SBOM, vulnerability audit, pinned dependencies and reproducible API image.\n'

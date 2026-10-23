@@ -145,7 +145,8 @@ set +a
 .venv-ml/bin/python -m ml.freeze_model --package-dir ml/model-package
 .venv-ml/bin/python -m ml.freeze_model --verify-only --package-dir ml/model-package
 export MODEL_PACKAGE_DIR=/app/ml/model-package
-docker compose up -d --build api n8n
+./scripts/build_reproducible_image.sh datn-ai-soar-api:week3
+docker compose up -d api n8n
 curl -s http://127.0.0.1:8000/model/ready | python3 -m json.tool
 curl -s http://127.0.0.1:8000/ready | python3 -m json.tool
 ```
