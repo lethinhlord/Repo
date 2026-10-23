@@ -22,7 +22,10 @@ def test_compose_pins_services_and_keeps_api_internal_to_n8n() -> None:
     compose = yaml.safe_load((ROOT / "compose.yaml").read_text())
     services = compose["services"]
 
-    assert services["n8n"]["image"] == "docker.n8n.io/n8nio/n8n:2.41.7"
+    assert services["n8n"]["image"] == (
+        "docker.n8n.io/n8nio/n8n:2.44.6@sha256:"
+        "d02752c6ab446ae9db8deec2f9cc887c378f77cdcad31650814df936b7386dfb"
+    )
     assert services["api"]["build"]["dockerfile"] == "api/Dockerfile"
     assert "${N8N_BIND_ADDRESS:-127.0.0.1}:5678:5678" in services["n8n"]["ports"]
     assert "127.0.0.1:8000:8000" in services["api"]["ports"]

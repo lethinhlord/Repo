@@ -6,6 +6,10 @@
       "id": "1e537cba-9c4e-4dbc-91d9-22a134063ae1", "name": "Wazuh Alert Webhook v2", "type": "n8n-nodes-base.webhook", "typeVersion": 2.1, "position": [-740, -140], "webhookId": "week2-wazuh-alert"
     },
     {
+      "parameters": {"conditions": {"options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"}, "conditions": [{"id": "5d693e1e-c573-4539-a68d-4b868d6c2adb", "leftValue": "={{ /^\\d{10}$/.test(String($json.headers?.['x-soar-timestamp'] ?? '')) && /^[a-f0-9]{32}$/.test(String($json.headers?.['x-soar-nonce'] ?? '')) && /^[a-f0-9]{64}$/.test(String($json.headers?.['x-soar-signature'] ?? '')) }}", "rightValue": true, "operator": {"type": "boolean", "operation": "true", "singleValue": true}}], "combinator": "and"}, "options": {}},
+      "id": "85e330c8-ed84-4580-ad48-0378794114fe", "name": "Signature Headers Present?", "type": "n8n-nodes-base.if", "typeVersion": 2.2, "position": [-660, -140]
+    },
+    {
       "parameters": {"method": "POST", "url": "http://api:8000/ingress/wazuh/verify", "sendBody": true, "contentType": "raw", "rawContentType": "application/json", "body": "={{ JSON.stringify({ timestamp: Number($json.headers?.['x-soar-timestamp'] ?? 0), nonce: String($json.headers?.['x-soar-nonce'] ?? ''), signature: String($json.headers?.['x-soar-signature'] ?? ''), payload: $json.body ?? {} }) }}", "options": {"timeout": 10000}},
       "id": "49d4a54b-93de-48e2-a4c5-8454d4190a12", "name": "Verify Signed Ingress", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [-580, -140], "onError": "continueRegularOutput"
     },
@@ -58,8 +62,12 @@
       "id": "1f7c362e-fbce-4a32-9c5a-c1666395ef35", "name": "Persist Incident And Queue", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1020, -240], "onError": "continueRegularOutput"
     },
     {
-      "parameters": {"jsCode": "const persisted = $json ?? {};\nconst failed = !persisted.incident_id || !persisted.disposition;\nreturn [{ json: failed ? { response_code: 503, status: 'persistence_failed', review_required: true, automation_state: 'SHADOW', strong_action_allowed: false, message: 'Decision could not be persisted; workflow is fail-closed.' } : { response_code: 200, status: persisted.route === 'review' ? 'review_queued' : 'shadow_queued', review_required: persisted.review_required, automation_state: 'SHADOW', strong_action_allowed: false, incident_id: persisted.incident_id, source_event_id: persisted.source_event_id, disposition: persisted.disposition, notification_status: persisted.notification_status, recorded_at: persisted.recorded_at } }];"},
-      "id": "498a10de-a3d2-46ec-b54d-ce0c1236b70f", "name": "Finalize Response", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1180, -240]
+      "parameters": {"method": "POST", "url": "http://api:8000/notifications/dispatch", "sendBody": true, "contentType": "raw", "rawContentType": "application/json", "body": "={{ JSON.stringify({ incident_id: $node[\"Persist Incident And Queue\"].json.incident_id ?? '' }) }}", "options": {"timeout": 10000}},
+      "id": "04fa37af-acde-40e0-8b87-720d9ac76357", "name": "Dispatch Notification", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1180, -240], "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {"jsCode": "const persisted = $node[\"Persist Incident And Queue\"].json ?? {};\nconst delivery = $node[\"Dispatch Notification\"].json ?? {};\nconst persistenceFailed = !persisted.incident_id || !persisted.disposition;\nconst deliveryFailed = !['SENT','ALREADY_SENT'].includes(delivery.notification_status);\nif (persistenceFailed) return [{ json: { response_code: 503, status: 'persistence_failed', review_required: true, automation_state: 'SHADOW', strong_action_allowed: false, message: 'Decision could not be persisted; workflow is fail-closed.' } }];\nif (deliveryFailed) return [{ json: { response_code: 503, status: 'notification_pending', review_required: true, automation_state: 'SHADOW', strong_action_allowed: false, incident_id: persisted.incident_id, message: 'Incident persisted but notification remains queued for retry.' } }];\nreturn [{ json: { response_code: 200, status: persisted.route === 'review' ? 'review_notified' : 'shadow_notified', review_required: persisted.review_required, automation_state: 'SHADOW', strong_action_allowed: false, incident_id: persisted.incident_id, source_event_id: persisted.source_event_id, disposition: persisted.disposition, notification_status: delivery.notification_status, notification_channel: delivery.channel, recorded_at: persisted.recorded_at } }];"},
+      "id": "498a10de-a3d2-46ec-b54d-ce0c1236b70f", "name": "Finalize Response", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1340, -240]
     },
     {
       "parameters": {"respondWith": "json", "responseBody": "={{ JSON.stringify($json) }}", "options": {"responseCode": "={{ $json.response_code ?? 200 }}"}},
@@ -67,7 +75,8 @@
     }
   ],
   "connections": {
-    "Wazuh Alert Webhook v2": {"main": [[{"node": "Verify Signed Ingress", "type": "main", "index": 0}]]},
+    "Wazuh Alert Webhook v2": {"main": [[{"node": "Signature Headers Present?", "type": "main", "index": 0}]]},
+    "Signature Headers Present?": {"main": [[{"node": "Verify Signed Ingress", "type": "main", "index": 0}], [{"node": "Build Unauthorized Response", "type": "main", "index": 0}]]},
     "Verify Signed Ingress": {"main": [[{"node": "Ingress Verified?", "type": "main", "index": 0}]]},
     "Ingress Verified?": {"main": [[{"node": "Extract Incident Features", "type": "main", "index": 0}], [{"node": "Build Unauthorized Response", "type": "main", "index": 0}]]},
     "Build Unauthorized Response": {"main": [[{"node": "Respond to Webhook", "type": "main", "index": 0}]]},
@@ -80,7 +89,8 @@
     "Decision Ready?": {"main": [[{"node": "Build Shadow Decision", "type": "main", "index": 0}], [{"node": "Build Review Decision", "type": "main", "index": 0}]]},
     "Build Shadow Decision": {"main": [[{"node": "Persist Incident And Queue", "type": "main", "index": 0}]]},
     "Build Review Decision": {"main": [[{"node": "Persist Incident And Queue", "type": "main", "index": 0}]]},
-    "Persist Incident And Queue": {"main": [[{"node": "Finalize Response", "type": "main", "index": 0}]]},
+    "Persist Incident And Queue": {"main": [[{"node": "Dispatch Notification", "type": "main", "index": 0}]]},
+    "Dispatch Notification": {"main": [[{"node": "Finalize Response", "type": "main", "index": 0}]]},
     "Finalize Response": {"main": [[{"node": "Respond to Webhook", "type": "main", "index": 0}]]}
   },
   "active": false,

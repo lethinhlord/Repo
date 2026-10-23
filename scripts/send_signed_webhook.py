@@ -4,12 +4,17 @@ import argparse
 import json
 import os
 import secrets
+import sys
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-from api.app.webhook_auth import sign_payload
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from api.app.webhook_auth import sign_payload  # noqa: E402 - root is bootstrapped above
 
 
 def main() -> None:
@@ -17,6 +22,7 @@ def main() -> None:
     parser.add_argument("payload", type=Path)
     parser.add_argument("--url", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--expect-http-status", type=int, default=200)
     args = parser.parse_args()
 
     secret = os.environ.get("WAZUH_WEBHOOK_SECRET", "")
@@ -45,11 +51,16 @@ def main() -> None:
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             body = response.read()
+            status = response.status
     except urllib.error.HTTPError as exc:
         body = exc.read()
-        args.output.write_bytes(body)
-        raise SystemExit(f"webhook returned HTTP {exc.code}; response saved") from exc
+        status = exc.code
     args.output.write_bytes(body)
+    if status != args.expect_http_status:
+        raise SystemExit(
+            f"webhook returned HTTP {status}, expected {args.expect_http_status}; "
+            "response saved"
+        )
 
 
 if __name__ == "__main__":

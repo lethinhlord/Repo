@@ -3,10 +3,15 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from api.app.contracts import IncidentRecordRequest, IncidentRecordResponse
+from api.app.contracts import (
+    IncidentRecordRequest,
+    IncidentRecordResponse,
+    NotificationDispatchResponse,
+)
 
 
 class IncidentStore:
@@ -47,10 +52,22 @@ class IncidentStore:
                     incident_id TEXT PRIMARY KEY,
                     notification TEXT NOT NULL,
                     status TEXT NOT NULL,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    delivered_at TEXT,
+                    channel TEXT
                 );
                 """
             )
+            columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(notification_outbox)")
+            }
+            if "delivered_at" not in columns:
+                connection.execute(
+                    "ALTER TABLE notification_outbox ADD COLUMN delivered_at TEXT"
+                )
+            if "channel" not in columns:
+                connection.execute("ALTER TABLE notification_outbox ADD COLUMN channel TEXT")
 
     @staticmethod
     def _payload(request: IncidentRecordRequest) -> tuple[str, str]:
@@ -125,7 +142,9 @@ class IncidentStore:
                 (request.source_event_id, payload_hash, request.incident_id, now_text),
             )
             queued = connection.execute(
-                "INSERT OR IGNORE INTO notification_outbox VALUES (?, ?, 'QUEUED', ?)",
+                "INSERT OR IGNORE INTO notification_outbox "
+                "(incident_id, notification, status, created_at) "
+                "VALUES (?, ?, 'QUEUED', ?)",
                 (request.incident_id, request.notification, now_text),
             ).rowcount
 
@@ -137,4 +156,60 @@ class IncidentStore:
             route=request.route,
             review_required=request.review_required,
             recorded_at=now,
+        )
+
+    def dispatch_notification(
+        self,
+        incident_id: str,
+        sender: Callable[[str, str], str],
+    ) -> NotificationDispatchResponse:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT notification, status, delivered_at, channel "
+                "FROM notification_outbox WHERE incident_id = ?",
+                (incident_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("incident notification is not queued")
+            if row["status"] == "SENT":
+                return NotificationDispatchResponse(
+                    incident_id=incident_id,
+                    notification_status="ALREADY_SENT",
+                    channel=row["channel"],
+                    delivered_at=datetime.fromisoformat(row["delivered_at"]),
+                )
+            if row["status"] == "SENDING":
+                raise ValueError("incident notification dispatch is already in progress")
+            connection.execute(
+                "UPDATE notification_outbox SET status = 'SENDING' WHERE incident_id = ?",
+                (incident_id,),
+            )
+            notification = row["notification"]
+        try:
+            channel = sender(incident_id, notification)
+            if channel not in {"audit-log", "webhook"}:
+                raise ValueError("notification sender returned an unsupported channel")
+        except Exception:
+            with self._connect() as connection:
+                connection.execute(
+                    "UPDATE notification_outbox SET status = 'QUEUED' "
+                    "WHERE incident_id = ? AND status = 'SENDING'",
+                    (incident_id,),
+                )
+            raise
+        delivered_at = datetime.now(UTC)
+        with self._connect() as connection:
+            updated = connection.execute(
+                "UPDATE notification_outbox SET status = 'SENT', delivered_at = ?, "
+                "channel = ? WHERE incident_id = ? AND status = 'SENDING'",
+                (delivered_at.isoformat(), channel, incident_id),
+            ).rowcount
+            if updated != 1:
+                raise RuntimeError("notification delivery state changed unexpectedly")
+        return NotificationDispatchResponse(
+            incident_id=incident_id,
+            notification_status="SENT",
+            channel=channel,
+            delivered_at=delivered_at,
         )

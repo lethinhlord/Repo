@@ -165,6 +165,57 @@ class PredictionResponse(StrictModel):
     automation_eligible: bool = False
     review_required: bool = True
     inference_mode: Literal["trained", "mock"] = "mock"
+    ood_detected: bool = False
+    ood_features: list[str] = Field(default_factory=list)
+    monitoring_revision: Literal["model-monitor-v1"] = "model-monitor-v1"
+
+
+class ModelMetricsResponse(StrictModel):
+    monitoring_revision: Literal["model-monitor-v1"] = "model-monitor-v1"
+    model_version: str
+    predictions_total: int = Field(ge=0)
+    predictions_by_family: dict[str, int]
+    review_required_total: int = Field(ge=0)
+    ood_total: int = Field(ge=0)
+    ood_by_family: dict[str, int]
+    monitoring_alerts: list[str]
+    last_prediction_at: datetime | None
+
+
+class AnalystFeedbackRequest(StrictModel):
+    incident_id: str = Field(min_length=1, max_length=128)
+    model_version: str = Field(min_length=1, max_length=128)
+    analyst_id: str = Field(min_length=1, max_length=128)
+    analyst_label: Literal["benign", "malicious", "uncertain"]
+    disposition: Literal[
+        "true_positive",
+        "false_positive",
+        "true_negative",
+        "false_negative",
+        "needs_investigation",
+    ]
+    notes: str | None = Field(default=None, max_length=4096)
+
+    @model_validator(mode="after")
+    def validate_feedback_semantics(self) -> "AnalystFeedbackRequest":
+        expected = {
+            "true_positive": "malicious",
+            "false_positive": "benign",
+            "true_negative": "benign",
+            "false_negative": "malicious",
+            "needs_investigation": "uncertain",
+        }
+        if expected[self.disposition] != self.analyst_label:
+            raise ValueError("analyst_label contradicts disposition")
+        return self
+
+
+class AnalystFeedbackResponse(StrictModel):
+    feedback_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    incident_id: str
+    model_version: str
+    disposition: Literal["created", "duplicate"]
+    recorded_at: datetime
 
 
 class ModelReadinessResponse(StrictModel):
@@ -321,6 +372,17 @@ class IncidentRecordResponse(StrictModel):
     route: Literal["shadow", "review"]
     review_required: bool
     recorded_at: datetime
+
+
+class NotificationDispatchRequest(StrictModel):
+    incident_id: str = Field(min_length=1, max_length=128)
+
+
+class NotificationDispatchResponse(StrictModel):
+    incident_id: str
+    notification_status: Literal["SENT", "ALREADY_SENT"]
+    channel: Literal["audit-log", "webhook"]
+    delivered_at: datetime
 
 
 class ReadinessResponse(StrictModel):

@@ -1,0 +1,75 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "monitoring_revision": {
+      "const": "model-monitor-v1",
+      "default": "model-monitor-v1",
+      "title": "Monitoring Revision",
+      "type": "string"
+    },
+    "model_version": {
+      "title": "Model Version",
+      "type": "string"
+    },
+    "predictions_total": {
+      "minimum": 0,
+      "title": "Predictions Total",
+      "type": "integer"
+    },
+    "predictions_by_family": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Predictions By Family",
+      "type": "object"
+    },
+    "review_required_total": {
+      "minimum": 0,
+      "title": "Review Required Total",
+      "type": "integer"
+    },
+    "ood_total": {
+      "minimum": 0,
+      "title": "Ood Total",
+      "type": "integer"
+    },
+    "ood_by_family": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Ood By Family",
+      "type": "object"
+    },
+    "monitoring_alerts": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Monitoring Alerts",
+      "type": "array"
+    },
+    "last_prediction_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Last Prediction At"
+    }
+  },
+  "required": [
+    "model_version",
+    "predictions_total",
+    "predictions_by_family",
+    "review_required_total",
+    "ood_total",
+    "ood_by_family",
+    "monitoring_alerts",
+    "last_prediction_at"
+  ],
+  "title": "ModelMetricsResponse",
+  "type": "object"
+}

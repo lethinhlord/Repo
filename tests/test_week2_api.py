@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from api.app.main import (
     app,
     load_feature_state_store,
+    load_feedback_store,
     load_incident_store,
     load_webhook_authenticator,
 )
@@ -98,6 +99,117 @@ def test_incident_record_endpoint_is_idempotent(monkeypatch, tmp_path: Path) -> 
     assert first.json()["notification_status"] == "QUEUED"
     assert replay.status_code == 200
     assert replay.json()["disposition"] == "duplicate"
+
+    monkeypatch.setenv("NOTIFICATION_MODE", "log")
+    delivery = client.post(
+        "/notifications/dispatch", json={"incident_id": "INC-API-1"}
+    )
+    delivery_replay = client.post(
+        "/notifications/dispatch", json={"incident_id": "INC-API-1"}
+    )
+    assert delivery.status_code == 200
+    assert delivery.json()["notification_status"] == "SENT"
+    assert delivery.json()["channel"] == "audit-log"
+    assert delivery_replay.status_code == 200
+    assert delivery_replay.json()["notification_status"] == "ALREADY_SENT"
+
+
+def test_failed_notification_delivery_remains_retryable(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("INCIDENT_DB", str(tmp_path / "incidents.sqlite3"))
+    monkeypatch.setenv("NOTIFICATION_MODE", "disabled")
+    load_incident_store.cache_clear()
+    payload = {
+        "incident_id": "INC-RETRY-1",
+        "source_event_id": "EVENT-RETRY-1",
+        "route": "review",
+        "review_required": True,
+        "notification": "manual review required",
+        "decision": {"risk": {"display": 6.2}},
+    }
+    assert client.post("/incidents/record", json=payload).status_code == 200
+
+    failed = client.post(
+        "/notifications/dispatch", json={"incident_id": "INC-RETRY-1"}
+    )
+    monkeypatch.setenv("NOTIFICATION_MODE", "log")
+    retried = client.post(
+        "/notifications/dispatch", json={"incident_id": "INC-RETRY-1"}
+    )
+
+    assert failed.status_code == 503
+    assert retried.status_code == 200
+    assert retried.json()["notification_status"] == "SENT"
+
+
+def test_model_feedback_is_traceable_and_idempotent(monkeypatch, tmp_path: Path) -> None:
+    incident_path = tmp_path / "incidents.sqlite3"
+    monkeypatch.setenv("INCIDENT_DB", str(incident_path))
+    monkeypatch.setenv("MODEL_FEEDBACK_DB", str(tmp_path / "feedback.sqlite3"))
+    load_incident_store.cache_clear()
+    load_feedback_store.cache_clear()
+    incident = {
+        "incident_id": "INC-API-1",
+        "source_event_id": "EVENT-FEEDBACK-1",
+        "route": "review",
+        "review_required": True,
+        "notification": "manual review required",
+        "decision": {"prediction": {"model_version": "week3-test-v1"}},
+    }
+    assert client.post("/incidents/record", json=incident).status_code == 200
+    payload = {
+        "incident_id": "INC-API-1",
+        "model_version": "week3-test-v1",
+        "analyst_id": "analyst-01",
+        "analyst_label": "benign",
+        "disposition": "false_positive",
+        "notes": "Interactive administration confirmed by ticket.",
+    }
+
+    first = client.post("/model/feedback", json=payload)
+    replay = client.post("/model/feedback", json=payload)
+
+    assert first.status_code == 200
+    assert first.json()["disposition"] == "created"
+    assert len(first.json()["feedback_id"]) == 64
+    assert replay.status_code == 200
+    assert replay.json()["disposition"] == "duplicate"
+
+
+def test_model_feedback_rejects_semantic_contradiction() -> None:
+    response = client.post(
+        "/model/feedback",
+        json={
+            "incident_id": "INC-API-2",
+            "model_version": "week3-test-v1",
+            "analyst_id": "analyst-02",
+            "analyst_label": "malicious",
+            "disposition": "false_positive",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_model_feedback_rejects_unknown_incident(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("INCIDENT_DB", str(tmp_path / "incidents.sqlite3"))
+    monkeypatch.setenv("MODEL_FEEDBACK_DB", str(tmp_path / "feedback.sqlite3"))
+    load_incident_store.cache_clear()
+    load_incident_store(str(tmp_path / "incidents.sqlite3"))
+    load_feedback_store.cache_clear()
+
+    response = client.post(
+        "/model/feedback",
+        json={
+            "incident_id": "INC-UNKNOWN",
+            "model_version": "week3-test-v1",
+            "analyst_id": "analyst-02",
+            "analyst_label": "malicious",
+            "disposition": "false_negative",
+        },
+    )
+
+    assert response.status_code == 409
+    assert "unknown incident" in response.json()["detail"]
 
 
 def test_signed_ingress_endpoint_authenticates_and_blocks_replay(

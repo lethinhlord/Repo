@@ -32,6 +32,7 @@ def test_health_exposes_service_liveness_identity() -> None:
         "service": "datn-ai-soar-api",
         "api_version": "3.1.0",
     }
+    assert app.version == response.json()["api_version"]
 
 
 def test_explicit_lab_mock_returns_deterministic_contract(monkeypatch) -> None:
@@ -57,6 +58,29 @@ def test_predict_rejects_end_before_start() -> None:
     response = client.post("/predict", json=payload)
 
     assert response.status_code == 422
+
+
+def test_mock_does_not_treat_single_console_typo_as_malicious(monkeypatch) -> None:
+    monkeypatch.delenv("MODEL_PACKAGE_DIR", raising=False)
+    monkeypatch.setenv("ALLOW_MOCK_INFERENCE", "true")
+    payload = incident_payload()
+    payload["features"] = {
+        "failed_login_count": 1.0,
+        "successful_login_count": 1.0,
+        "success_after_fail": 1.0,
+        "unique_target_account_count": 1.0,
+        "unique_source_count": 1.0,
+        "remote_logon_ratio": 0.0,
+        "failure_window_seconds": 3.0,
+        "attempt_rate_per_minute": 2.0,
+    }
+
+    response = client.post("/predict", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["predicted_class"] == "benign"
+    assert response.json()["inference_mode"] == "mock"
+    assert response.json()["automation_eligible"] is False
 
 
 def test_orchestrate_returns_shadow_decision_and_audit_record() -> None:

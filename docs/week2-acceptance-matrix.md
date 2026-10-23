@@ -10,7 +10,7 @@
 | Safe TI degradation | Reserved/private input is not sent; timeout/429/404/5xx/stale/malformed/missing data becomes `UNKNOWN` | PASS |
 | Asset context | Versioned inventory for WIN11-01/02, SOC-CORE and SOAR-AI; unknown assets are protected and require review | PASS |
 | Risk v2 | YAML is loaded and validated; missing TI/asset is excluded and forces review | PASS |
-| n8n mock workflow | Feature → mock AI → TI → asset → Risk → SHADOW guard → notification/degraded response | PASS |
+| n8n mock workflow | Feature → model → TI → asset → Risk → SHADOW guard → durable incident → idempotent notification/degraded response | PASS |
 | Safety boundary | Strong actions are structurally disabled; only create/update/notify is allowed | PASS |
 | Week 1 regression | Original health and orchestration contracts remain supported; prediction fails closed without a verified package | PASS |
 | Reproducibility | Pinned images/dependencies, deploy/verify scripts, OpenAPI and JSON Schemas | PASS |

@@ -112,8 +112,9 @@ Open `http://192.168.149.128:5678` inside the Ubuntu browser and select
 10. Decision Ready?
 11. Build SHADOW or review decision
 12. Persist Incident And Queue
-13. Finalize Response
-14. Respond to Webhook
+13. Dispatch Notification
+14. Finalize Response
+15. Respond to Webhook
 
 Checkpoint W2-05: capture the complete VMware screen with the entire workflow.
 No isolation, IP blocking, process termination or account-disabling node may
@@ -123,6 +124,9 @@ exist.
 
 Never paste or display the webhook secret. Load it from the root-owned `.env`
 and use the canonical signing client:
+
+The client and API use RFC 8785 JSON Canonicalization Scheme (JCS), so the HMAC
+remains valid when n8n/JavaScript normalizes values such as `12.0` to `12`.
 
 ```bash
 set -a
@@ -135,9 +139,12 @@ python3 -m json.tool evidence/week2-e2e-response.json
 ```
 
 Checkpoint W2-06: capture the terminal result and the matching n8n execution.
-The response must be `shadow_queued` or `review_queued`, `SHADOW`,
-`strong_action_allowed=false`, and contain a durable persistence disposition.
+The response must be `shadow_notified` or `review_notified`, `SHADOW`,
+`strong_action_allowed=false`, and contain a durable persistence disposition plus a
+`SENT`/`ALREADY_SENT` notification receipt. A delivery failure returns
+`notification_pending` and leaves the outbox retryable.
 An invalid/expired/replayed signature is HTTP 401 and is never processed. A
+structurally invalid signed payload is also rejected before feature extraction.
 missing service, partial feature, ineligible model, malicious/unknown TI,
 protected asset or missing context must route to the review queue, never to an
 action.
@@ -146,12 +153,16 @@ action.
 
 ```bash
 ./scripts/verify_week2.sh
+./scripts/verify_supply_chain.sh
 git status --short
 ```
 
 Checkpoint W2-07: capture the full terminal showing all Pytest tests passing,
 Ruff passing, Compose validation passing and the E2E assertion succeeding.
-The script writes JSON evidence under `evidence/`.
+The scripts write JSON evidence, the CycloneDX runtime SBOM and the Python vulnerability
+audit under `evidence/`. Install the audit tool in the operator environment with
+`.venv-ml/bin/python -m pip install pip-audit==2.10.0`; it is deliberately excluded from
+the production image.
 
 ## Optional live VirusTotal check
 

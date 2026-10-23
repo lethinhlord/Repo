@@ -3,7 +3,7 @@
   "info": {
     "title": "DATN AI SOAR API",
     "summary": "Week 1/2 compatibility services plus Week 3 trained-model inference",
-    "version": "3.0.0-week3"
+    "version": "3.1.0"
   },
   "paths": {
     "/health": {
@@ -91,6 +91,62 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ModelReadinessResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/model/metrics": {
+      "get": {
+        "summary": "Model Metrics",
+        "operationId": "model_metrics_model_metrics_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelMetricsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/model/feedback": {
+      "post": {
+        "summary": "Model Feedback",
+        "operationId": "model_feedback_model_feedback_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalystFeedbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalystFeedbackResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -405,6 +461,44 @@
         }
       }
     },
+    "/notifications/dispatch": {
+      "post": {
+        "summary": "Dispatch Notification",
+        "operationId": "dispatch_notification_notifications_dispatch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationDispatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationDispatchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/orchestrate/mock": {
       "post": {
         "summary": "Orchestrate Mock",
@@ -446,6 +540,110 @@
   },
   "components": {
     "schemas": {
+      "AnalystFeedbackRequest": {
+        "properties": {
+          "incident_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Incident Id"
+          },
+          "model_version": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Model Version"
+          },
+          "analyst_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Analyst Id"
+          },
+          "analyst_label": {
+            "type": "string",
+            "enum": [
+              "benign",
+              "malicious",
+              "uncertain"
+            ],
+            "title": "Analyst Label"
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "true_positive",
+              "false_positive",
+              "true_negative",
+              "false_negative",
+              "needs_investigation"
+            ],
+            "title": "Disposition"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4096
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "incident_id",
+          "model_version",
+          "analyst_id",
+          "analyst_label",
+          "disposition"
+        ],
+        "title": "AnalystFeedbackRequest"
+      },
+      "AnalystFeedbackResponse": {
+        "properties": {
+          "feedback_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Feedback Id"
+          },
+          "incident_id": {
+            "type": "string",
+            "title": "Incident Id"
+          },
+          "model_version": {
+            "type": "string",
+            "title": "Model Version"
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "created",
+              "duplicate"
+            ],
+            "title": "Disposition"
+          },
+          "recorded_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Recorded At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "feedback_id",
+          "incident_id",
+          "model_version",
+          "disposition",
+          "recorded_at"
+        ],
+        "title": "AnalystFeedbackResponse"
+      },
       "AssetContext": {
         "properties": {
           "asset_id": {
@@ -1003,6 +1201,81 @@
         ],
         "title": "IncidentRequest"
       },
+      "ModelMetricsResponse": {
+        "properties": {
+          "monitoring_revision": {
+            "type": "string",
+            "const": "model-monitor-v1",
+            "title": "Monitoring Revision",
+            "default": "model-monitor-v1"
+          },
+          "model_version": {
+            "type": "string",
+            "title": "Model Version"
+          },
+          "predictions_total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Predictions Total"
+          },
+          "predictions_by_family": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Predictions By Family"
+          },
+          "review_required_total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Review Required Total"
+          },
+          "ood_total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Ood Total"
+          },
+          "ood_by_family": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Ood By Family"
+          },
+          "monitoring_alerts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Monitoring Alerts"
+          },
+          "last_prediction_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Prediction At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "model_version",
+          "predictions_total",
+          "predictions_by_family",
+          "review_required_total",
+          "ood_total",
+          "ood_by_family",
+          "monitoring_alerts",
+          "last_prediction_at"
+        ],
+        "title": "ModelMetricsResponse"
+      },
       "ModelReadinessResponse": {
         "properties": {
           "status": {
@@ -1051,6 +1324,60 @@
           "detail"
         ],
         "title": "ModelReadinessResponse"
+      },
+      "NotificationDispatchRequest": {
+        "properties": {
+          "incident_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Incident Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "incident_id"
+        ],
+        "title": "NotificationDispatchRequest"
+      },
+      "NotificationDispatchResponse": {
+        "properties": {
+          "incident_id": {
+            "type": "string",
+            "title": "Incident Id"
+          },
+          "notification_status": {
+            "type": "string",
+            "enum": [
+              "SENT",
+              "ALREADY_SENT"
+            ],
+            "title": "Notification Status"
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "audit-log",
+              "webhook"
+            ],
+            "title": "Channel"
+          },
+          "delivered_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Delivered At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "incident_id",
+          "notification_status",
+          "channel",
+          "delivered_at"
+        ],
+        "title": "NotificationDispatchResponse"
       },
       "PredictionResponse": {
         "properties": {
@@ -1109,6 +1436,24 @@
             ],
             "title": "Inference Mode",
             "default": "mock"
+          },
+          "ood_detected": {
+            "type": "boolean",
+            "title": "Ood Detected",
+            "default": false
+          },
+          "ood_features": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Ood Features"
+          },
+          "monitoring_revision": {
+            "type": "string",
+            "const": "model-monitor-v1",
+            "title": "Monitoring Revision",
+            "default": "model-monitor-v1"
           }
         },
         "additionalProperties": false,

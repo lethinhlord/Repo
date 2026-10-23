@@ -1,3 +1,4 @@
+import logging
 import os
 import sqlite3
 from datetime import UTC, datetime
@@ -10,6 +11,8 @@ from fastapi import Path as ApiPath
 
 from api.app.asset_context import AssetContextRepository
 from api.app.contracts import (
+    AnalystFeedbackRequest,
+    AnalystFeedbackResponse,
     AssetContext,
     AuditRecord,
     DecisionRecord,
@@ -20,7 +23,10 @@ from api.app.contracts import (
     IncidentRecordRequest,
     IncidentRecordResponse,
     IncidentRequest,
+    ModelMetricsResponse,
     ModelReadinessResponse,
+    NotificationDispatchRequest,
+    NotificationDispatchResponse,
     PredictionResponse,
     ReadinessResponse,
     RiskEvaluation,
@@ -33,8 +39,10 @@ from api.app.contracts import (
     WazuhAlertBatch,
 )
 from api.app.feature_state import FeatureStateConflictError, FeatureStateStore
+from api.app.feedback_store import AnalystFeedbackStore
 from api.app.incident_store import IncidentStore
 from api.app.mock_services import lookup_ti_mock, predict_mock
+from api.app.notification import NotificationDeliveryError, deliver_notification
 from api.app.risk import calculate_risk
 from api.app.risk_policy import RiskPolicyRepository
 from api.app.threat_intelligence import (
@@ -45,10 +53,12 @@ from api.app.webhook_auth import WebhookAuthenticationError, WebhookAuthenticato
 from ml.feature_pipeline import aggregate_wazuh_alerts, extract_wazuh_features
 from ml.inference import InferenceInputError, ModelPackageError, ModelRuntime
 
+logger = logging.getLogger(__name__)
+
 app = FastAPI(
     title="DATN AI SOAR API",
     summary="Week 1/2 compatibility services plus Week 3 trained-model inference",
-    version="3.0.0-week3",
+    version="3.1.0",
 )
 
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "config"
@@ -76,13 +86,19 @@ def load_incident_store(path: str) -> IncidentStore:
 
 
 @lru_cache(maxsize=4)
+def load_feedback_store(path: str, incident_path: str) -> AnalystFeedbackStore:
+    return AnalystFeedbackStore(Path(path), Path(incident_path))
+
+
+@lru_cache(maxsize=4)
 def load_webhook_authenticator(
-    path: str, secret: str, max_skew_seconds: int
+    path: str, secret: str, max_skew_seconds: int, max_requests_per_minute: int
 ) -> WebhookAuthenticator:
     return WebhookAuthenticator(
         Path(path),
         secret,
         max_skew_seconds=max_skew_seconds,
+        max_requests_per_minute=max_requests_per_minute,
     )
 
 
@@ -179,6 +195,29 @@ def model_readiness() -> ModelReadinessResponse:
     )
 
 
+@app.get("/model/metrics", response_model=ModelMetricsResponse)
+def model_metrics() -> ModelMetricsResponse:
+    package_dir = os.getenv("MODEL_PACKAGE_DIR", "").strip()
+    if not package_dir:
+        raise HTTPException(status_code=503, detail="trained model is not configured")
+    try:
+        return load_model_runtime(package_dir).metrics_snapshot()
+    except (ModelPackageError, OSError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/model/feedback", response_model=AnalystFeedbackResponse)
+def model_feedback(request: AnalystFeedbackRequest) -> AnalystFeedbackResponse:
+    path = os.getenv("MODEL_FEEDBACK_DB", "/tmp/datn-model-feedback.sqlite3").strip()
+    incident_path = os.getenv("INCIDENT_DB", "/tmp/datn-incidents.sqlite3").strip()
+    try:
+        return load_feedback_store(path, incident_path).record(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, sqlite3.Error) as exc:
+        raise HTTPException(status_code=503, detail=f"feedback store unavailable: {exc}") from exc
+
+
 @app.post("/features/wazuh", response_model=FeaturePipelineResponse)
 def features_from_wazuh(alert: WazuhAlert) -> FeaturePipelineResponse:
     return extract_wazuh_features(alert)
@@ -190,8 +229,10 @@ def verify_wazuh_ingress(request: SignedWazuhIngestRequest) -> SignedWazuhIngest
     secret = os.getenv("WAZUH_WEBHOOK_SECRET", "")
     try:
         max_skew = int(os.getenv("WAZUH_WEBHOOK_MAX_SKEW_SECONDS", "300"))
-        return load_webhook_authenticator(path, secret, max_skew).verify(request)
+        max_requests = int(os.getenv("WAZUH_WEBHOOK_MAX_REQUESTS_PER_MINUTE", "300"))
+        return load_webhook_authenticator(path, secret, max_skew, max_requests).verify(request)
     except WebhookAuthenticationError as exc:
+        logger.warning("Wazuh ingress rejected: %s", exc)
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except (OSError, sqlite3.Error, ValueError) as exc:
         raise HTTPException(status_code=503, detail=f"webhook verifier unavailable: {exc}") from exc
@@ -256,6 +297,33 @@ def record_incident(request: IncidentRecordRequest) -> IncidentRecordResponse:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (OSError, sqlite3.Error) as exc:
         raise HTTPException(status_code=503, detail=f"incident store unavailable: {exc}") from exc
+
+
+@app.post("/notifications/dispatch", response_model=NotificationDispatchResponse)
+def dispatch_notification(
+    request: NotificationDispatchRequest,
+) -> NotificationDispatchResponse:
+    path = os.getenv("INCIDENT_DB", "/tmp/datn-incidents.sqlite3").strip()
+    mode = os.getenv("NOTIFICATION_MODE", "log")
+    webhook_url = os.getenv("NOTIFICATION_WEBHOOK_URL")
+    try:
+        timeout_seconds = float(os.getenv("NOTIFICATION_TIMEOUT_SECONDS", "5"))
+        if not 0 < timeout_seconds <= 30:
+            raise ValueError("notification timeout must be between 0 and 30 seconds")
+        return load_incident_store(path).dispatch_notification(
+            request.incident_id,
+            lambda incident_id, message: deliver_notification(
+                incident_id,
+                message,
+                mode=mode,
+                webhook_url=webhook_url,
+                timeout_seconds=timeout_seconds,
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (NotificationDeliveryError, OSError, sqlite3.Error) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.post("/orchestrate/mock", response_model=DecisionRecord)

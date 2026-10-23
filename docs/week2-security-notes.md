@@ -28,12 +28,13 @@
 ## Durable response boundary
 
 The `persist_incident_queue_review` playbook calls `POST /incidents/record`,
-upserts the correlated incident in SQLite and inserts
-one durable notification-outbox row per incident. A repeated source event with
-the identical decision is reported as `duplicate`; reuse of that event ID with a
-different decision is rejected. The API therefore provides an auditable local
-response queue without claiming that an external email/chat integration has
-already delivered the notification.
+upserts the correlated incident in SQLite and inserts one durable
+notification-outbox row per incident. `POST /notifications/dispatch` claims that row
+once and records a delivery receipt. Lab mode uses the local `audit-log` channel;
+webhook mode requires HTTPS and sends the incident ID as an idempotency key. Failed
+delivery returns the row to `QUEUED` for retry. A repeated source event with the
+identical decision is reported as `duplicate`; reuse of that event ID with a different
+decision is rejected.
 
 ## Lab exposure
 
@@ -42,7 +43,9 @@ the private Docker network. n8n binds to `127.0.0.1` by default. A four-VM lab
 may set `N8N_BIND_ADDRESS` to the SOAR interface only after limiting TCP/5678 at
 the host firewall to the Wazuh source and administrator workstation. Webhook
 payloads require a 32-byte HMAC secret, a five-minute timestamp and a one-time
-nonce; payloads are capped at 2 MB. Invalid, expired and replayed requests are
+nonce. HMAC input uses RFC 8785 JCS canonical JSON so Python and n8n/JavaScript
+produce the same bytes even when integer-valued JSON numbers are reserialized;
+payloads are capped at 2 MB. Invalid, expired and replayed requests are
 rejected before feature extraction. For any non-isolated network, terminate TLS
 at a reverse proxy and set `N8N_PROTOCOL=https` and `N8N_SECURE_COOKIE=true`.
 
@@ -52,3 +55,16 @@ Screenshots may show service state, commands and responses, but must not show
 `.env`, shell history containing a key, n8n credentials, authentication dialogs
 or request headers. Before a commit, scan tracked content for common secret
 patterns and inspect `git diff --cached`.
+
+## n8n audit interpretation
+
+Run `docker compose exec -T n8n n8n audit` after deployment. The lab disables
+community packages, templates, the public API, diagnostics and version notifications,
+and pins n8n by version plus manifest digest. The webhook first passes a local header
+shape gate and then API-side RFC 8785/HMAC, freshness, nonce-replay and rate-limit
+verification. n8n still classifies built-in HTTP Request and Code nodes as generally
+risky because those node types *can* execute dynamic behavior. In this workflow every
+HTTP destination is a fixed `http://api:8000` endpoint on the private Compose network
+and all Code-node programs are repository-controlled constants; user input never
+selects a URL or executable program. Treat a future dynamic URL, expression-based code,
+community node or Execute Command node as a release blocker.
