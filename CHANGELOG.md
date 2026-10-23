@@ -16,6 +16,8 @@
 - Dataset readiness auditor enforcing 10-run minimum, 12-run target, scenario diversity,
   grouped-run boundaries and mandatory C2 Suricata evidence.
 - Versioned 16-scenario catalog and complete Vietnamese collection runbook.
+- Durable per-model prediction/OOD counters, feature-level drift alerts and
+  analyst-feedback quality thresholds for post-deployment monitoring.
 
 ### Security
 

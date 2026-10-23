@@ -69,10 +69,16 @@ ti_policy = ThreatIntelligencePolicy.load(CONFIG_DIR / "ti-policy.yaml")
 
 
 @lru_cache(maxsize=4)
-def load_model_runtime(package_dir: str) -> ModelRuntime:
+def load_model_runtime(package_dir: str, monitoring_path: str) -> ModelRuntime:
     """Load once per configured path; deployments restart when a package changes."""
 
-    return ModelRuntime(Path(package_dir))
+    return ModelRuntime(Path(package_dir), monitoring_path=Path(monitoring_path))
+
+
+def _model_monitoring_path() -> str:
+    return os.getenv(
+        "MODEL_MONITORING_DB", "/tmp/datn-model-monitoring.sqlite3"
+    ).strip()
 
 
 @lru_cache(maxsize=4)
@@ -116,7 +122,7 @@ def _model_state() -> tuple[str, str]:
     if not package_dir:
         return ("not_configured", "mock" if _allow_mock_inference() else "unconfigured")
     try:
-        load_model_runtime(package_dir)
+        load_model_runtime(package_dir, _model_monitoring_path())
     except (ModelPackageError, OSError, ValueError):
         return ("invalid", "unconfigured")
     return ("ready", "trained")
@@ -145,7 +151,9 @@ def predict(incident: IncidentRequest) -> PredictionResponse:
     package_dir = os.getenv("MODEL_PACKAGE_DIR", "").strip()
     if package_dir:
         try:
-            return load_model_runtime(package_dir).predict(incident)
+            return load_model_runtime(package_dir, _model_monitoring_path()).predict(
+                incident
+            )
         except InferenceInputError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except (ModelPackageError, OSError, ValueError) as exc:
@@ -175,7 +183,7 @@ def model_readiness() -> ModelReadinessResponse:
             ),
         )
     try:
-        runtime = load_model_runtime(package_dir)
+        runtime = load_model_runtime(package_dir, _model_monitoring_path())
     except (ModelPackageError, OSError, ValueError) as exc:
         return ModelReadinessResponse(
             status="invalid",
@@ -201,8 +209,26 @@ def model_metrics() -> ModelMetricsResponse:
     if not package_dir:
         raise HTTPException(status_code=503, detail="trained model is not configured")
     try:
-        return load_model_runtime(package_dir).metrics_snapshot()
-    except (ModelPackageError, OSError, ValueError) as exc:
+        runtime = load_model_runtime(package_dir, _model_monitoring_path())
+        metrics = runtime.metrics_snapshot()
+        feedback_path = os.getenv(
+            "MODEL_FEEDBACK_DB", "/tmp/datn-model-feedback.sqlite3"
+        ).strip()
+        incident_path = os.getenv("INCIDENT_DB", "/tmp/datn-incidents.sqlite3").strip()
+        feedback = load_feedback_store(feedback_path, incident_path).summary(
+            metrics.model_version
+        )
+        quality_alerts = feedback.pop("quality_alerts")
+        return metrics.model_copy(
+            update={
+                **feedback,
+                "monitoring_alerts": [
+                    *metrics.monitoring_alerts,
+                    *quality_alerts,
+                ],
+            }
+        )
+    except (ModelPackageError, OSError, ValueError, sqlite3.Error) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 

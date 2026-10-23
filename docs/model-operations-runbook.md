@@ -114,13 +114,18 @@ met:
 - review-required rate increases by 20 percentage points from the accepted baseline;
 - a required feature begins failing schema validation or becomes structurally absent;
 - model-package integrity/readiness changes from `ready`;
-- at least 50 adjudicated examples in a family show false-negative rate above 5% or
-  false-positive rate above 10%;
+- at least 50 adjudicated malicious or benign examples show false-negative rate above
+  5% or false-positive rate above 10%, respectively;
 - data or feature distribution changes after a sensor, Sysmon, Suricata or Wazuh rule
   update.
 
-Counters reset when the process restarts, so evidence files must be time-stamped and
-retained. Analyst feedback is durable in `/app/state/model-feedback.sqlite3`.
+Prediction counters, family/feature OOD counts and last-prediction time are aggregated
+without raw feature values in `/app/state/model-monitoring.sqlite3`; they survive API
+and host restarts. Analyst feedback is durable in
+`/app/state/model-feedback.sqlite3`. `/model/metrics` combines both stores and emits
+`OOD_RATE_HIGH`, `FEATURE_OOD_RATE_HIGH`, `FALSE_POSITIVE_RATE_HIGH` or
+`FALSE_NEGATIVE_RATE_HIGH` only after the documented minimum sample count. Evidence
+files must still be time-stamped and retained for review and version comparison.
 
 ## 5. Record analyst feedback
 
@@ -186,3 +191,10 @@ curl -fsS http://127.0.0.1:8000/model/ready | python3 -m json.tool
 Record the reason, previous/new version, operator, UTC time and readiness response in the
 incident record. Preserve the failed release for forensic review; do not delete or edit
 it.
+
+Before first production-like use of every candidate, perform this procedure once in the
+isolated lab: activate the candidate, send one signed benign fixture, restore the previous
+release, and verify `/model/ready` reports the previous exact version. A release is not
+accepted until both signed packages pass `ml.freeze_model --verify-only` and the rollback
+check succeeds. Monitoring rows are keyed by model version, so candidate observations do
+not contaminate the restored model's counters.

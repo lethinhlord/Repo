@@ -167,17 +167,23 @@ class PredictionResponse(StrictModel):
     inference_mode: Literal["trained", "mock"] = "mock"
     ood_detected: bool = False
     ood_features: list[str] = Field(default_factory=list)
-    monitoring_revision: Literal["model-monitor-v1"] = "model-monitor-v1"
+    monitoring_revision: Literal["model-monitor-v2"] = "model-monitor-v2"
 
 
 class ModelMetricsResponse(StrictModel):
-    monitoring_revision: Literal["model-monitor-v1"] = "model-monitor-v1"
+    monitoring_revision: Literal["model-monitor-v2"] = "model-monitor-v2"
     model_version: str
+    monitoring_storage: Literal["memory", "sqlite"]
     predictions_total: int = Field(ge=0)
     predictions_by_family: dict[str, int]
     review_required_total: int = Field(ge=0)
     ood_total: int = Field(ge=0)
     ood_by_family: dict[str, int]
+    ood_by_feature: dict[str, int]
+    feedback_total: int = Field(default=0, ge=0)
+    feedback_by_disposition: dict[str, int] = Field(default_factory=dict)
+    false_positive_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    false_negative_rate: float | None = Field(default=None, ge=0.0, le=1.0)
     monitoring_alerts: list[str]
     last_prediction_at: datetime | None
 

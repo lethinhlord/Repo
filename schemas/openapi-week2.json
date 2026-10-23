@@ -1205,13 +1205,21 @@
         "properties": {
           "monitoring_revision": {
             "type": "string",
-            "const": "model-monitor-v1",
+            "const": "model-monitor-v2",
             "title": "Monitoring Revision",
-            "default": "model-monitor-v1"
+            "default": "model-monitor-v2"
           },
           "model_version": {
             "type": "string",
             "title": "Model Version"
+          },
+          "monitoring_storage": {
+            "type": "string",
+            "enum": [
+              "memory",
+              "sqlite"
+            ],
+            "title": "Monitoring Storage"
           },
           "predictions_total": {
             "type": "integer",
@@ -1242,6 +1250,52 @@
             "type": "object",
             "title": "Ood By Family"
           },
+          "ood_by_feature": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Ood By Feature"
+          },
+          "feedback_total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Feedback Total",
+            "default": 0
+          },
+          "feedback_by_disposition": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Feedback By Disposition"
+          },
+          "false_positive_rate": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "False Positive Rate"
+          },
+          "false_negative_rate": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "False Negative Rate"
+          },
           "monitoring_alerts": {
             "items": {
               "type": "string"
@@ -1266,11 +1320,13 @@
         "type": "object",
         "required": [
           "model_version",
+          "monitoring_storage",
           "predictions_total",
           "predictions_by_family",
           "review_required_total",
           "ood_total",
           "ood_by_family",
+          "ood_by_feature",
           "monitoring_alerts",
           "last_prediction_at"
         ],
@@ -1451,9 +1507,9 @@
           },
           "monitoring_revision": {
             "type": "string",
-            "const": "model-monitor-v1",
+            "const": "model-monitor-v2",
             "title": "Monitoring Revision",
-            "default": "model-monitor-v1"
+            "default": "model-monitor-v2"
           }
         },
         "additionalProperties": false,

@@ -3,8 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import threading
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +12,7 @@ import numpy as np
 from api.app.contracts import IncidentRequest, ModelMetricsResponse, PredictionResponse
 from ml.behavior_features import FEATURE_SCHEMA_VERSION
 from ml.freeze_model import PACKAGE_FILES, verify_frozen_manifest
+from ml.model_monitoring import ModelMonitoringStore
 
 
 class ModelPackageError(RuntimeError):
@@ -28,7 +27,7 @@ class ModelRuntime:
     OOD_ALERT_MINIMUM_SAMPLES = 200
     OOD_ALERT_RATE = 0.05
 
-    def __init__(self, package_dir: Path):
+    def __init__(self, package_dir: Path, *, monitoring_path: Path | None = None):
         self.package_dir = package_dir
         required = (*PACKAGE_FILES, "FROZEN.json")
         missing = [name for name in required if not (package_dir / name).is_file()]
@@ -106,13 +105,7 @@ class ModelRuntime:
             ):
                 raise ModelPackageError("locked-test opening record integrity failed")
             self.locked_test_status = "EVALUATED"
-        self._metrics_lock = threading.Lock()
-        self._predictions_total = 0
-        self._predictions_by_family = {family: 0 for family in self.bundle["families"]}
-        self._review_required_total = 0
-        self._ood_total = 0
-        self._ood_by_family = {family: 0 for family in self.bundle["families"]}
-        self._last_prediction_at: datetime | None = None
+        self.monitoring = ModelMonitoringStore(monitoring_path)
 
     def predict(self, incident: IncidentRequest) -> PredictionResponse:
         family = incident.family_hint
@@ -156,31 +149,33 @@ class ModelRuntime:
             ood_detected=bool(ood_features),
             ood_features=ood_features,
         )
-        with self._metrics_lock:
-            self._predictions_total += 1
-            self._predictions_by_family[family] += 1
-            self._review_required_total += int(result.review_required)
-            self._ood_total += int(result.ood_detected)
-            self._ood_by_family[family] += int(result.ood_detected)
-            self._last_prediction_at = datetime.now(UTC)
+        self.monitoring.record_prediction(
+            model_version=self.metadata["model_version"],
+            family=family,
+            review_required=result.review_required,
+            ood_features=ood_features,
+        )
         return result
 
     def metrics_snapshot(self) -> ModelMetricsResponse:
-        with self._metrics_lock:
-            alerts = []
-            for family, total in self._predictions_by_family.items():
-                if (
-                    total >= self.OOD_ALERT_MINIMUM_SAMPLES
-                    and self._ood_by_family[family] / total > self.OOD_ALERT_RATE
-                ):
-                    alerts.append(f"OOD_RATE_HIGH:{family}")
-            return ModelMetricsResponse(
-                model_version=self.metadata["model_version"],
-                predictions_total=self._predictions_total,
-                predictions_by_family=dict(self._predictions_by_family),
-                review_required_total=self._review_required_total,
-                ood_total=self._ood_total,
-                ood_by_family=dict(self._ood_by_family),
-                monitoring_alerts=alerts,
-                last_prediction_at=self._last_prediction_at,
-            )
+        snapshot = self.monitoring.snapshot(
+            self.metadata["model_version"], list(self.bundle["families"])
+        )
+        predictions_by_family = snapshot["predictions_by_family"]
+        ood_by_family = snapshot["ood_by_family"]
+        ood_by_feature = snapshot["ood_by_feature"]
+        alerts = []
+        for family, total in predictions_by_family.items():
+            if total < self.OOD_ALERT_MINIMUM_SAMPLES:
+                continue
+            if ood_by_family[family] / total > self.OOD_ALERT_RATE:
+                alerts.append(f"OOD_RATE_HIGH:{family}")
+            family_features = self.bundle["families"][family]["feature_order"]
+            for name in family_features:
+                if ood_by_feature.get(name, 0) / total > self.OOD_ALERT_RATE:
+                    alerts.append(f"FEATURE_OOD_RATE_HIGH:{family}:{name}")
+        return ModelMetricsResponse(
+            model_version=self.metadata["model_version"],
+            monitoring_alerts=alerts,
+            **snapshot,
+        )

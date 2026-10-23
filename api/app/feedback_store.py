@@ -120,3 +120,44 @@ class AnalystFeedbackStore:
             disposition="created",
             recorded_at=now,
         )
+
+    def summary(self, model_version: str) -> dict[str, object]:
+        dispositions = {
+            "true_positive": 0,
+            "false_positive": 0,
+            "true_negative": 0,
+            "false_negative": 0,
+            "needs_investigation": 0,
+        }
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT payload_json FROM analyst_feedback WHERE model_version = ?",
+                (model_version,),
+            ).fetchall()
+        for row in rows:
+            disposition = json.loads(row["payload_json"])["disposition"]
+            dispositions[disposition] += 1
+        benign_total = dispositions["false_positive"] + dispositions["true_negative"]
+        malicious_total = dispositions["false_negative"] + dispositions["true_positive"]
+        false_positive_rate = (
+            dispositions["false_positive"] / benign_total if benign_total else None
+        )
+        false_negative_rate = (
+            dispositions["false_negative"] / malicious_total if malicious_total else None
+        )
+        alerts = []
+        if benign_total >= 50 and false_positive_rate is not None and false_positive_rate > 0.1:
+            alerts.append("FALSE_POSITIVE_RATE_HIGH")
+        if (
+            malicious_total >= 50
+            and false_negative_rate is not None
+            and false_negative_rate > 0.05
+        ):
+            alerts.append("FALSE_NEGATIVE_RATE_HIGH")
+        return {
+            "feedback_total": len(rows),
+            "feedback_by_disposition": dispositions,
+            "false_positive_rate": false_positive_rate,
+            "false_negative_rate": false_negative_rate,
+            "quality_alerts": alerts,
+        }
