@@ -10,7 +10,7 @@ from typing import Any
 import joblib
 import numpy as np
 
-from ml.freeze_model import PACKAGE_FILES, file_hash
+from ml.freeze_model import file_hash, verify_frozen_manifest
 from ml.metrics import classification_metrics
 
 
@@ -27,10 +27,10 @@ def evaluate_locked_test(
     freeze_path = package_dir / "FROZEN.json"
     if not freeze_path.is_file():
         raise PermissionError("model package must be frozen before opening the locked test")
-    freeze = json.loads(freeze_path.read_text(encoding="utf-8"))
-    for name in PACKAGE_FILES:
-        if file_hash(package_dir / name) != freeze["files_sha256"][name]:
-            raise PermissionError(f"frozen package integrity check failed: {name}")
+    try:
+        freeze = verify_frozen_manifest(package_dir)
+    except ValueError as exc:
+        raise PermissionError(str(exc)) from exc
     opened_path = package_dir / "LOCKED_TEST_OPENED.json"
     if opened_path.exists():
         raise PermissionError("locked test has already been opened for this model package")

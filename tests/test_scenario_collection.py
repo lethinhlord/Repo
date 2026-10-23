@@ -10,6 +10,7 @@ import yaml
 from ml.scenario_collection import (
     Attribution,
     CollectionError,
+    _is_interactive_logon,
     _matches_suricata,
     abort_run,
     finalize_run,
@@ -17,6 +18,14 @@ from ml.scenario_collection import (
     start_run,
     validate_run,
 )
+
+
+def test_declared_remote_logon_type_is_accepted_without_accepting_service_noise() -> None:
+    attribution = Attribution(account_names=["datn_attack"], logon_types=[3])
+
+    assert _is_interactive_logon({"logonType": "3"}, attribution)
+    assert not _is_interactive_logon({"logonType": "2"}, attribution)
+    assert not _is_interactive_logon({"logonType": "5"}, attribution)
 
 
 def append_jsonl(path: Path, payloads: list[dict]) -> None:
@@ -82,6 +91,21 @@ def write_draft(
                 "host": "WIN11-TARGET",
                 "expected_behavior": "Controlled lab behavior.",
                 "operator": "Kien",
+                "collection_seed": 42,
+                "scenario_parameters": {
+                    "attempt_delay_seconds": 2.0,
+                    "variant_index": 1,
+                },
+                "expected_observables": ["Controlled observable is present."],
+                "clock_preflight": {
+                    "captured_at": "2026-10-16T01:00:00Z",
+                    "controller_utc": "2026-10-16T01:00:00Z",
+                    "target_utc": "2026-10-16T01:00:00Z",
+                    "wazuh_utc": "2026-10-16T01:00:00Z",
+                    "sensor_utc": "2026-10-16T01:00:00Z",
+                    "attacker_utc": "2026-10-16T01:00:00Z",
+                    "maximum_skew_seconds": 2.0,
+                },
                 "attribution": attribution,
                 "quality_gates": quality_gates
                 or {
@@ -174,6 +198,9 @@ def test_account_run_creates_strict_manifest_incident_and_checksums(tmp_path: Pa
         "start_time",
         "end_time",
         "expected_behavior",
+        "collection_seed",
+        "scenario_parameters",
+        "provenance_sha256",
     }
     assert incident["asset_id"] == "WIN11-TARGET"
     assert incident["features"]["failed_login_count"] == 2.0

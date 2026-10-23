@@ -62,6 +62,31 @@ def write_run(
     ended = started + timedelta(seconds=30)
     run_dir = root / "data/raw" / run_id
     run_dir.mkdir(parents=True)
+    scenario_parameters = {"variant_index": index, "timing_jitter_percent": 10 + index}
+    clock_preflight = {
+        "captured_at": started.isoformat(),
+        "controller_utc": started.isoformat(),
+        "target_utc": started.isoformat(),
+        "wazuh_utc": started.isoformat(),
+        "sensor_utc": started.isoformat(),
+        "attacker_utc": started.isoformat(),
+        "maximum_skew_seconds": 2.0,
+    }
+    ground_truth = {
+        "scenario_id": f"{family.upper()}-{label.upper()}-S{scenario_slot}",
+        "run_id": run_id,
+        "family": family,
+        "label": label,
+        "host": "WIN11-TARGET",
+        "expected_behavior": "Controlled lab activity.",
+        "collection_seed": index,
+        "scenario_parameters": scenario_parameters,
+        "expected_observables": ["test"],
+        "clock_preflight": clock_preflight,
+    }
+    provenance_sha256 = hashlib.sha256(
+        json.dumps(ground_truth, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
     manifest = {
         "scenario_id": f"{family.upper()}-{label.upper()}-S{scenario_slot}",
         "run_id": run_id,
@@ -71,6 +96,9 @@ def write_run(
         "start_time": started.isoformat(),
         "end_time": ended.isoformat(),
         "expected_behavior": "Controlled lab activity.",
+        "collection_seed": index,
+        "scenario_parameters": scenario_parameters,
+        "provenance_sha256": provenance_sha256,
     }
     (run_dir / "scenario_manifest.json").write_text(
         json.dumps(manifest), encoding="utf-8"
@@ -102,16 +130,7 @@ def write_run(
     evidence_dir = root / "evidence/scenario-runs" / run_id
     evidence_dir.mkdir(parents=True)
     (evidence_dir / "ground_truth.json").write_text(
-        json.dumps(
-            {
-                "scenario_id": manifest["scenario_id"],
-                "run_id": run_id,
-                "family": family,
-                "label": label,
-                "host": manifest["host"],
-                "expected_behavior": manifest["expected_behavior"],
-            }
-        ),
+        json.dumps(ground_truth),
         encoding="utf-8",
     )
     manifest_hash = hashlib.sha256((run_dir / "scenario_manifest.json").read_bytes()).hexdigest()
@@ -123,12 +142,34 @@ def write_run(
                 "run_id": run_id,
                 "scenario_manifest_sha256": manifest_hash,
                 "incidents_sha256": incidents_hash,
+                "collection_seed": index,
+                "scenario_parameters": scenario_parameters,
+                "run_marker_count": 2,
             }
         ),
         encoding="utf-8",
     )
     (evidence_dir / "wazuh_archives.jsonl").write_text("{}\n", encoding="utf-8")
     (evidence_dir / "windows_events.jsonl").write_text("{}\n", encoding="utf-8")
+    (evidence_dir / "run_markers.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "START",
+                "run_id": run_id,
+                "timestamp": started.isoformat(),
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "event": "END",
+                "run_id": run_id,
+                "timestamp": ended.isoformat(),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     if family == "c2" and include_suricata:
         (evidence_dir / "suricata_eve.jsonl").write_text("{}\n", encoding="utf-8")
     (evidence_dir / ".collection_state.json").write_text(
@@ -386,6 +427,10 @@ def test_audit_requires_even_distribution_at_ten_runs(tmp_path: Path) -> None:
     ground_truth = json.loads(ground_truth_path.read_text(encoding="utf-8"))
     ground_truth["scenario_id"] = "C2-BENIGN-S1"
     ground_truth_path.write_text(json.dumps(ground_truth), encoding="utf-8")
+    manifest["provenance_sha256"] = hashlib.sha256(
+        json.dumps(ground_truth, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     metadata_path = evidence / "collection_metadata.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     metadata["scenario_manifest_sha256"] = hashlib.sha256(

@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import threading
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import joblib
 import numpy as np
 
-from api.app.contracts import IncidentRequest, PredictionResponse
-from ml.freeze_model import PACKAGE_FILES, file_hash
+from api.app.contracts import IncidentRequest, ModelMetricsResponse, PredictionResponse
+from ml.behavior_features import FEATURE_SCHEMA_VERSION
+from ml.freeze_model import PACKAGE_FILES, verify_frozen_manifest
 
 
 class ModelPackageError(RuntimeError):
@@ -21,23 +25,17 @@ class InferenceInputError(ValueError):
 
 
 class ModelRuntime:
+    OOD_ALERT_MINIMUM_SAMPLES = 200
+    OOD_ALERT_RATE = 0.05
+
     def __init__(self, package_dir: Path):
         self.package_dir = package_dir
         required = (*PACKAGE_FILES, "FROZEN.json")
         missing = [name for name in required if not (package_dir / name).is_file()]
         if missing:
             raise ModelPackageError(f"incomplete model package; missing: {missing}")
-        freeze_path = package_dir / "FROZEN.json"
         try:
-            freeze = json.loads(freeze_path.read_text(encoding="utf-8"))
-            if freeze.get("format_version") != "model-package-v2":
-                raise ModelPackageError("unsupported frozen model package format")
-            expected_hashes = freeze["files_sha256"]
-            for name in PACKAGE_FILES:
-                if expected_hashes.get(name) != file_hash(package_dir / name):
-                    raise ModelPackageError(
-                        f"model package integrity verification failed: {name}"
-                    )
+            freeze = verify_frozen_manifest(package_dir)
             self.metadata = json.loads(
                 (package_dir / "metadata.json").read_text(encoding="utf-8")
             )
@@ -47,12 +45,25 @@ class ModelRuntime:
             schema = json.loads(
                 (package_dir / "feature_schema.json").read_text(encoding="utf-8")
             )
+            self.feature_profile = json.loads(
+                (package_dir / "feature_profile.json").read_text(encoding="utf-8")
+            )
         except (KeyError, json.JSONDecodeError, TypeError) as exc:
             raise ModelPackageError("invalid frozen model package manifest") from exc
+        except ValueError as exc:
+            raise ModelPackageError(str(exc)) from exc
         if freeze.get("model_version") != self.metadata.get("model_version"):
             raise ModelPackageError("freeze and metadata versions do not match")
         if schema.get("version") != self.metadata.get("feature_schema_version"):
             raise ModelPackageError("feature schema and metadata versions do not match")
+        active_schema = json.loads(
+            Path(__file__).with_name("feature_schema.json").read_text(encoding="utf-8")
+        )
+        if schema.get("version") != FEATURE_SCHEMA_VERSION or schema != active_schema:
+            raise ModelPackageError("model package schema is not the active runtime schema")
+        if self.feature_profile.get("revision") != "feature-profile-v1":
+            raise ModelPackageError("unsupported or missing feature profile")
+        self.schema = schema
 
         # joblib is executable deserialization. It is loaded only after every immutable
         # artifact has passed the signed-package boundary represented by FROZEN.json.
@@ -84,7 +95,9 @@ class ModelRuntime:
                 opened = json.loads(opened_path.read_text(encoding="utf-8"))
             except json.JSONDecodeError as exc:
                 raise ModelPackageError("invalid locked-test opening record") from exc
-            freeze_sha256 = hashlib.sha256(freeze_path.read_bytes()).hexdigest()
+            freeze_sha256 = hashlib.sha256(
+                (package_dir / "FROZEN.json").read_bytes()
+            ).hexdigest()
             if (
                 opened.get("model_version") != self.metadata.get("model_version")
                 or opened.get("freeze_sha256") != freeze_sha256
@@ -93,6 +106,13 @@ class ModelRuntime:
             ):
                 raise ModelPackageError("locked-test opening record integrity failed")
             self.locked_test_status = "EVALUATED"
+        self._metrics_lock = threading.Lock()
+        self._predictions_total = 0
+        self._predictions_by_family = {family: 0 for family in self.bundle["families"]}
+        self._review_required_total = 0
+        self._ood_total = 0
+        self._ood_by_family = {family: 0 for family in self.bundle["families"]}
+        self._last_prediction_at: datetime | None = None
 
     def predict(self, incident: IncidentRequest) -> PredictionResponse:
         family = incident.family_hint
@@ -103,13 +123,28 @@ class ModelRuntime:
         missing = [name for name in feature_order if name not in incident.features]
         if missing:
             raise InferenceInputError(f"missing required {family} features: {missing}")
+        ood_features = []
+        family_profile = self.feature_profile["families"][family]["features"]
+        for name in feature_order:
+            value = float(incident.features[name])
+            property_schema = self.schema["properties"][name]
+            if not math.isfinite(value):
+                raise InferenceInputError(f"{name} must be finite")
+            if value < float(property_schema["minimum"]) or value > float(
+                property_schema["maximum"]
+            ):
+                raise InferenceInputError(f"{name} is outside the feature schema bounds")
+            profile = family_profile[name]
+            if value < float(profile["ood_lower"]) or value > float(profile["ood_upper"]):
+                ood_features.append(name)
         vector = np.asarray([[incident.features[name] for name in feature_order]], dtype=float)
         probability = float(artifact["estimator"].predict_proba(vector)[0, 1])
         threshold = float(artifact["threshold"])
-        automation_eligible = bool(
+        package_eligible = bool(
             self.thresholds["families"][family]["automation_eligible"]
         )
-        return PredictionResponse(
+        automation_eligible = package_eligible and not ood_features
+        result = PredictionResponse(
             model_version=self.metadata["model_version"],
             predicted_class="malicious" if probability >= threshold else "benign",
             malicious_probability=probability,
@@ -118,4 +153,34 @@ class ModelRuntime:
             automation_eligible=automation_eligible,
             review_required=not automation_eligible,
             inference_mode="trained",
+            ood_detected=bool(ood_features),
+            ood_features=ood_features,
         )
+        with self._metrics_lock:
+            self._predictions_total += 1
+            self._predictions_by_family[family] += 1
+            self._review_required_total += int(result.review_required)
+            self._ood_total += int(result.ood_detected)
+            self._ood_by_family[family] += int(result.ood_detected)
+            self._last_prediction_at = datetime.now(UTC)
+        return result
+
+    def metrics_snapshot(self) -> ModelMetricsResponse:
+        with self._metrics_lock:
+            alerts = []
+            for family, total in self._predictions_by_family.items():
+                if (
+                    total >= self.OOD_ALERT_MINIMUM_SAMPLES
+                    and self._ood_by_family[family] / total > self.OOD_ALERT_RATE
+                ):
+                    alerts.append(f"OOD_RATE_HIGH:{family}")
+            return ModelMetricsResponse(
+                model_version=self.metadata["model_version"],
+                predictions_total=self._predictions_total,
+                predictions_by_family=dict(self._predictions_by_family),
+                review_required_total=self._review_required_total,
+                ood_total=self._ood_total,
+                ood_by_family=dict(self._ood_by_family),
+                monitoring_alerts=alerts,
+                last_prediction_at=self._last_prediction_at,
+            )

@@ -23,7 +23,9 @@ python3 --version
 git status --short
 ```
 
-Expected project versions are scikit-learn 1.9.1 and XGBoost 3.4.1. If the environment
+Expected project versions are scikit-learn 1.9.1 and the CPU build of XGBoost 3.4.1.
+The CPU distribution still imports as `xgboost` and avoids adding unused CUDA/NCCL
+libraries to the inference image. If the environment
 does not exist:
 
 ```bash
@@ -137,6 +139,11 @@ never be accepted from an untrusted source.
 Use the in-container package path:
 
 ```bash
+set -a
+. ./.env
+set +a
+.venv-ml/bin/python -m ml.freeze_model --package-dir ml/model-package
+.venv-ml/bin/python -m ml.freeze_model --verify-only --package-dir ml/model-package
 export MODEL_PACKAGE_DIR=/app/ml/model-package
 docker compose up -d --build api n8n
 curl -s http://127.0.0.1:8000/model/ready | python3 -m json.tool
@@ -144,23 +151,27 @@ curl -s http://127.0.0.1:8000/ready | python3 -m json.tool
 ```
 
 `/model/ready` must report `mode: trained`, the package model version, and
-`locked_test_status: UNOPENED`. Strong response actions remain disabled by the Week 2
-SHADOW gate.
+`locked_test_status: UNOPENED`. The HMAC signing key is read only from the protected
+environment file; never paste it into a notebook, command line or screenshot. Strong
+response actions remain disabled by the Week 2 SHADOW gate.
+Use [model-operations-runbook.md](model-operations-runbook.md) for immutable release
+directories, monitoring, analyst feedback, retraining and rollback.
 
-## 7. Freeze later; do not evaluate locked test in Week 3
+## 7. Freeze before deployment; evaluate locked test only at the Week 6 gate
 
-The following commands are documented for the Week 6 gate only:
+Freezing signs the selected package and does not read the locked test. Run it once
+immediately before deployment as shown above. The following evaluator command is for
+the approved Week 6 gate only:
 
 ```bash
-.venv-ml/bin/python -m ml.freeze_model --package-dir ml/model-package
 .venv-ml/bin/python -m ml.evaluate \
   --package-dir ml/model-package \
   --locked-test data/processed/locked_test.jsonl \
   --unlock-locked-test
 ```
 
-Before `FROZEN.json` exists, the evaluator refuses locked-test access. After freezing,
-any package modification invalidates the SHA-256 integrity check.
+Before `FROZEN.json` exists, both runtime and evaluator refuse the package. After
+freezing, any package modification or manifest rewrite invalidates the HMAC/hash gate.
 
 ## Evidence capture checklist
 
@@ -173,10 +184,16 @@ taskbar or VMware frame.
 3. Dataset build terminal showing the dataset hash and `UNOPENED` status.
 4. `dataset_manifest.json` in PyCharm, including group and partition counts.
 5. Training terminal showing successful package creation.
-6. `metrics_validation.json` showing all three candidates and validation metrics.
-7. `thresholds.json` showing the selected threshold and automation eligibility.
-8. `leakage_audit.json` showing `passed: true`.
-9. Firefox at `/model/ready` showing trained mode.
-10. n8n SHADOW workflow and one successful execution using `/predict`.
+6. `metrics_validation.json` showing grouped inner-CV candidate selection,
+   per-scenario validation diagnostics and confidence intervals.
+7. `calibration_validation.json` showing sigmoid calibration, reliability bins,
+   Brier score, ECE and gate results.
+8. `thresholds.json` showing the validation-only threshold, inner-CV threshold,
+   stability delta and automation eligibility.
+9. `leakage_audit.json` showing `passed: true`.
+10. Firefox at `/model/ready` showing trained mode.
+11. n8n SHADOW workflow and one successful execution using `/predict`.
+12. `/model/metrics` showing prediction, review and OOD counters for the active model
+    version without raw features or incident identifiers.
 
 Do not capture passwords, SSH private keys, API keys, `.env`, or raw personal data.

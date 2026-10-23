@@ -32,6 +32,12 @@ def generate(output_dir: Path, *, random_seed: int = 42) -> None:
                     "expected_behavior": (
                         "Synthetic pipeline smoke test only; never use for evaluation claims."
                     ),
+                    "collection_seed": random_seed + run_number,
+                    "scenario_parameters": {
+                        "synthetic_noise_seed": random_seed + run_number,
+                        "variant_index": run_number,
+                    },
+                    "provenance_sha256": "0" * 64,
                 }
                 (run_dir / "scenario_manifest.json").write_text(
                     json.dumps(manifest, indent=2) + "\n", encoding="utf-8"

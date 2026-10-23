@@ -16,15 +16,44 @@ from ml.evaluate import evaluate_locked_test
 from ml.freeze_model import freeze
 from ml.inference import ModelPackageError, ModelRuntime
 
+ROOT = Path(__file__).resolve().parents[1]
+SIGNING_KEY = "test-model-signing-key-that-is-at-least-32-bytes"
+
+
+@pytest.fixture(autouse=True)
+def configure_signing_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MODEL_PACKAGE_SIGNING_KEY", SIGNING_KEY)
+
+
+def account_features(failed: float, success_after_fail: float) -> dict[str, float]:
+    return {
+        "failed_login_count": failed,
+        "successful_login_count": success_after_fail,
+        "success_after_fail": success_after_fail,
+        "unique_target_account_count": 1.0,
+        "unique_source_count": 1.0,
+        "remote_logon_ratio": 1.0,
+        "failure_window_seconds": failed,
+        "attempt_rate_per_minute": failed + success_after_fail,
+    }
+
 
 def create_package(path: Path, *, automation_eligible: bool = True) -> None:
+    feature_order = list(account_features(0.0, 0.0))
     estimator = LogisticRegression(random_state=42).fit(
-        np.asarray([[0.0, 0.0], [1.0, 0.0], [10.0, 1.0], [20.0, 1.0]]),
+        np.asarray(
+            [
+                list(account_features(0.0, 0.0).values()),
+                list(account_features(1.0, 0.0).values()),
+                list(account_features(10.0, 1.0).values()),
+                list(account_features(20.0, 1.0).values()),
+            ]
+        ),
         np.asarray([0, 0, 1, 1]),
     )
     metadata = {
         "model_version": "test-model-v1",
-        "feature_schema_version": "features-v1",
+        "feature_schema_version": "features-v2",
         "locked_test_status": "UNOPENED",
         "locked_test_sha256": hashlib.sha256(b"").hexdigest(),
     }
@@ -35,7 +64,7 @@ def create_package(path: Path, *, automation_eligible: bool = True) -> None:
             "families": {
                 "account": {
                     "estimator": estimator,
-                    "feature_order": ["failed_login_count", "success_after_fail"],
+                    "feature_order": feature_order,
                     "threshold": 0.5,
                     "model_name": "logistic_regression",
                 }
@@ -61,15 +90,26 @@ def create_package(path: Path, *, automation_eligible: bool = True) -> None:
     (path / "metrics_validation.json").write_text("{}", encoding="utf-8")
     (path / "eda_train.json").write_text("{}", encoding="utf-8")
     (path / "leakage_audit.json").write_text("{}", encoding="utf-8")
-    (path / "feature_schema.json").write_text(
+    (path / "calibration_validation.json").write_text("{}", encoding="utf-8")
+    (path / "feature_profile.json").write_text(
         json.dumps(
             {
-                "version": "features-v1",
-                "x-family-features": {
-                    "account": ["failed_login_count", "success_after_fail"]
+                "revision": "feature-profile-v1",
+                "families": {
+                    "account": {
+                        "records": 4,
+                        "features": {
+                            name: {"ood_lower": -1.0, "ood_upper": 30.0}
+                            for name in feature_order
+                        },
+                    }
                 },
             }
         ),
+        encoding="utf-8",
+    )
+    (path / "feature_schema.json").write_text(
+        (ROOT / "ml/feature_schema.json").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
 
@@ -85,7 +125,7 @@ def test_runtime_preserves_feature_order_and_package_versions(tmp_path: Path) ->
         start_time="2026-10-11T00:00:00Z",
         end_time="2026-10-11T00:01:00Z",
         family_hint="account",
-        features={"success_after_fail": 1.0, "failed_login_count": 20.0},
+        features=account_features(20.0, 1.0),
         evidence_sources=["fixture"],
         base_severity=12,
     )
@@ -129,19 +169,22 @@ def test_fastapi_loads_trained_package_and_rejects_missing_features(
         "start_time": "2026-10-11T00:00:00Z",
         "end_time": "2026-10-11T00:01:00Z",
         "family_hint": "account",
-        "features": {"failed_login_count": 20.0, "success_after_fail": 1.0},
+        "features": account_features(20.0, 1.0),
         "evidence_sources": ["fixture"],
         "base_severity": 12,
     }
 
     readiness = client.get("/model/ready")
     prediction = client.post("/predict", json=payload)
+    metrics = client.get("/model/metrics")
     payload["features"].pop("success_after_fail")
     invalid = client.post("/predict", json=payload)
 
     assert readiness.json()["mode"] == "trained"
     assert prediction.status_code == 200
     assert prediction.json()["model_version"] == "test-model-v1"
+    assert metrics.status_code == 200
+    assert metrics.json()["predictions_total"] == 1
     assert invalid.status_code == 422
 
 
@@ -152,6 +195,30 @@ def test_runtime_rejects_tampered_frozen_artifact_before_loading(tmp_path: Path)
     (package / "thresholds.json").write_text("{}", encoding="utf-8")
 
     with pytest.raises(ModelPackageError, match="integrity"):
+        ModelRuntime(package)
+
+
+def test_runtime_rejects_rewritten_unsigned_freeze_manifest(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    create_package(package)
+    freeze(package)
+    document = json.loads((package / "FROZEN.json").read_text(encoding="utf-8"))
+    document["model_version"] = "attacker-rewrite"
+    (package / "FROZEN.json").write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(ModelPackageError, match="signature"):
+        ModelRuntime(package)
+
+
+def test_runtime_rejects_package_with_non_active_schema(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    create_package(package)
+    schema = json.loads((package / "feature_schema.json").read_text(encoding="utf-8"))
+    schema["description"] = "tampered but internally versioned"
+    (package / "feature_schema.json").write_text(json.dumps(schema), encoding="utf-8")
+    freeze(package)
+
+    with pytest.raises(ModelPackageError, match="active runtime schema"):
         ModelRuntime(package)
 
 
@@ -182,7 +249,7 @@ def test_ineligible_model_forces_review_instead_of_automatic_binary_decision(
         start_time="2026-10-11T00:00:00Z",
         end_time="2026-10-11T00:01:00Z",
         family_hint="account",
-        features={"failed_login_count": 20.0, "success_after_fail": 1.0},
+        features=account_features(20.0, 1.0),
         evidence_sources=["fixture"],
         base_severity=12,
     )
@@ -194,6 +261,59 @@ def test_ineligible_model_forces_review_instead_of_automatic_binary_decision(
     assert result.review_required is True
 
 
+def test_out_of_distribution_input_abstains_and_updates_metrics(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    create_package(package)
+    freeze(package)
+    runtime = ModelRuntime(package)
+    features = account_features(100.0, 1.0)
+    incident = IncidentRequest(
+        incident_id="INC-OOD",
+        asset_id="HOST-1",
+        start_time="2026-10-11T00:00:00Z",
+        end_time="2026-10-11T00:01:00Z",
+        family_hint="account",
+        features=features,
+        evidence_sources=["fixture"],
+        base_severity=12,
+    )
+
+    result = runtime.predict(incident)
+    metrics = runtime.metrics_snapshot()
+
+    assert result.ood_detected is True
+    assert "failed_login_count" in result.ood_features
+    assert result.automation_eligible is False
+    assert result.review_required is True
+    assert metrics.predictions_total == 1
+    assert metrics.ood_total == 1
+    assert metrics.ood_by_family == {"account": 1}
+    assert metrics.monitoring_alerts == []
+    assert metrics.review_required_total == 1
+
+
+def test_sustained_ood_rate_raises_monitoring_alert(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    create_package(package)
+    freeze(package)
+    runtime = ModelRuntime(package)
+    incident = IncidentRequest(
+        incident_id="INC-OOD-ALERT",
+        asset_id="HOST-1",
+        start_time="2026-10-11T00:00:00Z",
+        end_time="2026-10-11T00:01:00Z",
+        family_hint="account",
+        features=account_features(100.0, 1.0),
+        evidence_sources=["fixture"],
+        base_severity=12,
+    )
+
+    for _ in range(ModelRuntime.OOD_ALERT_MINIMUM_SAMPLES):
+        runtime.predict(incident)
+
+    assert runtime.metrics_snapshot().monitoring_alerts == ["OOD_RATE_HIGH:account"]
+
+
 def test_locked_test_hash_is_verified_and_opening_is_recorded(tmp_path: Path) -> None:
     package = tmp_path / "package"
     create_package(package)
@@ -201,12 +321,12 @@ def test_locked_test_hash_is_verified_and_opening_is_recorded(tmp_path: Path) ->
     row = {
         "family": "account",
         "label": 0,
-        "features": {"failed_login_count": 0.0, "success_after_fail": 0.0},
+        "features": account_features(0.0, 0.0),
     }
     malicious_row = {
         **row,
         "label": 1,
-        "features": {"failed_login_count": 20.0, "success_after_fail": 1.0},
+        "features": account_features(20.0, 1.0),
     }
     locked.write_text(
         json.dumps(row) + "\n" + json.dumps(malicious_row) + "\n",

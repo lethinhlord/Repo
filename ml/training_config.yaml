@@ -25,6 +25,12 @@ split:
   number_of_folds: 5
 selection:
   minimum_precision: 0.90
+  inner_cv_folds: 3
+  calibration_method: sigmoid
+  calibration_bins: 10
+  maximum_brier: 0.20
+  maximum_ece: 0.15
+  maximum_threshold_delta: 0.25
   bootstrap_iterations: 300
   bootstrap_confidence: 0.95
   latency_repeats: 50
