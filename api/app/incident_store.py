@@ -3,8 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from collections.abc import Callable
-from datetime import UTC, datetime
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from api.app.contracts import (
@@ -29,8 +30,17 @@ class IncidentStore:
         connection.execute("PRAGMA busy_timeout=10000")
         return connection
 
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        connection = self._connect()
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+
     def _initialize(self) -> None:
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS incidents (
@@ -54,7 +64,9 @@ class IncidentStore:
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     delivered_at TEXT,
-                    channel TEXT
+                    channel TEXT,
+                    attempted_at TEXT,
+                    attempt_count INTEGER NOT NULL DEFAULT 0
                 );
                 """
             )
@@ -68,6 +80,15 @@ class IncidentStore:
                 )
             if "channel" not in columns:
                 connection.execute("ALTER TABLE notification_outbox ADD COLUMN channel TEXT")
+            if "attempted_at" not in columns:
+                connection.execute(
+                    "ALTER TABLE notification_outbox ADD COLUMN attempted_at TEXT"
+                )
+            if "attempt_count" not in columns:
+                connection.execute(
+                    "ALTER TABLE notification_outbox ADD COLUMN attempt_count "
+                    "INTEGER NOT NULL DEFAULT 0"
+                )
 
     @staticmethod
     def _payload(request: IncidentRecordRequest) -> tuple[str, str]:
@@ -82,7 +103,7 @@ class IncidentStore:
         payload, payload_hash = self._payload(request)
         now = datetime.now(UTC)
         now_text = now.isoformat()
-        with self._connect() as connection:
+        with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             processed = connection.execute(
                 "SELECT payload_hash, incident_id FROM processed_events "
@@ -162,11 +183,20 @@ class IncidentStore:
         self,
         incident_id: str,
         sender: Callable[[str, str], str],
+        *,
+        lease_seconds: int = 300,
+        now: datetime | None = None,
     ) -> NotificationDispatchResponse:
-        with self._connect() as connection:
+        if not 1 <= lease_seconds <= 3600:
+            raise ValueError("lease_seconds must be between 1 and 3600")
+        attempted_at = now or datetime.now(UTC)
+        if attempted_at.tzinfo is None or attempted_at.utcoffset() is None:
+            raise ValueError("now must include a timezone")
+        attempted_at_text = attempted_at.astimezone(UTC).isoformat()
+        with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT notification, status, delivered_at, channel "
+                "SELECT notification, status, delivered_at, channel, attempted_at "
                 "FROM notification_outbox WHERE incident_id = ?",
                 (incident_id,),
             ).fetchone()
@@ -179,11 +209,17 @@ class IncidentStore:
                     channel=row["channel"],
                     delivered_at=datetime.fromisoformat(row["delivered_at"]),
                 )
-            if row["status"] == "SENDING":
-                raise ValueError("incident notification dispatch is already in progress")
+            if row["status"] == "SENDING" and row["attempted_at"] is not None:
+                previous_attempt = datetime.fromisoformat(row["attempted_at"])
+                lease_expires = previous_attempt + timedelta(seconds=lease_seconds)
+                if attempted_at < lease_expires:
+                    raise ValueError(
+                        "incident notification dispatch is already in progress"
+                    )
             connection.execute(
-                "UPDATE notification_outbox SET status = 'SENDING' WHERE incident_id = ?",
-                (incident_id,),
+                "UPDATE notification_outbox SET status = 'SENDING', attempted_at = ?, "
+                "attempt_count = attempt_count + 1 WHERE incident_id = ?",
+                (attempted_at_text, incident_id),
             )
             notification = row["notification"]
         try:
@@ -191,19 +227,20 @@ class IncidentStore:
             if channel not in {"audit-log", "webhook"}:
                 raise ValueError("notification sender returned an unsupported channel")
         except Exception:
-            with self._connect() as connection:
+            with self._connection() as connection:
                 connection.execute(
                     "UPDATE notification_outbox SET status = 'QUEUED' "
-                    "WHERE incident_id = ? AND status = 'SENDING'",
-                    (incident_id,),
+                    "WHERE incident_id = ? AND status = 'SENDING' AND attempted_at = ?",
+                    (incident_id, attempted_at_text),
                 )
             raise
-        delivered_at = datetime.now(UTC)
-        with self._connect() as connection:
+        delivered_at = attempted_at
+        with self._connection() as connection:
             updated = connection.execute(
                 "UPDATE notification_outbox SET status = 'SENT', delivered_at = ?, "
-                "channel = ? WHERE incident_id = ? AND status = 'SENDING'",
-                (delivered_at.isoformat(), channel, incident_id),
+                "channel = ? WHERE incident_id = ? AND status = 'SENDING' "
+                "AND attempted_at = ?",
+                (delivered_at.isoformat(), channel, incident_id, attempted_at_text),
             ).rowcount
             if updated != 1:
                 raise RuntimeError("notification delivery state changed unexpectedly")

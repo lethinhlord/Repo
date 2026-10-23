@@ -143,6 +143,9 @@ The response must be `shadow_notified` or `review_notified`, `SHADOW`,
 `strong_action_allowed=false`, and contain a durable persistence disposition plus a
 `SENT`/`ALREADY_SENT` notification receipt. A delivery failure returns
 `notification_pending` and leaves the outbox retryable.
+An interrupted dispatch remains leased for `NOTIFICATION_LEASE_SECONDS` (300 seconds
+by default), then becomes retryable with the same incident `Idempotency-Key`; webhook
+receivers must deduplicate that key because delivery is at-least-once.
 An invalid/expired/replayed signature is HTTP 401 and is never processed. A
 structurally invalid signed payload is also rejected before feature extraction.
 missing service, partial feature, ineligible model, malicious/unknown TI,

@@ -308,6 +308,7 @@ def dispatch_notification(
     webhook_url = os.getenv("NOTIFICATION_WEBHOOK_URL")
     try:
         timeout_seconds = float(os.getenv("NOTIFICATION_TIMEOUT_SECONDS", "5"))
+        lease_seconds = int(os.getenv("NOTIFICATION_LEASE_SECONDS", "300"))
         if not 0 < timeout_seconds <= 30:
             raise ValueError("notification timeout must be between 0 and 30 seconds")
         return load_incident_store(path).dispatch_notification(
@@ -319,6 +320,7 @@ def dispatch_notification(
                 webhook_url=webhook_url,
                 timeout_seconds=timeout_seconds,
             ),
+            lease_seconds=lease_seconds,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

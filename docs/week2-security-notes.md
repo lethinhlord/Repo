@@ -30,11 +30,15 @@
 The `persist_incident_queue_review` playbook calls `POST /incidents/record`,
 upserts the correlated incident in SQLite and inserts one durable
 notification-outbox row per incident. `POST /notifications/dispatch` claims that row
-once and records a delivery receipt. Lab mode uses the local `audit-log` channel;
-webhook mode requires HTTPS and sends the incident ID as an idempotency key. Failed
-delivery returns the row to `QUEUED` for retry. A repeated source event with the
-identical decision is reported as `duplicate`; reuse of that event ID with a different
-decision is rejected.
+under a bounded lease and records a delivery receipt. Lab mode uses the local
+`audit-log` channel; webhook mode requires HTTPS and sends the stable incident ID as
+an idempotency key. Failed delivery returns the row to `QUEUED` for retry. If the API
+process stops after claiming a row, a later dispatcher may reclaim it only after
+`NOTIFICATION_LEASE_SECONDS` (300 seconds by default). Delivery is therefore
+at-least-once; webhook receivers must honor `Idempotency-Key` to suppress a duplicate
+when a process stops after the remote system accepts a request but before SQLite stores
+the receipt. A repeated source event with the identical decision is reported as
+`duplicate`; reuse of that event ID with a different decision is rejected.
 
 ## Lab exposure
 
