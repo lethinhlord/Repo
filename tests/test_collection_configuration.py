@@ -55,6 +55,7 @@ def test_collection_runbook_is_portable_isolated_and_failure_safe() -> None:
     assert "server=1.1.1.1" not in runbook
     assert "IEX (IWR" not in runbook
     assert "OpenSSH.Client~~~~0.0.1.0" in runbook
+    assert "OpenSSH.Server~~~~0.0.1.0" in runbook
     assert "MAX_CLOCK_SKEW_SECONDS=5" in runbook
     assert "BACKUP_ID=" in runbook
     assert "retry finalize" in runbook
@@ -71,6 +72,10 @@ def test_collection_runbook_is_portable_isolated_and_failure_safe() -> None:
     assert "HOST_BACKUP_VERIFY=PASS" in runbook
     assert "0CCE9215-69AE-11D9-BED3-505054503030" in runbook
     assert "LogonType=2" in runbook
+    assert "LogonType=3" in runbook
+    assert "scripts.export_run_parameters" in runbook
+    assert "DATN_ATTEMPT_DELAY_SECONDS" in runbook
+    assert "payload_size_bytes" not in runbook
     assert "3-2-2-2-2" in runbook
     assert "LEGACY_DATASET_NOT_ACCEPTED=PASS" in runbook
     assert "events_raw.jsonl" in runbook
@@ -157,6 +162,14 @@ def test_scenario_catalog_covers_four_strata_with_five_scenarios_each() -> None:
     }
     assert all(len(set(ids)) == 5 for ids in strata.values())
 
+    smb_scenario = next(
+        item
+        for item in catalog.scenarios
+        if item.scenario_id == "ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS"
+    )
+    assert smb_scenario.attribution.logon_types == [3]
+    assert smb_scenario.attribution.source_ips == ["10.40.0.10"]
+
 
 def test_scenario_catalog_has_enforceable_quality_gates_and_alert_overlap() -> None:
     catalog = ScenarioCatalog.model_validate(
@@ -214,6 +227,9 @@ def test_create_run_draft_uses_catalog_without_copying_execution_commands(
     assert "execution_steps" not in serialized
     assert draft.collection_seed >= 0
     assert draft.scenario_parameters["interval_jitter_percent"] >= 10
+    assert draft.scenario_parameters["interval_jitter_direction"] in {-1, 1}
+    assert draft.scenario_parameters["pre_action_delay_seconds"] >= 1
+    assert "payload_size_bytes" not in draft.scenario_parameters
     assert draft.expected_observables
 
 

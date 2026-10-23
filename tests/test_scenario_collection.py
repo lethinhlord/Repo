@@ -270,6 +270,80 @@ def test_account_run_ignores_noninteractive_logons_for_declared_user(tmp_path: P
     assert evidence[0]["data"]["win"]["eventdata"]["logonType"] == "2"
 
 
+def test_account_run_filters_declared_network_source(tmp_path: Path) -> None:
+    config = source_config(tmp_path)
+    draft = write_draft(
+        tmp_path,
+        run_id="ACCOUNT-MALICIOUS-SMB-001",
+        family="account",
+        label="malicious",
+        attribution={
+            "account_names": ["datn_attack"],
+            "source_ips": ["10.40.0.10"],
+            "logon_types": [3],
+        },
+        quality_gates={
+            "min_account_failures": 1,
+            "max_account_failures": 1,
+            "min_account_successes": 1,
+            "max_account_successes": 1,
+            "require_success_after_failure": True,
+        },
+    )
+    started = datetime(2026, 10, 16, 1, 0, tzinfo=UTC)
+    start_run(draft, config, tmp_path, now=started)
+    append_jsonl(
+        tmp_path / "archives.json",
+        [
+            windows_event(
+                4625,
+                started + timedelta(seconds=3),
+                {
+                    "targetUserName": "datn_attack",
+                    "logonType": "3",
+                    "ipAddress": "10.40.0.99",
+                },
+            ),
+            windows_event(
+                4625,
+                started + timedelta(seconds=5),
+                {
+                    "targetUserName": "datn_attack",
+                    "logonType": "3",
+                    "ipAddress": "::ffff:10.40.0.10",
+                },
+            ),
+            windows_event(
+                4624,
+                started + timedelta(seconds=10),
+                {
+                    "targetUserName": "datn_attack",
+                    "logonType": "3",
+                    "ipAddress": "10.40.0.10",
+                },
+            ),
+        ],
+    )
+
+    result = finalize_run(
+        "ACCOUNT-MALICIOUS-SMB-001",
+        tmp_path,
+        now=started + timedelta(seconds=30),
+    )
+
+    assert result["status"] == "FINALIZED"
+    evidence_path = (
+        tmp_path
+        / "evidence/scenario-runs/ACCOUNT-MALICIOUS-SMB-001/windows_events.jsonl"
+    )
+    evidence = [json.loads(line) for line in evidence_path.read_text().splitlines()]
+    assert len(evidence) == 2
+    assert {item["data"]["win"]["eventdata"]["ipAddress"] for item in evidence} == {
+        "::ffff:10.40.0.10",
+        "10.40.0.10",
+    }
+
+
 def test_c2_run_requires_correlated_sysmon_and_suricata_and_calculates_features(
     tmp_path: Path,
 ) -> None:
