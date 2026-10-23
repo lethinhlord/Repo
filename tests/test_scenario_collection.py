@@ -10,6 +10,7 @@ import yaml
 from ml.scenario_collection import (
     Attribution,
     CollectionError,
+    _is_interactive_logon,
     _matches_suricata,
     abort_run,
     finalize_run,
@@ -17,6 +18,14 @@ from ml.scenario_collection import (
     start_run,
     validate_run,
 )
+
+
+def test_declared_remote_logon_type_is_accepted_without_accepting_service_noise() -> None:
+    attribution = Attribution(account_names=["datn_attack"], logon_types=[3])
+
+    assert _is_interactive_logon({"logonType": "3"}, attribution)
+    assert not _is_interactive_logon({"logonType": "2"}, attribution)
+    assert not _is_interactive_logon({"logonType": "5"}, attribution)
 
 
 def append_jsonl(path: Path, payloads: list[dict]) -> None:
@@ -82,6 +91,21 @@ def write_draft(
                 "host": "WIN11-TARGET",
                 "expected_behavior": "Controlled lab behavior.",
                 "operator": "Kien",
+                "collection_seed": 42,
+                "scenario_parameters": {
+                    "attempt_delay_seconds": 2.0,
+                    "variant_index": 1,
+                },
+                "expected_observables": ["Controlled observable is present."],
+                "clock_preflight": {
+                    "captured_at": "2026-10-16T01:00:00Z",
+                    "controller_utc": "2026-10-16T01:00:00Z",
+                    "target_utc": "2026-10-16T01:00:00Z",
+                    "wazuh_utc": "2026-10-16T01:00:00Z",
+                    "sensor_utc": "2026-10-16T01:00:00Z",
+                    "attacker_utc": "2026-10-16T01:00:00Z",
+                    "maximum_skew_seconds": 2.0,
+                },
                 "attribution": attribution,
                 "quality_gates": quality_gates
                 or {
@@ -174,6 +198,9 @@ def test_account_run_creates_strict_manifest_incident_and_checksums(tmp_path: Pa
         "start_time",
         "end_time",
         "expected_behavior",
+        "collection_seed",
+        "scenario_parameters",
+        "provenance_sha256",
     }
     assert incident["asset_id"] == "WIN11-TARGET"
     assert incident["features"]["failed_login_count"] == 2.0
@@ -320,12 +347,25 @@ def test_c2_run_requires_correlated_sysmon_and_suricata_and_calculates_features(
     incident = json.loads(incident_path.read_text(encoding="utf-8"))
     assert incident["features"] == {
         "failed_login_count": 0.0,
+        "successful_login_count": 0.0,
         "success_after_fail": 0.0,
+        "unique_target_account_count": 0.0,
+        "unique_source_count": 0.0,
+        "remote_logon_ratio": 0.0,
+        "failure_window_seconds": 0.0,
+        "attempt_rate_per_minute": 0.0,
         "suspicious_process": 1.0,
         "periodicity_score": 1.0,
+        "connection_interval_cv": 0.0,
+        "mean_interval_seconds": 10.0,
         "suricata_alert_count": 1.0,
+        "suricata_severity_score": 0.666667,
         "outbound_connection_count": 3.0,
+        "unique_destination_count": 1.0,
         "destination_port_count": 1.0,
+        "dns_query_count": 0.0,
+        "dns_unique_query_ratio": 0.0,
+        "flow_total_bytes_log1p": 0.0,
     }
     assert incident["evidence_sources"] == ["wazuh-archives", "suricata-eve"]
 
@@ -568,31 +608,55 @@ def test_suricata_dns_attribution_tolerates_malformed_query_collections() -> Non
     )
 
 
+@pytest.mark.parametrize(
+    ("label", "run_id", "suffix", "query", "signature_id"),
+    [
+        (
+            "malicious",
+            "C2-MALICIOUS-DNS-001",
+            "beacon.datn.test",
+            "r01.beacon.datn.test",
+            900002,
+        ),
+        (
+            "benign",
+            "C2-BENIGN-DNS-001",
+            "www.datn.test",
+            "b01.www.datn.test",
+            900004,
+        ),
+    ],
+)
 def test_dns_c2_finalize_accepts_suricata8_request_response_and_alert(
     tmp_path: Path,
+    label: str,
+    run_id: str,
+    suffix: str,
+    query: str,
+    signature_id: int,
 ) -> None:
     config = source_config(tmp_path)
     draft = write_draft(
         tmp_path,
-        run_id="C2-MALICIOUS-DNS-001",
+        run_id=run_id,
         family="c2",
-        label="malicious",
+        label=label,
         attribution={
             "process_names": ["powershell.exe"],
             "source_ips": ["10.20.0.10"],
-            "dns_suffixes": ["beacon.datn.test"],
+            "dns_suffixes": [suffix],
         },
         quality_gates={
             "min_dns_events": 1,
             "min_suricata_events": 3,
-            "required_suricata_signature_ids": [900002],
+            "required_suricata_signature_ids": [signature_id],
         },
     )
     started = datetime(2026, 10, 20, 4, 0, tzinfo=UTC)
     start_run(draft, config, tmp_path, now=started)
     dns = {
         "version": 3,
-        "queries": [{"rrname": "r01.beacon.datn.test", "rrtype": "A"}],
+        "queries": [{"rrname": query, "rrtype": "A"}],
     }
     append_jsonl(
         tmp_path / "archives.json",
@@ -604,7 +668,7 @@ def test_dns_c2_finalize_accepts_suricata8_request_response_and_alert(
                     "image": (
                         r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
                     ),
-                    "queryName": "r01.beacon.datn.test",
+                    "queryName": query,
                 },
             ),
             suricata_event(
@@ -632,28 +696,31 @@ def test_dns_c2_finalize_accepts_suricata8_request_response_and_alert(
                     "src_ip": "10.20.0.10",
                     "dest_ip": "10.40.0.10",
                     "dns": {**dns, "type": "request"},
-                    "alert": {"signature_id": 900002},
+                    "alert": {"signature_id": signature_id},
                 },
             ),
         ],
     )
 
     result = finalize_run(
-        "C2-MALICIOUS-DNS-001",
+        run_id,
         tmp_path,
         now=started + timedelta(seconds=10),
     )
 
     assert result["status"] == "FINALIZED"
     incident = json.loads(
-        (tmp_path / "data/raw/C2-MALICIOUS-DNS-001/incidents.jsonl").read_text(
+        (tmp_path / f"data/raw/{run_id}/incidents.jsonl").read_text(
             encoding="utf-8"
         )
     )
     assert incident["features"]["suricata_alert_count"] == 1.0
+    assert incident["features"]["dns_query_count"] == 1.0
+    assert incident["features"]["outbound_connection_count"] == 1.0
+    assert incident["features"]["destination_port_count"] == 1.0
     suricata_rows = (
         tmp_path
-        / "evidence/scenario-runs/C2-MALICIOUS-DNS-001/suricata_eve.jsonl"
+        / f"evidence/scenario-runs/{run_id}/suricata_eve.jsonl"
     ).read_text(encoding="utf-8").splitlines()
     assert len(suricata_rows) == 3
 

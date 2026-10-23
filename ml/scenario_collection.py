@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import os
+import random
 import shutil
-import statistics
 import tempfile
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -16,13 +15,20 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from api.app.contracts import IncidentRequest
+from ml.behavior_features import (
+    AccountObservation,
+    NetworkObservation,
+    SuricataObservation,
+    derive_account_features,
+    derive_c2_features,
+    interval_features,
+)
 from ml.dataset import (
     DatasetRecord,
     ScenarioManifest,
     load_feature_schema,
     validate_feature_contract,
 )
-from ml.feature_pipeline import FEATURE_ORDER
 
 
 class CollectionError(RuntimeError):
@@ -39,6 +45,7 @@ class Attribution(BaseModel):
     destination_ports: list[int] = Field(default_factory=list)
     dns_suffixes: list[str] = Field(default_factory=list)
     command_contains_any: list[str] = Field(default_factory=list)
+    logon_types: list[int] = Field(default_factory=lambda: [2])
 
     @model_validator(mode="after")
     def require_a_filter(self) -> Attribution:
@@ -53,6 +60,48 @@ class Attribution(BaseModel):
         )
         if not any(fields):
             raise ValueError("attribution requires at least one explicit filter")
+        if not self.logon_types or any(item not in {2, 3, 10} for item in self.logon_types):
+            raise ValueError("logon_types must contain only interactive/network/RDP types")
+        if len(set(self.logon_types)) != len(self.logon_types):
+            raise ValueError("logon_types must be unique")
+        return self
+
+
+class ClockPreflight(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    captured_at: datetime
+    controller_utc: datetime
+    target_utc: datetime
+    wazuh_utc: datetime
+    sensor_utc: datetime
+    attacker_utc: datetime
+    maximum_skew_seconds: float = Field(default=5.0, gt=0, le=10)
+    maximum_capture_age_seconds: float = Field(default=120.0, gt=0, le=300)
+
+    @model_validator(mode="after")
+    def validate_clock_skew(self) -> ClockPreflight:
+        if self.captured_at.tzinfo is None or self.captured_at.utcoffset() is None:
+            raise ValueError("captured_at must include a timezone")
+        values = [
+            self.controller_utc,
+            self.target_utc,
+            self.wazuh_utc,
+            self.sensor_utc,
+            self.attacker_utc,
+        ]
+        if any(value.tzinfo is None or value.utcoffset() is None for value in values):
+            raise ValueError("clock preflight timestamps must include a timezone")
+        span = (max(values) - min(values)).total_seconds()
+        if span > self.maximum_skew_seconds:
+            raise ValueError(
+                f"VM clock skew {span:.3f}s exceeds {self.maximum_skew_seconds:.3f}s"
+            )
+        measurement_age = (self.captured_at - min(values)).total_seconds()
+        if measurement_age < -1 or measurement_age > self.maximum_capture_age_seconds:
+            raise ValueError(
+                "clock preflight measurements are stale or captured in the future"
+            )
         return self
 
 
@@ -113,6 +162,10 @@ class RunDraft(BaseModel):
     attribution: Attribution
     quality_gates: QualityGates
     execution_log_path: str | None = None
+    collection_seed: int = Field(ge=0, le=2**32 - 1)
+    scenario_parameters: dict[str, int | float | str | bool] = Field(min_length=1)
+    expected_observables: list[str] = Field(min_length=1)
+    clock_preflight: ClockPreflight
 
     @model_validator(mode="after")
     def validate_family_attribution(self) -> RunDraft:
@@ -228,6 +281,7 @@ def _validate_draft_against_catalog(draft: RunDraft, catalog_path: Path) -> None
         "expected_behavior": scenario.expected_behavior,
         "attribution": scenario.attribution.model_dump(mode="json"),
         "quality_gates": scenario.quality_gates.model_dump(mode="json"),
+        "expected_observables": scenario.expected_observables,
     }
     actual = {
         "family": draft.family,
@@ -235,6 +289,7 @@ def _validate_draft_against_catalog(draft: RunDraft, catalog_path: Path) -> None
         "expected_behavior": draft.expected_behavior,
         "attribution": draft.attribution.model_dump(mode="json"),
         "quality_gates": draft.quality_gates.model_dump(mode="json"),
+        "expected_observables": draft.expected_observables,
     }
     if actual != expected:
         raise CollectionError(f"draft does not match scenario catalog: {draft.scenario_id}")
@@ -264,6 +319,8 @@ def create_run_draft(
     *,
     host: str = "WIN11-TARGET",
     execution_log_path: str | None = None,
+    collection_seed: int | None = None,
+    clock_preflight: ClockPreflight,
 ) -> dict[str, str]:
     if output_path.exists():
         raise CollectionError(f"draft output already exists: {output_path}")
@@ -277,6 +334,22 @@ def create_run_draft(
     )
     if scenario is None:
         raise CollectionError(f"unknown scenario_id: {scenario_id}")
+    seed = collection_seed
+    if seed is None:
+        seed = int.from_bytes(hashlib.sha256(run_id.encode()).digest()[:4], "big")
+    rng = random.Random(seed)
+    if scenario.family == "account":
+        parameters: dict[str, int | float | str | bool] = {
+            "attempt_delay_seconds": round(rng.uniform(1.0, 5.0), 3),
+            "operator_pause_jitter_percent": rng.randint(10, 30),
+            "variant_index": rng.randint(0, 999_999),
+        }
+    else:
+        parameters = {
+            "interval_jitter_percent": rng.randint(10, 30),
+            "payload_size_bytes": rng.randint(256, 2048),
+            "variant_index": rng.randint(0, 999_999),
+        }
     try:
         draft = RunDraft(
             scenario_id=scenario.scenario_id,
@@ -289,6 +362,10 @@ def create_run_draft(
             attribution=scenario.attribution,
             quality_gates=scenario.quality_gates,
             execution_log_path=execution_log_path,
+            collection_seed=seed,
+            scenario_parameters=parameters,
+            expected_observables=scenario.expected_observables,
+            clock_preflight=clock_preflight,
         )
     except ValueError as exc:
         raise CollectionError(f"invalid run draft values: {exc}") from exc
@@ -464,6 +541,13 @@ def start_run(
         "source_config_sha256": _sha256(source_config_path),
         "taxonomy_sha256": _sha256(taxonomy_path),
     }
+    start_marker = {
+        "event": "START",
+        "run_id": draft.run_id,
+        "timestamp": _iso(started_at),
+        "draft_sha256": state["draft_sha256"],
+    }
+    state["start_marker"] = start_marker
     if catalog_path is not None:
         state["scenario_catalog_sha256"] = _sha256(catalog_path)
     evidence_root = evidence_dir.parent
@@ -482,6 +566,7 @@ def start_run(
             )
             if catalog_path is not None:
                 shutil.copyfile(catalog_path, staging_dir / "scenario-catalog.yaml")
+            _write_jsonl(staging_dir / "run_markers.jsonl", [start_marker])
             _write_json(staging_dir / ".collection_state.json", state)
             _append_log(staging_dir, f"RUN_STARTED run_id={draft.run_id}")
             staging_dir.replace(evidence_dir)
@@ -558,10 +643,14 @@ def _account_user(eventdata: dict[str, Any]) -> str:
     return ""
 
 
-def _is_interactive_logon(eventdata: dict[str, Any]) -> bool:
-    """Keep console/runas events and exclude background network/service logons."""
+def _is_interactive_logon(eventdata: dict[str, Any], attribution: Attribution) -> bool:
+    """Keep only the logon types declared by the controlled scenario."""
     raw = eventdata.get("logonType", eventdata.get("LogonType"))
-    return raw not in (None, "") and str(raw).strip() == "2"
+    if raw in (None, ""):
+        return False
+    with suppress(TypeError, ValueError):
+        return int(str(raw).strip()) in set(attribution.logon_types)
+    return False
 
 
 def _matches_network(eventdata: dict[str, Any], attribution: Attribution) -> bool:
@@ -718,18 +807,7 @@ def _taxonomy_match(eventdata: dict[str, Any], taxonomy: dict[str, Any]) -> bool
 
 
 def periodicity_score(timestamps: list[datetime]) -> float:
-    ordered = sorted(set(timestamps))
-    if len(ordered) < 3:
-        return 0.0
-    intervals = [
-        (current - previous).total_seconds()
-        for previous, current in zip(ordered, ordered[1:], strict=False)
-    ]
-    mean = statistics.fmean(intervals)
-    if mean <= 0 or not math.isfinite(mean):
-        return 0.0
-    score = 1.0 - statistics.pstdev(intervals) / (mean + 1e-9)
-    return round(max(0.0, min(1.0, score)), 6)
+    return interval_features(timestamps)[0]
 
 
 def _derive_account(
@@ -737,8 +815,7 @@ def _derive_account(
 ) -> tuple[dict[str, float], list[dict[str, Any]], str | None]:
     users = _casefold_set(draft.attribution.account_names)
     selected: list[dict[str, Any]] = []
-    failures: list[datetime] = []
-    successes: list[datetime] = []
+    observations: list[AccountObservation] = []
     observed_accounts: set[str] = set()
     for event in events:
         if str((event.get("agent") or {}).get("name")) != windows_agent:
@@ -747,7 +824,7 @@ def _derive_account(
         if (
             event_id not in {"4624", "4625"}
             or _account_user(eventdata) not in users
-            or not _is_interactive_logon(eventdata)
+            or not _is_interactive_logon(eventdata, draft.attribution)
         ):
             continue
         timestamp = _event_time(event)
@@ -755,27 +832,50 @@ def _derive_account(
             continue
         selected.append(event)
         observed_accounts.add(_account_user(eventdata))
-        (failures if event_id == "4625" else successes).append(timestamp)
+        account = _account_user(eventdata)
+        source = str(
+            eventdata.get("ipAddress")
+            or eventdata.get("IpAddress")
+            or eventdata.get("sourceIp")
+            or eventdata.get("workstationName")
+            or eventdata.get("WorkstationName")
+            or "local-console"
+        ).strip().casefold()
+        logon_type = str(
+            eventdata.get("logonType", eventdata.get("LogonType", "unknown"))
+        ).strip()
+        observations.append(
+            AccountObservation(
+                timestamp=timestamp,
+                account=account,
+                source=source,
+                logon_type=logon_type,
+                success=event_id == "4624",
+            )
+        )
     if not selected:
         raise CollectionError("no attributable Windows account events were collected")
-    success_after_fail = any(success > failure for failure in failures for success in successes)
+    features = derive_account_features(observations)
+    failures = int(features["failed_login_count"])
+    successes = int(features["successful_login_count"])
+    success_after_fail = bool(features["success_after_fail"])
     gates = draft.quality_gates
-    if len(failures) < gates.min_account_failures or (
+    if failures < gates.min_account_failures or (
         gates.max_account_failures is not None
-        and len(failures) > gates.max_account_failures
+        and failures > gates.max_account_failures
     ):
         raise CollectionError(
             "account failure count failed quality gate: "
-            f"observed={len(failures)}, expected="
+            f"observed={failures}, expected="
             f"[{gates.min_account_failures}, {gates.max_account_failures}]"
         )
-    if len(successes) < gates.min_account_successes or (
+    if successes < gates.min_account_successes or (
         gates.max_account_successes is not None
-        and len(successes) > gates.max_account_successes
+        and successes > gates.max_account_successes
     ):
         raise CollectionError(
             "account success count failed quality gate: "
-            f"observed={len(successes)}, expected="
+            f"observed={successes}, expected="
             f"[{gates.min_account_successes}, {gates.max_account_successes}]"
         )
     if (
@@ -793,9 +893,6 @@ def _derive_account(
             raise CollectionError(
                 f"account evidence is missing declared accounts: {missing_accounts}"
             )
-    features = {name: 0.0 for name in FEATURE_ORDER}
-    features["failed_login_count"] = float(len(failures))
-    features["success_after_fail"] = float(success_after_fail)
     return features, selected, draft.attribution.account_names[0]
 
 
@@ -803,10 +900,9 @@ def _derive_c2(
     events: list[dict[str, Any]], draft: RunDraft, source: SourceConfig, taxonomy: dict[str, Any]
 ) -> tuple[dict[str, float], list[dict[str, Any]], list[dict[str, Any]], str | None]:
     windows: list[dict[str, Any]] = []
-    network_times: list[datetime] = []
+    network_observations: list[NetworkObservation] = []
     process_events = 0
     dns_events = 0
-    ports: set[int] = set()
     suspicious = False
     for event in events:
         if str((event.get("agent") or {}).get("name")) != source.windows_agent_name:
@@ -827,20 +923,30 @@ def _derive_c2(
             if timestamp is None:
                 continue
             windows.append(event)
-            network_times.append(timestamp)
+            destination = str(eventdata.get("destinationIp", "")).strip()
+            destination_port = None
             with suppress(TypeError, ValueError):
-                ports.add(int(eventdata.get("destinationPort")))
+                destination_port = int(eventdata.get("destinationPort"))
+            network_observations.append(
+                NetworkObservation(timestamp, destination, destination_port)
+            )
             suspicious = suspicious or _taxonomy_match(eventdata, taxonomy)
         elif event_id == "22" and _matches_dns(eventdata, draft.attribution):
+            timestamp = _event_time(event)
+            if timestamp is None:
+                continue
             windows.append(event)
             dns_events += 1
+            query = str(eventdata.get("queryName", "")).strip(".")
+            network_observations.append(
+                NetworkObservation(timestamp, query, 53, dns_query=query)
+            )
             suspicious = suspicious or _taxonomy_match(eventdata, taxonomy)
-    if not network_times and not any(_windows_fields(event)[0] == "22" for event in windows):
+    if not network_observations:
         raise CollectionError("no attributable Sysmon network or DNS telemetry was collected")
 
     suricata: list[dict[str, Any]] = []
     seen: set[str] = set()
-    alerts = 0
     signature_ids: set[int] = set()
     for event in events:
         if str((event.get("agent") or {}).get("name")) != source.suricata_agent_name:
@@ -855,7 +961,6 @@ def _derive_c2(
         seen.add(digest)
         suricata.append(payload)
         if payload.get("event_type") == "alert":
-            alerts += 1
             with suppress(TypeError, ValueError):
                 signature_ids.add(int((payload.get("alert") or {}).get("signature_id")))
     if not suricata:
@@ -864,7 +969,7 @@ def _derive_c2(
     gates = draft.quality_gates
     observed_counts = {
         "process": process_events,
-        "network": len(network_times),
+        "network": sum(item.dns_query is None for item in network_observations),
         "DNS": dns_events,
         "Suricata": len(suricata),
     }
@@ -895,15 +1000,28 @@ def _derive_c2(
             f"forbidden Suricata signatures were observed: {forbidden_signatures}"
         )
 
-    features = {name: 0.0 for name in FEATURE_ORDER}
-    features.update(
-        {
-            "suspicious_process": float(suspicious),
-            "periodicity_score": periodicity_score(network_times),
-            "suricata_alert_count": float(alerts),
-            "outbound_connection_count": float(len(network_times)),
-            "destination_port_count": float(len(ports)),
-        }
+    suricata_observations: list[SuricataObservation] = []
+    for payload in suricata:
+        flow = payload.get("flow") if isinstance(payload.get("flow"), dict) else {}
+        total_bytes = 0
+        for field in ("bytes_toserver", "bytes_toclient"):
+            with suppress(TypeError, ValueError):
+                total_bytes += max(0, int(flow.get(field, 0)))
+        severity = None
+        if payload.get("event_type") == "alert":
+            with suppress(TypeError, ValueError):
+                severity = int((payload.get("alert") or {}).get("severity"))
+        suricata_observations.append(
+            SuricataObservation(
+                is_alert=payload.get("event_type") == "alert",
+                severity=severity,
+                total_bytes=total_bytes,
+            )
+        )
+    features = derive_c2_features(
+        network_observations,
+        suricata_observations,
+        suspicious_process=suspicious,
     )
     indicator = next(iter(draft.attribution.destination_ips), None)
     if indicator is None:
@@ -931,6 +1049,17 @@ def _verify_start_snapshot(evidence_dir: Path, state: dict[str, Any]) -> None:
         raise CollectionError(f"invalid start snapshot ground_truth.json: {exc}") from exc
     if ground_truth != state.get("draft"):
         raise CollectionError("start snapshot ground_truth.json changed after run start")
+    marker_path = evidence_dir / "run_markers.jsonl"
+    try:
+        markers = [
+            json.loads(line)
+            for line in marker_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CollectionError(f"invalid run marker evidence: {exc}") from exc
+    if not markers or markers[0] != state.get("start_marker"):
+        raise CollectionError("START marker does not match immutable collection state")
     protected = {
         source_snapshot_path: state.get("source_config_sha256"),
         taxonomy_snapshot_path: state.get("taxonomy_sha256"),
@@ -1016,6 +1145,15 @@ def finalize_run(
         start_time=started_at,
         end_time=ended_at,
         expected_behavior=draft.expected_behavior,
+        collection_seed=draft.collection_seed,
+        scenario_parameters=draft.scenario_parameters,
+        provenance_sha256=hashlib.sha256(
+            json.dumps(
+                draft.model_dump(mode="json"),
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest(),
     )
     schema_path = project_root / "ml/feature_schema.json"
     if not schema_path.is_file():
@@ -1056,6 +1194,20 @@ def finalize_run(
     _write_jsonl(evidence_dir / "wazuh_archives.jsonl", in_window)
     _write_jsonl(evidence_dir / "windows_events.jsonl", windows_events)
     _write_jsonl(evidence_dir / "suricata_eve.jsonl", suricata_events)
+    marker_path = evidence_dir / "run_markers.jsonl"
+    start_marker = state["start_marker"]
+    _write_jsonl(
+        marker_path,
+        [
+            start_marker,
+            {
+                "event": "END",
+                "run_id": run_id,
+                "timestamp": _iso(ended_at),
+                "incident_id": incident_id,
+            },
+        ],
+    )
     if execution_log_source is not None:
         shutil.copyfile(execution_log_source, evidence_dir / "atomic_execution.csv")
     metadata = {
@@ -1068,6 +1220,11 @@ def finalize_run(
         "attributed_windows_events": len(windows_events),
         "attributed_suricata_events": len(suricata_events),
         "taxonomy_revision": taxonomy["revision"],
+        "collection_seed": draft.collection_seed,
+        "scenario_parameters": draft.scenario_parameters,
+        "expected_observables": draft.expected_observables,
+        "clock_preflight": draft.clock_preflight.model_dump(mode="json"),
+        "run_marker_count": 2,
         "feature_schema_version": schema["version"],
         "scenario_manifest_sha256": _sha256(temporary_dir / "scenario_manifest.json"),
         "incidents_sha256": _sha256(temporary_dir / "incidents.jsonl"),
@@ -1136,6 +1293,21 @@ def validate_run(run_id: str, project_root: Path) -> dict[str, Any]:
     if not metadata_path.is_file():
         raise CollectionError("missing collection_metadata.json")
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    markers = [
+        json.loads(line)
+        for line in (evidence_dir / "run_markers.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    if (
+        len(markers) != 2
+        or markers[0].get("event") != "START"
+        or markers[1].get("event") != "END"
+        or any(marker.get("run_id") != run_id for marker in markers)
+        or metadata.get("run_marker_count") != 2
+    ):
+        raise CollectionError("run marker evidence is incomplete or inconsistent")
     protected_files = {
         "scenario_manifest.json": metadata.get("scenario_manifest_sha256"),
         "incidents.jsonl": metadata.get("incidents_sha256"),

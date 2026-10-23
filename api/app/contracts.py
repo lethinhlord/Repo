@@ -20,9 +20,7 @@ class ExternalModel(BaseModel):
 class HealthResponse(StrictModel):
     status: Literal["ok"] = "ok"
     service: Literal["datn-ai-soar-api"] = "datn-ai-soar-api"
-    mode: Literal["mock"] = "mock"
-    api_version: Literal["1.0.0"] = "1.0.0"
-    model_version: Literal["mock-v1"] = "mock-v1"
+    api_version: Literal["3.1.0"] = "3.1.0"
 
 
 class IncidentRequest(StrictModel):
@@ -82,6 +80,7 @@ class WazuhAlertData(ExternalModel):
     suricata_alert_count: float | None = Field(default=None, ge=0, le=1_000_000)
     outbound_connection_count: float | None = Field(default=None, ge=0, le=1_000_000)
     destination_port_count: float | None = Field(default=None, ge=0, le=65_535)
+    win: dict[str, object] | None = None
 
 
 class WazuhAlert(ExternalModel):
@@ -92,6 +91,7 @@ class WazuhAlert(ExternalModel):
     decoder: WazuhDecoder = Field(default_factory=WazuhDecoder)
     data: WazuhAlertData = Field(default_factory=WazuhAlertData)
     location: str = Field(default="unknown-log", max_length=1024)
+    full_log: str | None = Field(default=None, max_length=2_000_000)
 
     @field_validator("timestamp")
     @classmethod
@@ -101,13 +101,38 @@ class WazuhAlert(ExternalModel):
         return value.astimezone(UTC)
 
 
+class SignedWazuhIngestRequest(StrictModel):
+    timestamp: int = Field(gt=0)
+    nonce: str = Field(min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._-]+$")
+    signature: str = Field(pattern=r"^[0-9a-fA-F]{64}$")
+    payload: dict[str, object]
+
+    @field_validator("payload")
+    @classmethod
+    def bound_payload(cls, value: dict[str, object]) -> dict[str, object]:
+        import json
+
+        if len(json.dumps(value, default=str).encode()) > 2_000_000:
+            raise ValueError("Wazuh payload exceeds 2 MB")
+        return value
+
+
+class SignedWazuhIngestResponse(StrictModel):
+    verified: Literal[True] = True
+    source_event_id: str
+    payload_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    verified_at: datetime
+
+
 class FeaturePipelineResponse(StrictModel):
-    feature_schema_version: Literal["features-v1"] = "features-v1"
+    feature_schema_version: Literal["features-v2"] = "features-v2"
     feature_order: list[str]
     ordered_vector: list[float]
     quality_status: Literal["COMPLETE", "PARTIAL"]
     missing_required_features: list[str]
     structural_zero_features: list[str]
+    evidence_quality: float = Field(ge=0.0, le=1.0)
+    evidence_quality_reasons: list[str] = Field(min_length=1)
     incident: IncidentRequest
 
 
@@ -117,11 +142,18 @@ class WazuhAlertBatch(StrictModel):
 
 
 class FeatureBatchResponse(StrictModel):
-    feature_schema_version: Literal["features-v1"] = "features-v1"
+    feature_schema_version: Literal["features-v2"] = "features-v2"
     input_alert_count: int = Field(ge=1)
     unique_alert_count: int = Field(ge=1)
     duplicate_alert_count: int = Field(ge=0)
     incidents: list[FeaturePipelineResponse] = Field(min_length=1)
+
+
+class FeatureStateResponse(StrictModel):
+    ingest_status: Literal["new", "duplicate"]
+    stored_event_count: int = Field(ge=1)
+    window_minutes: int = Field(ge=1, le=5)
+    feature: FeaturePipelineResponse
 
 
 class PredictionResponse(StrictModel):
@@ -130,11 +162,71 @@ class PredictionResponse(StrictModel):
     malicious_probability: float = Field(ge=0.0, le=1.0)
     family: FamilyHint
     threshold_revision: str = Field(default="mock-thr-v1", min_length=1, max_length=128)
+    automation_eligible: bool = False
+    review_required: bool = True
+    inference_mode: Literal["trained", "mock"] = "mock"
+    ood_detected: bool = False
+    ood_features: list[str] = Field(default_factory=list)
+    monitoring_revision: Literal["model-monitor-v2"] = "model-monitor-v2"
+
+
+class ModelMetricsResponse(StrictModel):
+    monitoring_revision: Literal["model-monitor-v2"] = "model-monitor-v2"
+    model_version: str
+    monitoring_storage: Literal["memory", "sqlite"]
+    predictions_total: int = Field(ge=0)
+    predictions_by_family: dict[str, int]
+    review_required_total: int = Field(ge=0)
+    ood_total: int = Field(ge=0)
+    ood_by_family: dict[str, int]
+    ood_by_feature: dict[str, int]
+    feedback_total: int = Field(default=0, ge=0)
+    feedback_by_disposition: dict[str, int] = Field(default_factory=dict)
+    false_positive_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    false_negative_rate: float | None = Field(default=None, ge=0.0, le=1.0)
+    monitoring_alerts: list[str]
+    last_prediction_at: datetime | None
+
+
+class AnalystFeedbackRequest(StrictModel):
+    incident_id: str = Field(min_length=1, max_length=128)
+    model_version: str = Field(min_length=1, max_length=128)
+    analyst_id: str = Field(min_length=1, max_length=128)
+    analyst_label: Literal["benign", "malicious", "uncertain"]
+    disposition: Literal[
+        "true_positive",
+        "false_positive",
+        "true_negative",
+        "false_negative",
+        "needs_investigation",
+    ]
+    notes: str | None = Field(default=None, max_length=4096)
+
+    @model_validator(mode="after")
+    def validate_feedback_semantics(self) -> "AnalystFeedbackRequest":
+        expected = {
+            "true_positive": "malicious",
+            "false_positive": "benign",
+            "true_negative": "benign",
+            "false_negative": "malicious",
+            "needs_investigation": "uncertain",
+        }
+        if expected[self.disposition] != self.analyst_label:
+            raise ValueError("analyst_label contradicts disposition")
+        return self
+
+
+class AnalystFeedbackResponse(StrictModel):
+    feedback_id: str = Field(pattern=r"^[0-9a-f]{64}$")
+    incident_id: str
+    model_version: str
+    disposition: Literal["created", "duplicate"]
+    recorded_at: datetime
 
 
 class ModelReadinessResponse(StrictModel):
     status: Literal["ready", "not_configured", "invalid"]
-    mode: Literal["trained", "mock"]
+    mode: Literal["trained", "mock", "unconfigured"]
     model_version: str
     feature_schema_version: str
     locked_test_status: str
@@ -216,9 +308,13 @@ class AssetContext(StrictModel):
         ):
             raise ValueError("UNKNOWN assets must be protected, unscored, and require review")
         if self.status == "FOUND" and (
-            self.criticality is None or self.risk_score is None or self.review_required
+            self.criticality is None
+            or self.risk_score is None
+            or self.review_required != self.protected
         ):
-            raise ValueError("FOUND assets require a score and must not force review")
+            raise ValueError(
+                "FOUND assets require a score; protected assets alone require review"
+            )
         return self
 
 
@@ -228,27 +324,84 @@ class RiskEvaluationRequest(StrictModel):
     threat_intelligence_score: float | None = Field(default=None, ge=0.0, le=1.0)
     asset_score: float | None = Field(default=None, ge=0.0, le=1.0)
     severity_score: float = Field(ge=0.0, le=1.0)
+    feature_quality: Literal["COMPLETE", "PARTIAL"]
+    model_automation_eligible: bool
+    model_review_required: bool
+    threat_intelligence_status: Literal["MALICIOUS", "BENIGN", "UNKNOWN"]
+    asset_review_required: bool
+
+    @model_validator(mode="after")
+    def validate_context_statuses(self) -> "RiskEvaluationRequest":
+        if (self.threat_intelligence_status == "UNKNOWN") != (
+            self.threat_intelligence_score is None
+        ):
+            raise ValueError("UNKNOWN TI requires a null score and known TI requires a score")
+        if self.asset_score is None and not self.asset_review_required:
+            raise ValueError("missing asset context must require review")
+        return self
 
 
 class RiskEvaluation(StrictModel):
-    policy_revision: Literal["risk-week2-v1"] = "risk-week2-v1"
+    policy_revision: Literal["risk-week2-v2"] = "risk-week2-v2"
     internal: float = Field(ge=0.0, le=1.0)
     display: float = Field(ge=0.0, le=10.0)
     available_weight: float = Field(gt=0.0, le=1.0)
     missing_signals: list[Literal["threat_intelligence", "asset"]]
     contributions: dict[str, float]
     review_required: bool
+    review_reasons: list[str]
+
+
+class IncidentRecordRequest(StrictModel):
+    incident_id: str = Field(min_length=1, max_length=128)
+    source_event_id: str = Field(min_length=1, max_length=128)
+    route: Literal["shadow", "review"]
+    review_required: bool
+    notification: str = Field(min_length=1, max_length=4096)
+    decision: dict[str, object]
+
+    @field_validator("decision")
+    @classmethod
+    def bound_decision_document(cls, value: dict[str, object]) -> dict[str, object]:
+        import json
+
+        if len(json.dumps(value, default=str).encode()) > 1_000_000:
+            raise ValueError("decision document exceeds 1 MB")
+        return value
+
+
+class IncidentRecordResponse(StrictModel):
+    incident_id: str
+    source_event_id: str
+    disposition: Literal["created", "updated", "duplicate"]
+    notification_status: Literal["QUEUED", "ALREADY_QUEUED"]
+    route: Literal["shadow", "review"]
+    review_required: bool
+    recorded_at: datetime
+
+
+class NotificationDispatchRequest(StrictModel):
+    incident_id: str = Field(min_length=1, max_length=128)
+
+
+class NotificationDispatchResponse(StrictModel):
+    incident_id: str
+    notification_status: Literal["SENT", "ALREADY_SENT"]
+    channel: Literal["audit-log", "webhook"]
+    delivered_at: datetime
 
 
 class ReadinessResponse(StrictModel):
     status: Literal["ready", "degraded"]
     service: Literal["datn-ai-soar-api"] = "datn-ai-soar-api"
-    api_version: Literal["2.0.0-week2"] = "2.0.0-week2"
-    feature_schema_version: Literal["features-v1"] = "features-v1"
+    api_version: Literal["3.1.0"] = "3.1.0"
+    feature_schema_version: Literal["features-v2"] = "features-v2"
     asset_context_revision: Literal["asset-context-v1"] = "asset-context-v1"
-    risk_policy_revision: Literal["risk-week2-v1"] = "risk-week2-v1"
+    risk_policy_revision: Literal["risk-week2-v2"] = "risk-week2-v2"
     ti_policy_revision: Literal["ti-week2-v1"] = "ti-week2-v1"
     ti_mode: Literal["mock", "live", "disabled", "invalid"]
+    model_status: Literal["ready", "not_configured", "invalid"]
+    inference_mode: Literal["trained", "mock", "unconfigured"]
     strong_actions_enabled: Literal[False] = False
 
 

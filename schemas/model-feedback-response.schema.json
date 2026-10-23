@@ -1,0 +1,40 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "feedback_id": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Feedback Id",
+      "type": "string"
+    },
+    "incident_id": {
+      "title": "Incident Id",
+      "type": "string"
+    },
+    "model_version": {
+      "title": "Model Version",
+      "type": "string"
+    },
+    "disposition": {
+      "enum": [
+        "created",
+        "duplicate"
+      ],
+      "title": "Disposition",
+      "type": "string"
+    },
+    "recorded_at": {
+      "format": "date-time",
+      "title": "Recorded At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "feedback_id",
+    "incident_id",
+    "model_version",
+    "disposition",
+    "recorded_at"
+  ],
+  "title": "AnalystFeedbackResponse",
+  "type": "object"
+}

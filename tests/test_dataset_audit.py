@@ -11,12 +11,25 @@ from ml.dataset_audit import audit_dataset
 
 FEATURES = {
     "failed_login_count": 0.0,
+    "successful_login_count": 0.0,
     "success_after_fail": 0.0,
+    "unique_target_account_count": 0.0,
+    "unique_source_count": 0.0,
+    "remote_logon_ratio": 0.0,
+    "failure_window_seconds": 0.0,
+    "attempt_rate_per_minute": 0.0,
     "suspicious_process": 0.0,
     "periodicity_score": 0.0,
+    "connection_interval_cv": 0.0,
+    "mean_interval_seconds": 0.0,
     "suricata_alert_count": 0.0,
+    "suricata_severity_score": 0.0,
     "outbound_connection_count": 1.0,
+    "unique_destination_count": 1.0,
     "destination_port_count": 1.0,
+    "dns_query_count": 0.0,
+    "dns_unique_query_ratio": 0.0,
+    "flow_total_bytes_log1p": 0.0,
 }
 
 
@@ -49,6 +62,31 @@ def write_run(
     ended = started + timedelta(seconds=30)
     run_dir = root / "data/raw" / run_id
     run_dir.mkdir(parents=True)
+    scenario_parameters = {"variant_index": index, "timing_jitter_percent": 10 + index}
+    clock_preflight = {
+        "captured_at": started.isoformat(),
+        "controller_utc": started.isoformat(),
+        "target_utc": started.isoformat(),
+        "wazuh_utc": started.isoformat(),
+        "sensor_utc": started.isoformat(),
+        "attacker_utc": started.isoformat(),
+        "maximum_skew_seconds": 2.0,
+    }
+    ground_truth = {
+        "scenario_id": f"{family.upper()}-{label.upper()}-S{scenario_slot}",
+        "run_id": run_id,
+        "family": family,
+        "label": label,
+        "host": "WIN11-TARGET",
+        "expected_behavior": "Controlled lab activity.",
+        "collection_seed": index,
+        "scenario_parameters": scenario_parameters,
+        "expected_observables": ["test"],
+        "clock_preflight": clock_preflight,
+    }
+    provenance_sha256 = hashlib.sha256(
+        json.dumps(ground_truth, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
     manifest = {
         "scenario_id": f"{family.upper()}-{label.upper()}-S{scenario_slot}",
         "run_id": run_id,
@@ -58,6 +96,9 @@ def write_run(
         "start_time": started.isoformat(),
         "end_time": ended.isoformat(),
         "expected_behavior": "Controlled lab activity.",
+        "collection_seed": index,
+        "scenario_parameters": scenario_parameters,
+        "provenance_sha256": provenance_sha256,
     }
     (run_dir / "scenario_manifest.json").write_text(
         json.dumps(manifest), encoding="utf-8"
@@ -77,21 +118,19 @@ def write_run(
         "raw_refs": [f"evidence:{run_id}"],
         "indicator": "10.40.0.10" if family == "c2" else None,
     }
+    offset = 0.1 if label == "benign" else 0.2
+    if family == "account":
+        incident["features"]["failed_login_count"] = index + offset
+        incident["features"]["success_after_fail"] = float(index % 2)
+    else:
+        incident["features"]["periodicity_score"] = (index + offset) / 12.0
+        incident["features"]["outbound_connection_count"] = float(index + 1)
     (run_dir / "incidents.jsonl").write_text(json.dumps(incident) + "\n", encoding="utf-8")
 
     evidence_dir = root / "evidence/scenario-runs" / run_id
     evidence_dir.mkdir(parents=True)
     (evidence_dir / "ground_truth.json").write_text(
-        json.dumps(
-            {
-                "scenario_id": manifest["scenario_id"],
-                "run_id": run_id,
-                "family": family,
-                "label": label,
-                "host": manifest["host"],
-                "expected_behavior": manifest["expected_behavior"],
-            }
-        ),
+        json.dumps(ground_truth),
         encoding="utf-8",
     )
     manifest_hash = hashlib.sha256((run_dir / "scenario_manifest.json").read_bytes()).hexdigest()
@@ -103,12 +142,34 @@ def write_run(
                 "run_id": run_id,
                 "scenario_manifest_sha256": manifest_hash,
                 "incidents_sha256": incidents_hash,
+                "collection_seed": index,
+                "scenario_parameters": scenario_parameters,
+                "run_marker_count": 2,
             }
         ),
         encoding="utf-8",
     )
     (evidence_dir / "wazuh_archives.jsonl").write_text("{}\n", encoding="utf-8")
     (evidence_dir / "windows_events.jsonl").write_text("{}\n", encoding="utf-8")
+    (evidence_dir / "run_markers.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "START",
+                "run_id": run_id,
+                "timestamp": started.isoformat(),
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "event": "END",
+                "run_id": run_id,
+                "timestamp": ended.isoformat(),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     if family == "c2" and include_suricata:
         (evidence_dir / "suricata_eve.jsonl").write_text("{}\n", encoding="utf-8")
     (evidence_dir / ".collection_state.json").write_text(
@@ -366,6 +427,10 @@ def test_audit_requires_even_distribution_at_ten_runs(tmp_path: Path) -> None:
     ground_truth = json.loads(ground_truth_path.read_text(encoding="utf-8"))
     ground_truth["scenario_id"] = "C2-BENIGN-S1"
     ground_truth_path.write_text(json.dumps(ground_truth), encoding="utf-8")
+    manifest["provenance_sha256"] = hashlib.sha256(
+        json.dumps(ground_truth, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     metadata_path = evidence / "collection_metadata.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     metadata["scenario_manifest_sha256"] = hashlib.sha256(
@@ -416,3 +481,29 @@ def test_audit_detects_low_cardinality_joint_label_separation(tmp_path: Path) ->
 
     assert report["status"] == "NOT_READY"
     assert any(issue["code"] == "JOINT_FEATURE_LABEL_SEPARATION" for issue in report["issues"])
+
+
+def test_audit_rejects_cross_label_full_vector_collision(tmp_path: Path) -> None:
+    populate(tmp_path, count=10)
+    benign_path = tmp_path / "data/raw/ACCOUNT-BENIGN-00/incidents.jsonl"
+    malicious_path = tmp_path / "data/raw/ACCOUNT-MALICIOUS-00/incidents.jsonl"
+    benign = json.loads(benign_path.read_text(encoding="utf-8"))
+    malicious = json.loads(malicious_path.read_text(encoding="utf-8"))
+    malicious["features"] = benign["features"]
+    malicious_path.write_text(json.dumps(malicious) + "\n", encoding="utf-8")
+    evidence = tmp_path / "evidence/scenario-runs/ACCOUNT-MALICIOUS-00"
+    metadata_path = evidence / "collection_metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["incidents_sha256"] = hashlib.sha256(malicious_path.read_bytes()).hexdigest()
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    checksums(evidence)
+
+    report = run_audit(tmp_path)
+
+    assert report["status"] == "NOT_READY"
+    collisions = [
+        issue for issue in report["issues"] if issue["code"] == "CROSS_LABEL_COLLISION"
+    ]
+    assert len(collisions) == 1
+    assert "ACCOUNT-BENIGN-00" in collisions[0]["message"]
+    assert "ACCOUNT-MALICIOUS-00" in collisions[0]["message"]

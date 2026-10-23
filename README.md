@@ -11,7 +11,8 @@ Regression, Random Forest and XGBoost, selects thresholds on validation data, an
 packages trained inference artifacts without opening the locked test.
 
 Start ML work with `docs/week3-model-training-runbook.md` and
-`docs/week3-data-contract.md`. The Colab entry point is
+`docs/week3-data-contract.md`. Production monitoring, feedback, retraining and
+rollback are defined in `docs/model-operations-runbook.md`. The Colab entry point is
 `notebooks/week3_train_colab.ipynb`; it intentionally accepts only TRAIN,
 VALIDATION and the dataset manifest. The frozen Week 1 request/response rules are
 in `docs/interface-contract-v1.md`; machine-readable Week 1 and Week 2 schemas

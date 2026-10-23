@@ -6,6 +6,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.tmp-*/
 .coverage
 htmlcov/
 .venv/
@@ -20,6 +21,7 @@ data/raw/
 data/processed/
 evidence/scenario-runs/
 evidence/dataset-audit.json
+evidence/live-week2-*.json
 run-drafts/
 operator-logs/
 n8n/data/

@@ -1099,16 +1099,31 @@ date -u --iso-8601=seconds
 timedatectl show -p NTPSynchronized --value
 RUN_DATE=$(date -u +%Y%m%d)
 RUN_ID="C2-MALICIOUS-HTTP-BEACON-R01-$RUN_DATE"
+CLOCK_FILE="run-drafts/$RUN_ID-clock.yaml"
+
+# Các kết nối phải dùng SSH key/BatchMode, không nhập mật khẩu giữa phép đo.
+CONTROLLER_UTC=$(date -u --iso-8601=seconds)
+TARGET_UTC=$(ssh -o BatchMode=yes windows-target powershell.exe -NoProfile -Command \
+  "[DateTimeOffset]::UtcNow.ToString('o')" | tr -d '\r')
+WAZUH_UTC=$(ssh -o BatchMode=yes wazuh-manager date -u --iso-8601=seconds)
+SENSOR_UTC=$(ssh -o BatchMode=yes net-sensor date -u --iso-8601=seconds)
+ATTACKER_UTC=$(ssh -o BatchMode=yes attack-lab date -u --iso-8601=seconds)
+.venv-ml/bin/python -m scripts.build_clock_preflight \
+  --controller "$CONTROLLER_UTC" --target "$TARGET_UTC" \
+  --wazuh "$WAZUH_UTC" --sensor "$SENSOR_UTC" --attacker "$ATTACKER_UTC" \
+  --maximum-skew-seconds 5 --output "$CLOCK_FILE"
+
 .venv-ml/bin/python -m scripts.create_run_draft \
   --scenario C2-MALICIOUS-HTTP-BEACON \
   --run-id "$RUN_ID" \
-  --operator Kien
+  --operator Kien \
+  --clock-preflight "$CLOCK_FILE"
 sed -n '1,120p' "run-drafts/$RUN_ID.yaml"
 ```
 
-Ngay trước khi tạo draft, lưu output của kiểm tra độ lệch định lượng ở mục 10. Không
-start nếu bất kỳ máy nào lệch quá 5 giây hoặc nguồn thời gian lỗi. Metadata và event
-window phụ thuộc trực tiếp vào điều kiện này.
+Lệnh `build_clock_preflight` từ chối file có bất kỳ máy nào lệch quá 5 giây và không
+ghi đè bằng chứng cũ. Draft đóng băng `collection_seed`, `scenario_parameters`, danh
+sách observable và toàn bộ clock evidence. Không sửa các trường này bằng tay.
 
 Không sửa `family` hoặc `label` sau khi chạy. Nếu chọn sai, chưa start thì xóa draft và
 tạo lại; đã start thì dùng lệnh `abort`, không tái sử dụng `run_id`.
@@ -1129,7 +1144,10 @@ Windows/Kali.
 
 Đọc entry tương ứng trong `config/scenario-catalog.yaml`. Các câu lệnh C2 chuẩn nằm ở
 mục 12. Với account, chỉ thao tác các tài khoản lab đã khai báo. Ghi giờ bắt đầu/kết thúc
-và mọi sai lệch vào nhật ký vận hành.
+và mọi sai lệch vào nhật ký vận hành. Trước khi chạy, đọc
+`scenario_parameters` trong draft và áp dụng đúng delay/jitter/payload size được sinh.
+Các khoảng random hóa giống nhau giữa benign và malicious, vì vậy không được thay
+tham số theo cảm tính hoặc cố định một giá trị riêng cho từng nhãn.
 
 ### Bước 4 — Chờ pipeline chuyển log
 
@@ -1444,10 +1462,11 @@ REQUIRE_TARGET=1 ./scripts/verify_collection_dataset.sh
 
 Phải báo `TARGET_MET`, 48 valid run, 0 invalid. Sau đó mới build:
 
-Collector vẫn lưu `suspicious_process` để truy vết telemetry, nhưng schema chủ động loại
-feature này khỏi model C2 vì taxonomy chứa chính chuỗi lệnh của scenario và có thể làm
-lộ nhãn. Auditor đồng thời từ chối feature đơn hoặc cặp feature low-cardinality phân
-tách hoàn hảo nhãn trong cùng family. Không bỏ qua cổng này để ép train.
+Collector lưu `suspicious_process` như một tín hiệu hành vi, nhưng không được
+gán nó trực tiếp từ nhãn scenario. Giá trị phải được suy ra từ telemetry Sysmon
+và taxonomy đã đóng băng. Auditor từ chối feature đơn hoặc cặp feature
+low-cardinality phân tách hoàn hảo nhãn trong cùng family; nếu cổng này
+thất bại thì phải sửa kịch bản/thu lại dữ liệu, không được bỏ qua.
 
 ```bash
 set -euo pipefail

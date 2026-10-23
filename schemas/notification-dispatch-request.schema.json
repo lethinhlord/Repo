@@ -1,0 +1,16 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "incident_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Incident Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "incident_id"
+  ],
+  "title": "NotificationDispatchRequest",
+  "type": "object"
+}

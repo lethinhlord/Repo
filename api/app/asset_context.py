@@ -75,5 +75,5 @@ class AssetContextRepository:
             risk_score=entry.criticality / 5.0,
             source="inventory",
             status="FOUND",
-            review_required=False,
+            review_required=entry.protected,
         )

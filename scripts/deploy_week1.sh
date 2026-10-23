@@ -10,7 +10,8 @@ if [ ! -f .env ]; then
 fi
 
 docker compose down
-docker compose up -d --build api
+./scripts/build_reproducible_image.sh datn-ai-soar-api:week3
+docker compose up -d api
 docker compose run --rm --no-deps n8n \
   import:workflow --input=/workflows/week1-wazuh-mock-ai.json
 docker compose run --rm --no-deps n8n \

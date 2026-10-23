@@ -38,6 +38,10 @@ def test_training_config_preserves_60_20_20_grouped_split() -> None:
         "random_forest",
         "xgboost",
     }
+    assert config["selection"]["inner_cv_folds"] == 3
+    assert config["selection"]["calibration_method"] == "sigmoid"
+    assert config["selection"]["maximum_brier"] == 0.20
+    assert config["selection"]["maximum_ece"] == 0.15
 
 
 def test_smoke_training_uses_the_same_scenario_group_boundary() -> None:

@@ -67,8 +67,52 @@ def classification_metrics(
         "pr_auc": average_precision_score(labels, probabilities),
         "fpr": float(fp / (fp + tn)) if fp + tn else 0.0,
         "brier": brier_score_loss(labels, probabilities),
+        "ece": expected_calibration_error(labels, probabilities),
         "confusion_matrix": {"tn": int(tn), "fp": int(fp), "fn": int(fn), "tp": int(tp)},
     }
+
+
+def reliability_curve(
+    labels: np.ndarray, probabilities: np.ndarray, *, bins: int = 10
+) -> list[dict[str, float | int]]:
+    if bins < 2:
+        raise ValueError("reliability curve requires at least two bins")
+    edges = np.linspace(0.0, 1.0, bins + 1)
+    rows: list[dict[str, float | int]] = []
+    for index in range(bins):
+        lower = float(edges[index])
+        upper = float(edges[index + 1])
+        mask = (probabilities >= lower) & (
+            probabilities <= upper if index == bins - 1 else probabilities < upper
+        )
+        count = int(np.sum(mask))
+        if count == 0:
+            continue
+        rows.append(
+            {
+                "lower": lower,
+                "upper": upper,
+                "count": count,
+                "mean_probability": float(np.mean(probabilities[mask])),
+                "observed_frequency": float(np.mean(labels[mask])),
+            }
+        )
+    return rows
+
+
+def expected_calibration_error(
+    labels: np.ndarray, probabilities: np.ndarray, *, bins: int = 10
+) -> float:
+    curve = reliability_curve(labels, probabilities, bins=bins)
+    total = max(len(labels), 1)
+    return float(
+        sum(
+            row["count"]
+            / total
+            * abs(row["observed_frequency"] - row["mean_probability"])
+            for row in curve
+        )
+    )
 
 
 def grouped_bootstrap_intervals(
@@ -86,7 +130,8 @@ def grouped_bootstrap_intervals(
         raise ValueError("bootstrap uncertainty requires at least two independent groups")
     rng = np.random.default_rng(random_seed)
     samples: dict[str, list[float]] = {
-        name: [] for name in ("precision", "recall", "f1", "pr_auc", "fpr", "brier")
+        name: []
+        for name in ("precision", "recall", "f1", "pr_auc", "fpr", "brier", "ece")
     }
     for _ in range(iterations):
         selected_groups = rng.choice(unique_groups, size=len(unique_groups), replace=True)

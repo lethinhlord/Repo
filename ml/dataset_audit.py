@@ -16,7 +16,7 @@ from ml.dataset import (
     load_feature_schema,
     validate_feature_contract,
 )
-from ml.scenario_collection import ScenarioCatalog
+from ml.scenario_collection import ClockPreflight, ScenarioCatalog, ScenarioDefinition
 
 STRATA = ("account:benign", "account:malicious", "c2:benign", "c2:malicious")
 
@@ -102,7 +102,7 @@ def _audit_run(
     manifest_path: Path,
     evidence_root: Path,
     schema: dict[str, Any],
-    catalog: dict[str, tuple[str, str]],
+    catalog: dict[str, ScenarioDefinition],
 ) -> tuple[ScenarioManifest | None, list[IncidentRequest], list[str]]:
     errors: list[str] = []
     run_dir = manifest_path.parent
@@ -116,11 +116,23 @@ def _audit_run(
         errors.append(
             f"run directory {run_dir.name} does not match manifest run_id {manifest.run_id}"
         )
-    catalog_identity = catalog.get(manifest.scenario_id)
-    if catalog_identity != (manifest.family, manifest.label):
+    catalog_scenario = catalog.get(manifest.scenario_id)
+    if catalog_scenario is None or (
+        catalog_scenario.family,
+        catalog_scenario.label,
+    ) != (manifest.family, manifest.label):
         errors.append(
             "SCENARIO_CATALOG_MISMATCH: scenario_id is missing from the catalog or "
             "does not match its catalog family/label"
+        )
+    if (
+        manifest.collection_seed is None
+        or not manifest.scenario_parameters
+        or manifest.provenance_sha256 is None
+    ):
+        errors.append(
+            "RUN_PROVENANCE_MISSING: manifest requires collection seed, randomized "
+            "parameters and provenance hash"
         )
 
     incident_path = run_dir / "incidents.jsonl"
@@ -190,6 +202,27 @@ def _audit_run(
     }
     if any(ground_truth.get(name) != value for name, value in manifest_identity.items()):
         errors.append("ground truth identity does not match finalized scenario manifest")
+    if manifest.provenance_sha256 is not None:
+        actual_provenance = hashlib.sha256(
+            json.dumps(ground_truth, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        if actual_provenance != manifest.provenance_sha256:
+            errors.append("RUN_PROVENANCE_INVALID: ground truth provenance hash mismatch")
+    if not isinstance(ground_truth.get("clock_preflight"), dict):
+        errors.append("CLOCK_PREFLIGHT_MISSING: ground truth lacks VM clock evidence")
+    else:
+        try:
+            ClockPreflight.model_validate(ground_truth["clock_preflight"])
+        except ValueError as exc:
+            errors.append(f"CLOCK_PREFLIGHT_INVALID: {exc}")
+    if not isinstance(ground_truth.get("expected_observables"), list):
+        errors.append("EXPECTED_OBSERVABLES_MISSING: ground truth lacks observable assertions")
+    elif catalog_scenario is not None and ground_truth["expected_observables"] != (
+        catalog_scenario.expected_observables
+    ):
+        errors.append(
+            "EXPECTED_OBSERVABLES_INVALID: assertions do not match the scenario catalog"
+        )
     metadata_path = evidence_dir / "collection_metadata.json"
     if not metadata_path.is_file():
         errors.append("missing collection_metadata.json")
@@ -204,6 +237,28 @@ def _audit_run(
         errors.append("collection metadata status is not FINALIZED")
     if metadata.get("run_id") != manifest.run_id:
         errors.append("collection metadata run_id mismatch")
+    if metadata.get("collection_seed") != manifest.collection_seed:
+        errors.append("collection metadata seed does not match manifest")
+    if metadata.get("scenario_parameters") != manifest.scenario_parameters:
+        errors.append("collection metadata parameters do not match manifest")
+    marker_path = evidence_dir / "run_markers.jsonl"
+    try:
+        markers = [
+            json.loads(line)
+            for line in marker_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(f"RUN_MARKERS_INVALID: invalid run marker evidence: {exc}")
+        markers = []
+    if (
+        len(markers) != 2
+        or markers[0].get("event") != "START"
+        or markers[1].get("event") != "END"
+        or any(marker.get("run_id") != manifest.run_id for marker in markers)
+        or metadata.get("run_marker_count") != 2
+    ):
+        errors.append("RUN_MARKERS_INVALID: START/END marker pair is incomplete")
     protected = {
         "scenario_manifest.json": metadata.get("scenario_manifest_sha256"),
         "incidents.jsonl": metadata.get("incidents_sha256"),
@@ -260,9 +315,7 @@ def audit_dataset(
         parsed_catalog = ScenarioCatalog.model_validate(payload)
     except (OSError, yaml.YAMLError, ValueError) as exc:
         raise ValueError(f"invalid scenario catalog {scenario_catalog_path}: {exc}") from exc
-    catalog = {
-        item.scenario_id: (item.family, item.label) for item in parsed_catalog.scenarios
-    }
+    catalog = {item.scenario_id: item for item in parsed_catalog.scenarios}
     expected_scenarios: dict[str, set[str]] = {name: set() for name in STRATA}
     for item in parsed_catalog.scenarios:
         expected_scenarios[f"{item.family}:{item.label}"].add(item.scenario_id)
@@ -303,6 +356,20 @@ def audit_dataset(
                 elif message.startswith("RUN_STATE_INVALID:"):
                     code = "RUN_STATE_INVALID"
                     message = message.split(":", 1)[1].strip()
+                elif any(
+                    message.startswith(f"{prefix}:")
+                    for prefix in (
+                        "RUN_PROVENANCE_MISSING",
+                        "RUN_PROVENANCE_INVALID",
+                        "CLOCK_PREFLIGHT_MISSING",
+                        "CLOCK_PREFLIGHT_INVALID",
+                        "EXPECTED_OBSERVABLES_MISSING",
+                        "EXPECTED_OBSERVABLES_INVALID",
+                        "RUN_MARKERS_INVALID",
+                    )
+                ):
+                    code, message = message.split(":", 1)
+                    message = message.strip()
                 else:
                     code = "SURICATA_MISSING" if "Suricata" in message else "RUN_INVALID"
                 _issue(issues, code, message, run_id=run_id)
@@ -363,6 +430,64 @@ def audit_dataset(
     valid = {
         run_id: value for run_id, value in candidates.items() if run_id not in invalid_runs
     }
+    parameter_rows: dict[str, list[tuple[str, int, dict[str, Any]]]] = {
+        name: [] for name in STRATA
+    }
+    for run_id, (manifest, _) in valid.items():
+        if manifest.collection_seed is None:
+            continue
+        stratum = f"{manifest.family}:{manifest.label}"
+        parameter_rows[stratum].append(
+            (run_id, manifest.collection_seed, manifest.scenario_parameters)
+        )
+    for stratum, rows in parameter_rows.items():
+        seeds = [seed for _, seed, _ in rows]
+        if len(seeds) != len(set(seeds)):
+            _issue(
+                issues,
+                "COLLECTION_SEED_REUSE",
+                f"{stratum} reuses a collection seed; each run needs an independent seed",
+            )
+        parameter_variants = {
+            json.dumps(parameters, sort_keys=True, separators=(",", ":"))
+            for _, _, parameters in rows
+        }
+        if len(rows) >= minimum_runs and len(parameter_variants) < 3:
+            _issue(
+                issues,
+                "PARAMETER_VARIATION_MISSING",
+                f"{stratum} has only {len(parameter_variants)} randomized parameter variants",
+            )
+    for family in ("account", "c2"):
+        benign = [parameters for _, _, parameters in parameter_rows[f"{family}:benign"]]
+        malicious = [
+            parameters for _, _, parameters in parameter_rows[f"{family}:malicious"]
+        ]
+        if not benign or not malicious:
+            continue
+        shared_numeric = set.intersection(
+            {key for row in benign for key, value in row.items() if isinstance(value, int | float)},
+            {
+                key
+                for row in malicious
+                for key, value in row.items()
+                if isinstance(value, int | float)
+            },
+        )
+        for name in sorted(shared_numeric - {"variant_index"}):
+            benign_values = [float(row[name]) for row in benign if name in row]
+            malicious_values = [float(row[name]) for row in malicious if name in row]
+            if not benign_values or not malicious_values:
+                continue
+            separated = max(benign_values) < min(malicious_values) or max(
+                malicious_values
+            ) < min(benign_values)
+            if separated:
+                _issue(
+                    issues,
+                    "PARAMETER_LABEL_SEPARATION",
+                    f"{family} parameter {name} separates labels; use overlapping ranges",
+                )
     family_feature_values: dict[str, dict[str, dict[str, list[float]]]] = {
         family: {
             feature: {"benign": [], "malicious": []}
@@ -377,6 +502,25 @@ def audit_dataset(
                 if value is not None:
                     labels[manifest.label].append(float(value))
     for family, feature_values in family_feature_values.items():
+        feature_names = sorted(feature_values)
+        vectors: dict[tuple[float, ...], dict[str, list[str]]] = {}
+        for run_id, (manifest, incidents) in valid.items():
+            if manifest.family != family:
+                continue
+            for incident in incidents:
+                vector = tuple(float(incident.features[name]) for name in feature_names)
+                labels = vectors.setdefault(vector, {"benign": [], "malicious": []})
+                labels[manifest.label].append(run_id)
+        for vector, labels in vectors.items():
+            if labels["benign"] and labels["malicious"]:
+                _issue(
+                    issues,
+                    "CROSS_LABEL_COLLISION",
+                    f"identical {family} feature vector has conflicting labels; "
+                    f"features={dict(zip(feature_names, vector, strict=True))}, "
+                    f"benign_runs={sorted(set(labels['benign']))}, "
+                    f"malicious_runs={sorted(set(labels['malicious']))}",
+                )
         for feature, labels in feature_values.items():
             benign_values = labels["benign"]
             malicious_values = labels["malicious"]
@@ -396,7 +540,6 @@ def audit_dataset(
                     "whose benign and malicious value ranges overlap before training "
                     f"(benign={benign_range}, malicious={malicious_range})",
                 )
-        feature_names = sorted(feature_values)
         family_rows: dict[str, list[dict[str, float]]] = {"benign": [], "malicious": []}
         for manifest, incidents in valid.values():
             if manifest.family != family:

@@ -181,6 +181,7 @@ scenarios:
     expected_behavior: One controlled invalid attempt followed by one successful logon to simulate a low-noise account compromise.
     attribution:
       account_names: [datn_attack]
+      logon_types: [3]
     quality_gates:
       min_account_failures: 1
       max_account_failures: 1
@@ -190,10 +191,11 @@ scenarios:
     preconditions:
       - The disposable local account datn_attack exists and its correct password is available.
       - The disposable account is unlocked before the run.
+      - The Kali attack VM can reach the Windows SMB service inside the isolated lab.
     execution_steps:
-      - Enter one known-wrong password for datn_attack, then enter its correct lab password once.
+      - From Kali, perform one failed SMB authentication for datn_attack, wait the draft attempt_delay_seconds, then perform one successful SMB authentication.
     expected_observables:
-      - One event 4625 followed by one event 4624 for datn_attack.
+      - One network-logon event 4625 followed by one network-logon event 4624 (LogonType 3) for datn_attack from the same lab source.
     cleanup_steps:
       - Sign out of datn_attack and restore the clean snapshot if required.
 

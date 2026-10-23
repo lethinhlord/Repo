@@ -1,0 +1,38 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "incident_id": {
+      "title": "Incident Id",
+      "type": "string"
+    },
+    "notification_status": {
+      "enum": [
+        "SENT",
+        "ALREADY_SENT"
+      ],
+      "title": "Notification Status",
+      "type": "string"
+    },
+    "channel": {
+      "enum": [
+        "audit-log",
+        "webhook"
+      ],
+      "title": "Channel",
+      "type": "string"
+    },
+    "delivered_at": {
+      "format": "date-time",
+      "title": "Delivered At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "incident_id",
+    "notification_status",
+    "channel",
+    "delivered_at"
+  ],
+  "title": "NotificationDispatchResponse",
+  "type": "object"
+}

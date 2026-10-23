@@ -12,6 +12,10 @@ assets:
     role: workstation
     criticality: 3
     protected: false
+  WIN11-TARGET:
+    role: workstation
+    criticality: 3
+    protected: false
   linux-endpoint-01:
     role: workstation
     criticality: 3

@@ -1,0 +1,65 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "incident_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Incident Id",
+      "type": "string"
+    },
+    "model_version": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Model Version",
+      "type": "string"
+    },
+    "analyst_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Analyst Id",
+      "type": "string"
+    },
+    "analyst_label": {
+      "enum": [
+        "benign",
+        "malicious",
+        "uncertain"
+      ],
+      "title": "Analyst Label",
+      "type": "string"
+    },
+    "disposition": {
+      "enum": [
+        "true_positive",
+        "false_positive",
+        "true_negative",
+        "false_negative",
+        "needs_investigation"
+      ],
+      "title": "Disposition",
+      "type": "string"
+    },
+    "notes": {
+      "anyOf": [
+        {
+          "maxLength": 4096,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Notes"
+    }
+  },
+  "required": [
+    "incident_id",
+    "model_version",
+    "analyst_id",
+    "analyst_label",
+    "disposition"
+  ],
+  "title": "AnalystFeedbackRequest",
+  "type": "object"
+}

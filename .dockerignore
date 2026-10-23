@@ -1,0 +1,12 @@
+*
+!api/
+!api/**
+!ml/
+!ml/**
+!config/
+!config/**
+!requirements-runtime.lock
+
+**/__pycache__/
+**/*.pyc
+ml/model-package/

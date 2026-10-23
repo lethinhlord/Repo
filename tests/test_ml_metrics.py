@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
-from ml.metrics import classification_metrics, grouped_bootstrap_intervals, select_threshold
+from ml.metrics import (
+    classification_metrics,
+    grouped_bootstrap_intervals,
+    reliability_curve,
+    select_threshold,
+)
 
 
 def test_threshold_selection_prioritizes_precision_constraint_then_recall() -> None:
@@ -44,4 +50,23 @@ def test_metrics_include_false_positive_rate_and_group_uncertainty() -> None:
 
     assert metrics["fpr"] == 0.0
     assert metrics["confusion_matrix"] == {"tn": 3, "fp": 0, "fn": 0, "tp": 3}
-    assert set(intervals) == {"precision", "recall", "f1", "pr_auc", "fpr", "brier"}
+    assert set(intervals) == {
+        "precision",
+        "recall",
+        "f1",
+        "pr_auc",
+        "fpr",
+        "brier",
+        "ece",
+    }
+    assert metrics["ece"] == pytest.approx(0.2)
+
+
+def test_reliability_curve_accounts_for_every_probability() -> None:
+    labels = np.asarray([0, 0, 1, 1])
+    probabilities = np.asarray([0.0, 0.2, 0.8, 1.0])
+
+    curve = reliability_curve(labels, probabilities, bins=5)
+
+    assert sum(row["count"] for row in curve) == 4
+    assert curve[-1]["upper"] == 1.0
