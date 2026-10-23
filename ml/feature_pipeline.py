@@ -124,9 +124,21 @@ def _account_name(alert: WazuhAlert) -> str:
     ).strip().casefold()
 
 
+def _account_source(alert: WazuhAlert) -> str:
+    _, eventdata = _windows_fields(alert)
+    return str(
+        eventdata.get("ipAddress")
+        or eventdata.get("IpAddress")
+        or eventdata.get("sourceIp")
+        or eventdata.get("workstationName")
+        or eventdata.get("WorkstationName")
+        or "local-console"
+    ).strip().casefold()
+
+
 def _aggregation_key(alert: WazuhAlert) -> tuple[str, str, str]:
     family = _family(alert)
-    discriminator = _account_name(alert) if family == "account" else "behavior-window"
+    discriminator = _account_source(alert) if family == "account" else "behavior-window"
     if family == "unknown":
         discriminator = alert.id
     return (_asset_id(alert).casefold(), family, discriminator)
@@ -161,19 +173,11 @@ def _derive_raw_group(alerts: list[WazuhAlert], family: str) -> tuple[
             event_id, eventdata = _windows_fields(alert)
             if event_id not in {"4624", "4625"}:
                 continue
-            source = str(
-                eventdata.get("ipAddress")
-                or eventdata.get("IpAddress")
-                or eventdata.get("sourceIp")
-                or eventdata.get("workstationName")
-                or eventdata.get("WorkstationName")
-                or "local-console"
-            ).strip().casefold()
             observations.append(
                 AccountObservation(
                     timestamp=alert.timestamp,
                     account=_account_name(alert),
-                    source=source,
+                    source=_account_source(alert),
                     logon_type=str(
                         eventdata.get("logonType", eventdata.get("LogonType", "unknown"))
                     ),

@@ -35,6 +35,8 @@ C2_FEATURES = (
 
 FEATURE_ORDER = (*ACCOUNT_FEATURES, *C2_FEATURES)
 
+REMOTE_WINDOWS_LOGON_TYPES = frozenset({"3", "8", "9", "10"})
+
 
 @dataclass(frozen=True)
 class AccountObservation:
@@ -101,7 +103,7 @@ def derive_account_features(observations: list[AccountObservation]) -> dict[str,
     )
     sources = {item.source or "local-console" for item in ordered}
     accounts = {item.account for item in ordered}
-    remote = sum(item.logon_type not in {"2", "7", "10", "11"} for item in ordered)
+    remote = sum(item.logon_type.strip() in REMOTE_WINDOWS_LOGON_TYPES for item in ordered)
     failure_window = (
         (max(item.timestamp for item in failures) - min(item.timestamp for item in failures))
         .total_seconds()
