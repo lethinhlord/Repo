@@ -181,6 +181,7 @@ scenarios:
     expected_behavior: One controlled invalid attempt followed by one successful logon to simulate a low-noise account compromise.
     attribution:
       account_names: [datn_attack]
+      source_ips: [10.40.0.10]
       logon_types: [3]
     quality_gates:
       min_account_failures: 1
@@ -239,7 +240,7 @@ scenarios:
       - Kali serves the benign web root on 10.40.0.10 port 8080.
       - Traffic from 10.20.0.10 to 10.40.0.10 is routed through NET-SENSOR.
     execution_steps:
-      - In Windows PowerShell, run 5 curl.exe requests to http://10.40.0.10:8080/health at 30-second intervals.
+      - In Windows PowerShell, run 5 curl.exe requests to /health using the draft nonce and the 30-second base interval scaled by the frozen draft jitter.
     expected_observables:
       - Sysmon event 3 and Suricata flow or HTTP records for port 8080 with no local C2 signature.
     cleanup_steps:
@@ -264,7 +265,7 @@ scenarios:
       - Kali serves payload-benign.txt on 10.40.0.10 port 8080.
       - The file contains only a fixed harmless marker string.
     execution_steps:
-      - Run curl.exe http://10.40.0.10:8080/payload-benign.txt -o $env:TEMP\\payload-benign.txt once.
+      - Run curl.exe against payload-benign.txt once with the frozen draft nonce and save the harmless fixed file to $env:TEMP\\payload-benign.txt.
     expected_observables:
       - One or more Sysmon event 3 records and matching Suricata flow or HTTP records.
     cleanup_steps:
@@ -289,7 +290,7 @@ scenarios:
       - Kali serves the benign web root on 10.40.0.10 port 8080.
       - NET-SENSOR is recording EVE flow and HTTP events.
     execution_steps:
-      - Request /api/status four times with gaps of 10, 35 and 20 seconds.
+      - Request /api/status four times using the draft nonce and base gaps 10, 35 and 20 seconds scaled by the frozen draft jitter.
     expected_observables:
       - At least four matching network records with a lower periodicity score than the regular poll.
     cleanup_steps:
@@ -312,7 +313,7 @@ scenarios:
       - Kali dnsmasq answers www.datn.test on 10.40.0.10.
       - Windows can route UDP and TCP port 53 through NET-SENSOR.
     execution_steps:
-      - Query b01 through b04.www.datn.test through 10.40.0.10 with irregular pauses.
+      - Query four unique draft-nonce subdomains below www.datn.test through 10.40.0.10 with jitter-scaled irregular pauses.
     expected_observables:
       - Four Sysmon event 22 and matching Suricata DNS records, including local benign-canary SID 900004.
     cleanup_steps:
@@ -337,7 +338,7 @@ scenarios:
       - Kali serves /api/status on 10.40.0.10 port 8080.
       - NET-SENSOR is recording EVE flow and HTTP events.
     execution_steps:
-      - Send six curl.exe requests to /api/status at two-second intervals.
+      - Send six curl.exe requests to /api/status using the draft nonce and the two-second base interval scaled by the frozen draft jitter.
     expected_observables:
       - Six Sysmon process/network records and matching Suricata HTTP records without a DATN malicious SID.
     cleanup_steps:
@@ -362,7 +363,7 @@ scenarios:
       - Kali serves the isolated beacon web root on 10.40.0.10 port 8081.
       - The custom Suricata HTTP beacon rule is loaded.
     execution_steps:
-      - Send 8 curl.exe requests to http://10.40.0.10:8081/beacon at 15-second intervals.
+      - Send 8 curl.exe requests to /beacon using the draft nonce and the 15-second base interval scaled by the frozen draft jitter.
     expected_observables:
       - Periodic Sysmon event 3 records, Suricata flow or HTTP records and at least one local alert.
     cleanup_steps:
@@ -387,7 +388,7 @@ scenarios:
       - Kali serves the isolated beacon web root on 10.40.0.10 port 8081.
       - The custom Suricata HTTP beacon rule is loaded.
     execution_steps:
-      - Send 8 /beacon requests with fixed gaps of 8, 21, 13, 30, 11, 24 and 17 seconds.
+      - Send 8 /beacon requests using the draft nonce and base gaps 8, 21, 13, 30, 11, 24 and 17 seconds scaled by the frozen draft jitter.
     expected_observables:
       - Matching Sysmon and Suricata evidence with a lower periodicity score than the fixed beacon.
     cleanup_steps:
@@ -410,7 +411,7 @@ scenarios:
       - Kali dnsmasq answers the beacon.datn.test lab zone on 10.40.0.10.
       - The custom Suricata DNS beacon rule is loaded.
     execution_steps:
-      - Query r01 through r08.beacon.datn.test via 10.40.0.10 at 15-second intervals.
+      - Query eight unique draft-nonce subdomains below beacon.datn.test using the 15-second base interval scaled by the frozen draft jitter.
     expected_observables:
       - Sysmon event 22, matching Suricata DNS records and at least one local alert.
     cleanup_steps:
@@ -435,7 +436,7 @@ scenarios:
       - Kali serves a harmless fixed stage.bin marker file on 10.40.0.10 port 9001.
       - No custom Suricata signature targets stage.bin; only flow or HTTP telemetry is expected.
     execution_steps:
-      - Download http://10.40.0.10:9001/stage.bin to $env:TEMP\\stage.bin once with curl.exe.
+      - Download the fixed harmless stage.bin once with curl.exe using the frozen draft nonce.
     expected_observables:
       - Sysmon process/network evidence and Suricata HTTP or flow evidence without a DATN local alert.
     cleanup_steps:
@@ -460,7 +461,7 @@ scenarios:
       - Kali serves the harmless fixed stage.bin marker on 10.40.0.10 port 9001.
       - No DATN local signature targets stage.bin.
     execution_steps:
-      - Download stage.bin three times to distinct temporary names with 20-second intervals.
+      - Download stage.bin three times with the draft nonce to distinct temporary names using the 20-second base interval scaled by the frozen draft jitter.
     expected_observables:
       - Three Sysmon process/network records and matching Suricata HTTP or flow evidence without a DATN local alert.
     cleanup_steps:

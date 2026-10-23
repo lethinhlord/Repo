@@ -1,8 +1,12 @@
 # QUY TRÌNH CHUẨN THU THẬP DỮ LIỆU TRAIN TRÊN LAB 4 VM
 
-Phiên bản: 1.3 — 17/10/2026
+Phiên bản: 2.0 — 23/10/2026
 Phạm vi: dữ liệu `account-benign`, `account-malicious`, `c2-benign`,
 `c2-malicious` cho nhánh `feature/week3-model-training`.
+
+Baseline sửa lỗi bắt buộc: tag bất biến `data-collection-v2.0.0` phải là ancestor của
+commit đang chạy. Không chỉ kiểm tra tên branch; cổng ở mục 6.2 sẽ từ chối repo cũ chưa
+có đủ bản vá collector/auditor và runbook v2.0.
 
 ## 1. Kết quả bắt buộc
 
@@ -462,6 +466,15 @@ test -z "$(git status --porcelain)" || {
   exit 1
 }
 test "$(git rev-parse HEAD)" = "$(git rev-parse origin/feature/week3-model-training)"
+REQUIRED_BASELINE_TAG=data-collection-v2.0.0
+git fetch --force origin \
+  "refs/tags/$REQUIRED_BASELINE_TAG:refs/tags/$REQUIRED_BASELINE_TAG"
+REQUIRED_BASELINE=$(git rev-parse "$REQUIRED_BASELINE_TAG^{commit}")
+git merge-base --is-ancestor "$REQUIRED_BASELINE" HEAD || {
+  echo "FAIL: repository is older than $REQUIRED_BASELINE_TAG" >&2
+  exit 1
+}
+git rev-parse HEAD | tee evidence/collection-source-commit.txt
 chmod +x scripts/bootstrap_ml.sh scripts/deploy_week2.sh scripts/verify_week2.sh
 ./scripts/bootstrap_ml.sh
 .venv-ml/bin/python -m pytest -q \
@@ -544,8 +557,28 @@ net accounts
 ```
 
 Output phải hiện `Lockout threshold: Never` (hoặc giá trị tương đương theo ngôn ngữ hệ
-thống). Không được tự giảm số attempt: collector kiểm đúng số trong catalog. Sau khi đóng
-dataset, khôi phục policy gốc bằng snapshot `01-TELEMETRY-READY` hoặc lệnh sau rồi reboot:
+thống). Không được tự giảm số attempt: collector kiểm đúng số trong catalog.
+
+Kịch bản `ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS` dùng SMB từ duy nhất Kali
+`10.40.0.10`, nên mở port 445 chỉ cho địa chỉ đó trên NIC lab. Không bật rule chia sẻ rộng
+toàn subnet và không tạo share chứa dữ liệu:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+Set-Service LanmanServer -StartupType Automatic
+Start-Service LanmanServer
+if (Get-NetFirewallRule -Name DATN-SMB-From-Kali -ErrorAction SilentlyContinue) {
+  Remove-NetFirewallRule -Name DATN-SMB-From-Kali
+}
+New-NetFirewallRule -Name DATN-SMB-From-Kali `
+  -DisplayName 'DATN SMB authentication from Kali only' `
+  -Direction Inbound -Action Allow -Protocol TCP -LocalPort 445 `
+  -RemoteAddress 10.40.0.10 -Profile Any | Out-Null
+Get-NetFirewallRule -Name DATN-SMB-From-Kali | Format-List Name,Enabled,Action
+```
+
+Sau khi đóng dataset, khôi phục policy gốc bằng snapshot `01-TELEMETRY-READY` hoặc lệnh
+sau rồi reboot:
 
 ```powershell
 secedit /configure /db C:\DATN\restore-security.sdb `
@@ -575,7 +608,14 @@ scp "${SocUser}@192.168.58.147:${SocRepo}/config/sysmon-datn.xml" C:\DATN\
 scp "${SocUser}@192.168.58.147:${SocRepo}/config/wazuh-windows-localfile.xml" C:\DATN\
 Invoke-WebRequest https://download.sysinternals.com/files/Sysmon.zip `
   -OutFile C:\DATN\Sysmon.zip
+Get-FileHash C:\DATN\Sysmon.zip -Algorithm SHA256 |
+  Format-List | Out-File C:\DATN\Sysmon.zip.sha256.txt -Encoding ascii
 Expand-Archive C:\DATN\Sysmon.zip C:\DATN\Sysmon -Force
+$sysmonSignature = Get-AuthenticodeSignature C:\DATN\Sysmon\Sysmon64.exe
+if ($sysmonSignature.Status -ne 'Valid' -or
+    $sysmonSignature.SignerCertificate.Subject -notmatch 'Microsoft') {
+  throw 'Invalid Sysmon executable signature'
+}
 C:\DATN\Sysmon\Sysmon64.exe -accepteula -i C:\DATN\sysmon-datn.xml
 C:\DATN\Sysmon\Sysmon64.exe -c
 Get-Service Sysmon64
@@ -605,6 +645,10 @@ config không bật đúng event family.
 Invoke-WebRequest `
   https://packages.wazuh.com/4.x/windows/wazuh-agent-4.14.9-1.msi `
   -OutFile C:\DATN\wazuh-agent-4.14.9-1.msi
+$wazuhSignature = Get-AuthenticodeSignature C:\DATN\wazuh-agent-4.14.9-1.msi
+if ($wazuhSignature.Status -ne 'Valid') { throw 'Invalid Wazuh MSI signature' }
+Get-FileHash C:\DATN\wazuh-agent-4.14.9-1.msi -Algorithm SHA256 |
+  Format-List | Out-File C:\DATN\wazuh-agent-4.14.9-1.msi.sha256.txt -Encoding ascii
 msiexec.exe /i C:\DATN\wazuh-agent-4.14.9-1.msi /q `
   WAZUH_MANAGER="192.168.58.147" `
   WAZUH_REGISTRATION_SERVER="192.168.58.147" `
@@ -647,6 +691,86 @@ sudo /var/ossec/bin/agent_control -l | grep WIN11-TARGET
 sudo jq -c 'select(.agent.name=="WIN11-TARGET")' \
   /var/ossec/logs/archives/archives.json | tail -n 3
 ```
+
+### 7.4 SSH key chỉ dùng để đo clock
+
+Clock evidence phải được lấy từ SOC-AI mà không dừng giữa chừng để nhập mật khẩu. Cài
+OpenSSH Server trên Windows khi lab vẫn còn Internet/NAT; không làm bước này trong cửa
+sổ đang thu. Trên SOC-AI, tạo một key riêng (nếu file đã có thì giữ nguyên, không ghi đè):
+
+```bash
+set -euo pipefail
+CLOCK_KEY="$HOME/.ssh/id_ed25519_datn_clock"
+if [ ! -f "$CLOCK_KEY" ]; then
+  ssh-keygen -t ed25519 -N '' -C datn-clock -f "$CLOCK_KEY"
+fi
+chmod 600 "$CLOCK_KEY"
+cat "$CLOCK_KEY.pub"
+```
+
+Copy **đúng một dòng public key vừa in**. Trên Windows PowerShell Administrator, tạo user
+không có quyền quản trị và chỉ mở SSH từ IP management của SOC-AI:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$server = Get-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+if ($server.State -ne 'Installed') {
+  Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 | Out-Null
+}
+if (-not (Get-LocalUser -Name datn_clock -ErrorAction SilentlyContinue)) {
+  $password = Read-Host 'One-time strong password for datn_clock' -AsSecureString
+  New-LocalUser -Name datn_clock -Password $password `
+    -Description 'DATN clock evidence account' | Out-Null
+}
+$publicKey = Read-Host 'Paste SOC-AI datn-clock public key'
+if ($publicKey -notmatch '^ssh-ed25519 [A-Za-z0-9+/=]+ datn-clock$') {
+  throw 'Unexpected public key format'
+}
+$sshDir = 'C:\Users\datn_clock\.ssh'
+New-Item -ItemType Directory -Force $sshDir | Out-Null
+Set-Content -LiteralPath "$sshDir\authorized_keys" -Value $publicKey `
+  -Encoding ascii -NoNewline
+$principal = "$env:COMPUTERNAME\datn_clock"
+icacls $sshDir /inheritance:r /grant:r "${principal}:(OI)(CI)F" 'SYSTEM:(OI)(CI)F' | Out-Null
+icacls "$sshDir\authorized_keys" /inheritance:r /grant:r "${principal}:F" 'SYSTEM:F' | Out-Null
+Set-Service sshd -StartupType Automatic
+Start-Service sshd
+Get-NetFirewallRule -Name OpenSSH-Server-In-TCP -ErrorAction SilentlyContinue |
+  Disable-NetFirewallRule
+if (Get-NetFirewallRule -Name DATN-Clock-SSH -ErrorAction SilentlyContinue) {
+  Remove-NetFirewallRule -Name DATN-Clock-SSH
+}
+New-NetFirewallRule -Name DATN-Clock-SSH -DisplayName 'DATN clock SSH from SOC-AI' `
+  -Direction Inbound -Action Allow -Protocol TCP -LocalPort 22 `
+  -RemoteAddress 192.168.58.147 -Profile Any | Out-Null
+Get-Service sshd
+Get-NetFirewallRule -Name DATN-Clock-SSH | Format-List Name,Enabled,Direction,Action
+```
+
+Trên NET-SENSOR và Kali, cài public key bằng user SSH thực tế. Lần `ssh-copy-id` này có
+thể hỏi mật khẩu vì chỉ là cấu hình ban đầu:
+
+```bash
+set -euo pipefail
+CLOCK_KEY="$HOME/.ssh/id_ed25519_datn_clock"
+read -rp 'NET-SENSOR SSH username: ' SENSOR_USER
+read -rp 'Kali SSH username: ' KALI_USER
+[[ "$SENSOR_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+[[ "$KALI_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+ssh-copy-id -i "$CLOCK_KEY.pub" "${SENSOR_USER}@192.168.58.150"
+ssh-copy-id -i "$CLOCK_KEY.pub" "${KALI_USER}@192.168.58.132"
+ssh -i "$CLOCK_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
+  datn_clock@192.168.58.148 powershell.exe -NoProfile -NonInteractive -Command \
+  "[DateTimeOffset]::UtcNow.ToString('o')"
+ssh -i "$CLOCK_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
+  "${SENSOR_USER}@192.168.58.150" date -u --iso-8601=seconds
+ssh -i "$CLOCK_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
+  "${KALI_USER}@192.168.58.132" date -u --iso-8601=seconds
+```
+
+Cả ba lệnh cuối phải trả kết quả mà không hỏi mật khẩu. Nếu không, sửa key/ACL trước;
+không bỏ `BatchMode=yes`, không lưu mật khẩu trong script và không mở port 22 Windows
+cho địa chỉ khác.
 
 ## 8. Cài NET-SENSOR
 
@@ -787,7 +911,7 @@ có ở Archives nghĩa là cấu hình Wazuh/ACL chưa đạt.
 
 ```bash
 sudo apt update
-sudo apt install -y python3 dnsmasq curl jq dnsutils
+sudo apt install -y python3 dnsmasq curl jq dnsutils smbclient
 sudo install -d -m 0755 /srv/datn/benign/api /srv/datn/beacon /srv/datn/stage
 printf 'ok\n' | sudo tee /srv/datn/benign/health
 printf '{"status":"ok"}\n' | sudo tee /srv/datn/benign/api/status
@@ -913,6 +1037,9 @@ test "$FREE_KB" -ge 10485760
 cd "$HOME/datn-ai-soar"
 test -z "$(git status --porcelain)"
 test "$(git branch --show-current)" = feature/week3-model-training
+REQUIRED_BASELINE_TAG=data-collection-v2.0.0
+REQUIRED_BASELINE=$(git rev-parse "$REQUIRED_BASELINE_TAG^{commit}")
+git merge-base --is-ancestor "$REQUIRED_BASELINE" HEAD
 test ! -e evidence/scenario-runs/.active-run.json
 while IFS= read -r -d '' STATE; do
   jq -e . "$STATE" >/dev/null
@@ -984,18 +1111,25 @@ if ($LASTEXITCODE -ne 0 -or $timeSource -match 'Local CMOS Clock') {
 
 ### 10.3 Đo clock không tính thời gian nhập mật khẩu
 
-Thiết lập SSH key/agent trước; các lệnh sau dùng `BatchMode=yes` và phải không hỏi mật
-khẩu. Trên SOC-AI:
+Mục 7.4 phải hoàn tất trước. Các lệnh sau dùng đúng key chuyên dụng, IP cụ thể và
+`BatchMode=yes`; không dùng alias chưa khai báo. Trên SOC-AI:
 
 ```bash
 set -euo pipefail
 MAX_CLOCK_SKEW_SECONDS=5
 MAX_SSH_ROUNDTRIP_SECONDS=4
+CLOCK_KEY="$HOME/.ssh/id_ed25519_datn_clock"
+test -f "$CLOCK_KEY"
 read -rp 'NET-SENSOR SSH username: ' SENSOR_USER
 read -rp 'Kali SSH username: ' KALI_USER
-for ENDPOINT in "${SENSOR_USER}@192.168.58.150" "${KALI_USER}@192.168.58.132"; do
+[[ "$SENSOR_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+[[ "$KALI_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+for ENDPOINT in \
+  "${SENSOR_USER}@192.168.58.150" \
+  "${KALI_USER}@192.168.58.132"; do
   BEFORE=$(date -u +%s)
-  REMOTE=$(ssh -o BatchMode=yes -o ConnectTimeout=5 "$ENDPOINT" 'date -u +%s')
+  REMOTE=$(ssh -i "$CLOCK_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
+    "$ENDPOINT" 'date -u +%s')
   AFTER=$(date -u +%s)
   RTT=$((AFTER - BEFORE))
   MID=$(((BEFORE + AFTER) / 2))
@@ -1004,23 +1138,19 @@ for ENDPOINT in "${SENSOR_USER}@192.168.58.150" "${KALI_USER}@192.168.58.132"; d
   test "$RTT" -le "$MAX_SSH_ROUNDTRIP_SECONDS"
   test "$SKEW" -le "$MAX_CLOCK_SKEW_SECONDS"
 done
-```
 
-Trên Windows:
-
-```powershell
-$ErrorActionPreference = 'Stop'
-$SocUser = Read-Host 'SOC-AI SSH username'
-$before = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-$remoteText = ssh -o BatchMode=yes -o ConnectTimeout=5 `
-  "${SocUser}@192.168.58.147" 'date -u +%s'
-$after = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-if ($LASTEXITCODE -ne 0) { throw 'Cannot read SOC-AI clock non-interactively' }
-$remote = [int64]($remoteText | Select-Object -Last 1)
-$roundTrip = $after - $before
-$skew = [Math]::Abs(([Math]::Floor(($before + $after) / 2)) - $remote)
-"SOC-AI/Windows roundtrip=$roundTrip skew=$skew"
-if ($roundTrip -gt 4 -or $skew -gt 5) { throw 'Clock/SSH gate failed' }
+BEFORE=$(date -u +%s)
+TARGET_EPOCH=$(ssh -i "$CLOCK_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
+  datn_clock@192.168.58.148 powershell.exe -NoProfile -NonInteractive -Command \
+  "[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()" | tr -d '\r')
+AFTER=$(date -u +%s)
+[[ "$TARGET_EPOCH" =~ ^[0-9]+$ ]]
+RTT=$((AFTER - BEFORE)); MID=$(((BEFORE + AFTER) / 2))
+SKEW=$((MID - TARGET_EPOCH)); SKEW=${SKEW#-}
+printf 'WIN11-TARGET roundtrip=%s skew=%s\n' "$RTT" "$SKEW"
+test "$RTT" -le "$MAX_SSH_ROUNDTRIP_SECONDS"
+test "$SKEW" -le "$MAX_CLOCK_SKEW_SECONDS"
+echo 'CLOCK_SSH_PREFLIGHT=PASS'
 ```
 
 ### 10.4 Canary end-to-end mới, không dùng dữ liệu cũ
@@ -1050,6 +1180,14 @@ Resolve-DnsName preflight.www.datn.test -Server 10.40.0.10 | Out-Null
 Resolve-DnsName preflight.beacon.datn.test -Server 10.40.0.10 | Out-Null
 ```
 
+Trên Kali, tạo **một** SMB canary thành công bằng mật khẩu lab đúng của `datn_attack`.
+Đây là preflight trước mọi run, không phải mẫu train:
+
+```bash
+smbclient '//10.20.0.10/IPC$' -U 'WIN11-TARGET\datn_attack' -c 'quit'
+echo 'SMB_COMMAND_PREFLIGHT=PASS'
+```
+
 Trở lại SOC-AI; vòng lặp chỉ PASS khi **event mới sau cursor** có cả Sysmon và Suricata
 đúng nguồn `10.20.0.10`:
 
@@ -1067,7 +1205,13 @@ for attempt in $(seq 1 18); do
       ((.data.win.system.eventID//"")|tostring)=="22")' "$FRESH" >/dev/null 2>&1 \
     && jq -e 'select(.agent.name=="NET-SENSOR") |
       (.full_log|fromjson?) | select(.src_ip=="10.20.0.10" and
-      .dest_ip=="10.40.0.10")' "$FRESH" >/dev/null 2>&1; then
+      .dest_ip=="10.40.0.10")' "$FRESH" >/dev/null 2>&1 \
+    && jq -e 'select(.agent.name=="WIN11-TARGET" and
+      ((.data.win.system.eventID//"")|tostring)=="4624" and
+      ((.data.win.eventdata.targetUserName//"")|ascii_downcase)=="datn_attack" and
+      ((.data.win.eventdata.logonType//"")|tostring)=="3" and
+      ((.data.win.eventdata.ipAddress//"")|endswith("10.40.0.10")))' \
+      "$FRESH" >/dev/null 2>&1; then
     PASS=1; break
   fi
   sleep 5
@@ -1101,13 +1245,23 @@ RUN_DATE=$(date -u +%Y%m%d)
 RUN_ID="C2-MALICIOUS-HTTP-BEACON-R01-$RUN_DATE"
 CLOCK_FILE="run-drafts/$RUN_ID-clock.yaml"
 
-# Các kết nối phải dùng SSH key/BatchMode, không nhập mật khẩu giữa phép đo.
+# Thay đúng hai username đã kiểm tra ở mục 10.3.
+SENSOR_USER='sensor-user'
+KALI_USER='kali-user'
+CLOCK_KEY="$HOME/.ssh/id_ed25519_datn_clock"
+[[ "$SENSOR_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+[[ "$KALI_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+
+# Các kết nối dùng SSH key/BatchMode, không nhập mật khẩu giữa phép đo.
 CONTROLLER_UTC=$(date -u --iso-8601=seconds)
-TARGET_UTC=$(ssh -o BatchMode=yes windows-target powershell.exe -NoProfile -Command \
+TARGET_UTC=$(ssh -i "$CLOCK_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
+  datn_clock@192.168.58.148 powershell.exe -NoProfile -NonInteractive -Command \
   "[DateTimeOffset]::UtcNow.ToString('o')" | tr -d '\r')
-WAZUH_UTC=$(ssh -o BatchMode=yes wazuh-manager date -u --iso-8601=seconds)
-SENSOR_UTC=$(ssh -o BatchMode=yes net-sensor date -u --iso-8601=seconds)
-ATTACKER_UTC=$(ssh -o BatchMode=yes attack-lab date -u --iso-8601=seconds)
+WAZUH_UTC=$(date -u --iso-8601=seconds)
+SENSOR_UTC=$(ssh -i "$CLOCK_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
+  "${SENSOR_USER}@192.168.58.150" date -u --iso-8601=seconds)
+ATTACKER_UTC=$(ssh -i "$CLOCK_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
+  "${KALI_USER}@192.168.58.132" date -u --iso-8601=seconds)
 .venv-ml/bin/python -m scripts.build_clock_preflight \
   --controller "$CONTROLLER_UTC" --target "$TARGET_UTC" \
   --wazuh "$WAZUH_UTC" --sensor "$SENSOR_UTC" --attacker "$ATTACKER_UTC" \
@@ -1119,6 +1273,8 @@ ATTACKER_UTC=$(ssh -o BatchMode=yes attack-lab date -u --iso-8601=seconds)
   --operator Kien \
   --clock-preflight "$CLOCK_FILE"
 sed -n '1,120p' "run-drafts/$RUN_ID.yaml"
+.venv-ml/bin/python -m scripts.export_run_parameters \
+  --draft "run-drafts/$RUN_ID.yaml" --format json
 ```
 
 Lệnh `build_clock_preflight` từ chối file có bất kỳ máy nào lệch quá 5 giây và không
@@ -1144,10 +1300,41 @@ Windows/Kali.
 
 Đọc entry tương ứng trong `config/scenario-catalog.yaml`. Các câu lệnh C2 chuẩn nằm ở
 mục 12. Với account, chỉ thao tác các tài khoản lab đã khai báo. Ghi giờ bắt đầu/kết thúc
-và mọi sai lệch vào nhật ký vận hành. Trước khi chạy, đọc
-`scenario_parameters` trong draft và áp dụng đúng delay/jitter/payload size được sinh.
-Các khoảng random hóa giống nhau giữa benign và malicious, vì vậy không được thay
-tham số theo cảm tính hoặc cố định một giá trị riêng cho từng nhãn.
+và mọi sai lệch vào nhật ký vận hành. Trước khi chạy, xuất tham số đã đóng băng; không
+đọc rồi gõ lại từng số bằng trí nhớ:
+
+```bash
+mkdir -p evidence/operator-parameter-exports
+.venv-ml/bin/python -m scripts.export_run_parameters \
+  --draft "run-drafts/$RUN_ID.yaml" --format powershell \
+  | tee "evidence/operator-parameter-exports/$RUN_ID.ps1"
+.venv-ml/bin/python -m scripts.export_run_parameters \
+  --draft "run-drafts/$RUN_ID.yaml" --format bash \
+  | tee "evidence/operator-parameter-exports/$RUN_ID.env"
+```
+
+Với C2, copy nguyên output PowerShell vào `WIN11-TARGET`, rồi chạy block khởi tạo ở mục
+12.2; URL/DNS nonce và toàn bộ khoảng nghỉ sẽ dùng đúng tham số đó. Với account, source
+file Bash trong shell SOC-AI để chờ `DATN_PRE_ACTION_DELAY_SECONDS` trước tín hiệu bắt
+đầu thao tác. Riêng `ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS`, source cùng file trên Kali để
+dùng chính xác `DATN_ATTEMPT_DELAY_SECONDS`. Chuyển file đó từ SOC-AI bằng key đã cấu
+hình (thay đúng username Kali):
+
+```bash
+KALI_USER='kali-user'
+[[ "$KALI_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+scp -i "$HOME/.ssh/id_ed25519_datn_clock" \
+  "evidence/operator-parameter-exports/$RUN_ID.env" \
+  "${KALI_USER}@192.168.58.132:/tmp/datn-current-run.env"
+ssh -i "$HOME/.ssh/id_ed25519_datn_clock" \
+  "${KALI_USER}@192.168.58.132" chmod 600 /tmp/datn-current-run.env
+```
+
+Hai file export không chứa mật khẩu. Xóa `/tmp/datn-current-run.env` trên Kali khi cleanup.
+
+`pre_action_delay_seconds`, dải jitter và cách sinh nonce giống nhau giữa benign và
+malicious. Không thay tham số theo cảm tính, không sử dụng giá trị của run trước và không
+thay kích thước hai payload cố định; SHA-256 của payload là cổng an toàn bắt buộc.
 
 ### Bước 4 — Chờ pipeline chuyển log
 
@@ -1256,12 +1443,25 @@ Get-CimInstance Win32_UserAccount -Filter "LocalAccount=True" | Where-Object {
 ```
 
 Mọi dòng phải có `Disabled=False`, `Lockout=False`. Nếu khác, dừng và sửa trước `start`;
-không mở khóa giữa cửa sổ run vì sẽ tạo thêm event.
+không mở khóa giữa cửa sổ run vì sẽ tạo thêm event. Sau khi collector báo `STARTED`, trên
+SOC-AI chờ đúng pre-action delay rồi mới ra tín hiệu cho người thao tác Windows/Kali:
 
-Collector chỉ đếm Security 4624/4625 có `LogonType=2` (interactive) cho các scenario
-account. Các logon nền kiểu network/service của cùng user bị loại để một hoạt động không
-bị đếm sai thành nhiều lần. Vì vậy phải thao tác ở console/`runas` đúng như bảng, không
-thay bằng SMB, WinRM, RDP hoặc scheduled task.
+```bash
+set -euo pipefail
+set -a
+# File do export_run_parameters tạo ở Bước 3; không dùng file của run khác.
+source "evidence/operator-parameter-exports/$RUN_ID.env"
+set +a
+test "$DATN_RUN_ID" = "$RUN_ID"
+sleep "$DATN_PRE_ACTION_DELAY_SECONDS"
+echo 'ACCOUNT_ACTION_MAY_START'
+```
+
+Collector dùng `LogonType=2` (interactive) cho chín scenario console/`runas`. **Ngoại lệ
+duy nhất** là `ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS`: catalog khóa `LogonType=3` và bắt
+buộc hai lần SMB từ cùng Kali `10.40.0.10`. Logon nền kiểu network/service khác bị loại
+để một hoạt động không bị đếm thành nhiều lần. Không tự đổi console thành SMB hoặc đổi
+SMB thành console, WinRM, RDP hay scheduled task.
 
 | Scenario | Thao tác chính xác |
 |---|---|
@@ -1274,25 +1474,86 @@ thay bằng SMB, WinRM, RDP hoặc scheduled task.
 | `ACCOUNT-MALICIOUS-REPEATED-FAILURES-6` | nhập sai đúng 6 lần cho `datn_attack`, không đăng nhập đúng |
 | `ACCOUNT-MALICIOUS-REPEATED-FAILURES-10` | nhập sai đúng 10 lần cho `datn_attack`, không đăng nhập đúng |
 | `ACCOUNT-MALICIOUS-PASSWORD-SPRAY` | nhập sai đúng 1 lần lần lượt cho `datn_spray01`, `02`, `03` |
-| `ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS` | nhập sai đúng 1 lần cho `datn_attack`, sau đó nhập đúng 1 lần; đây là mẫu low-noise cố ý chồng lấn benign để tránh rò nhãn |
+| `ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS` | trên Kali chạy đúng block SMB bên dưới: sai 1 lần, chờ delay trong draft, đúng 1 lần từ cùng nguồn; đây là mẫu low-noise nhưng có ngữ cảnh network-logon phân biệt được |
 
 Không tạo thêm lần thử ngoài bảng trong cùng cửa sổ. Kết thúc run benign/malicious có
 success thì sign out; run chỉ có failure thì quay lại desktop quản trị mà không đăng nhập
 đúng tài khoản decoy. Sau 90 giây mới finalize; quality gate sẽ đối chiếu chính xác số
 4624/4625 và thứ tự failure → success.
 
+Chỉ với `ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS`, trên Kali chạy block sau. Người vận hành
+nhập một mật khẩu **cố ý sai** ở prompt đầu và mật khẩu lab đúng ở prompt thứ hai. Lệnh
+không lưu mật khẩu vào history, process list hoặc file:
+
+```bash
+set -euo pipefail
+set -a
+source /tmp/datn-current-run.env
+set +a
+test "$DATN_SCENARIO_ID" = ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS
+if smbclient '//10.20.0.10/IPC$' -U 'WIN11-TARGET\datn_attack' -c 'quit'; then
+  echo 'FAIL: first SMB authentication unexpectedly succeeded' >&2
+  exit 1
+else
+  echo 'EXPECTED_FIRST_AUTH_FAILURE'
+fi
+sleep "$DATN_ATTEMPT_DELAY_SECONDS"
+smbclient '//10.20.0.10/IPC$' -U 'WIN11-TARGET\datn_attack' -c 'quit'
+echo 'EXPECTED_SECOND_AUTH_SUCCESS'
+rm -f /tmp/datn-current-run.env
+```
+
+Nếu prompt đầu nhập nhầm mật khẩu đúng, prompt thứ hai nhập sai, SMB không truy cập được,
+hoặc có thêm attempt, lập tức `abort` run; không sửa manifest để hợp thức hóa.
+
 ### 12.2 C2 scenarios
 
-Chạy PowerShell thường trong `WIN11-TARGET`; chỉ chạy sau `start`.
+Chạy PowerShell thường trong `WIN11-TARGET`; chỉ chạy sau `start`. Trước mỗi run, copy
+nguyên output `.ps1` đã tạo ở Bước 3 vào cửa sổ này, rồi chạy block dùng chung dưới đây.
+Block sẽ từ chối thiếu tham số, sai hướng jitter hoặc giá trị ngoài dải:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+if (-not $DatnRunId -or -not $DatnScenarioId -or -not $DatnParameters) {
+  throw 'Paste the current run parameter export first'
+}
+foreach ($key in 'pre_action_delay_seconds','interval_jitter_percent',
+  'interval_jitter_direction','variant_index') {
+  if (-not $DatnParameters.ContainsKey($key)) { throw "Missing run parameter: $key" }
+}
+if ($DatnParameters.interval_jitter_percent -lt 10 -or
+    $DatnParameters.interval_jitter_percent -gt 30 -or
+    $DatnParameters.interval_jitter_direction -notin -1,1) {
+  throw 'Invalid frozen jitter parameters'
+}
+function Get-DatnGap([double]$BaseSeconds) {
+  $factor = 1.0 + ($DatnParameters.interval_jitter_direction *
+    $DatnParameters.interval_jitter_percent / 100.0)
+  return [Math]::Max(1, [int][Math]::Round($BaseSeconds * $factor))
+}
+function Start-DatnScenario([string]$ExpectedScenario) {
+  if ($DatnScenarioId -ne $ExpectedScenario) {
+    throw "Draft is $DatnScenarioId, command is $ExpectedScenario"
+  }
+  Start-Sleep -Milliseconds ([int][Math]::Round(
+    1000 * $DatnParameters.pre_action_delay_seconds))
+}
+```
+
+Không sửa hàm để tạo timing theo nhãn. `variant_index` phải xuất hiện trong URL hoặc DNS
+name để mỗi run có request nonce riêng nhưng vẫn khớp suffix/path của catalog.
 
 ### C2-BENIGN-HEALTH-POLL
 
 ```powershell
 $ErrorActionPreference = 'Stop'
+Start-DatnScenario 'C2-BENIGN-HEALTH-POLL'
+$gap = Get-DatnGap 30
 1..5 | ForEach-Object {
-  curl.exe --fail --silent --show-error --output NUL http://10.40.0.10:8080/health
+  $uri = "http://10.40.0.10:8080/health?v=$($DatnParameters.variant_index)&n=$_"
+  curl.exe --fail --silent --show-error --output NUL $uri
   if ($LASTEXITCODE -ne 0) { throw 'health request failed' }
-  if ($_ -lt 5) { Start-Sleep -Seconds 30 }
+  if ($_ -lt 5) { Start-Sleep -Seconds $gap }
 }
 ```
 
@@ -1300,7 +1561,9 @@ $ErrorActionPreference = 'Stop'
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-curl.exe --fail --silent --show-error http://10.40.0.10:8080/payload-benign.txt `
+Start-DatnScenario 'C2-BENIGN-SINGLE-DOWNLOAD'
+$uri = "http://10.40.0.10:8080/payload-benign.txt?v=$($DatnParameters.variant_index)"
+curl.exe --fail --silent --show-error $uri `
   -o $env:TEMP\payload-benign.txt
 if ($LASTEXITCODE -ne 0) { throw 'benign download failed' }
 $hash = (Get-FileHash $env:TEMP\payload-benign.txt -Algorithm SHA256).Hash.ToLower()
@@ -1313,9 +1576,11 @@ if ($hash -ne 'd3aad3cdd62be01b41e8004813eb7fb60c78590cfa520764f783f581f951c2e3'
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-$gaps = @(10,35,20)
+Start-DatnScenario 'C2-BENIGN-IRREGULAR-API'
+$gaps = @(10,35,20) | ForEach-Object { Get-DatnGap $_ }
 for ($i=0; $i -lt 4; $i++) {
-  curl.exe --fail --silent --show-error --output NUL http://10.40.0.10:8080/api/status
+  $uri = "http://10.40.0.10:8080/api/status?v=$($DatnParameters.variant_index)&n=$i"
+  curl.exe --fail --silent --show-error --output NUL $uri
   if ($LASTEXITCODE -ne 0) { throw 'API request failed' }
   if ($i -lt 3) { Start-Sleep -Seconds $gaps[$i] }
 }
@@ -1325,9 +1590,10 @@ for ($i=0; $i -lt 4; $i++) {
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-$gaps = @(7,23,11)
+Start-DatnScenario 'C2-BENIGN-DNS'
+$gaps = @(7,23,11) | ForEach-Object { Get-DatnGap $_ }
 for ($i=0; $i -lt 4; $i++) {
-  $name = "b{0:D2}.www.datn.test" -f ($i + 1)
+  $name = "b$($DatnParameters.variant_index)-{0:D2}.www.datn.test" -f ($i + 1)
   $answer = Resolve-DnsName $name -Server 10.40.0.10 -Type A
   if ('10.40.0.10' -notin $answer.IPAddress) { throw "Wrong DNS answer: $name" }
   if ($i -lt 3) { Start-Sleep -Seconds $gaps[$i] }
@@ -1338,10 +1604,13 @@ for ($i=0; $i -lt 4; $i++) {
 
 ```powershell
 $ErrorActionPreference = 'Stop'
+Start-DatnScenario 'C2-BENIGN-API-BURST'
+$gap = Get-DatnGap 2
 1..6 | ForEach-Object {
-  curl.exe --fail --silent --show-error --output NUL http://10.40.0.10:8080/api/status
+  $uri = "http://10.40.0.10:8080/api/status?v=$($DatnParameters.variant_index)&n=$_"
+  curl.exe --fail --silent --show-error --output NUL $uri
   if ($LASTEXITCODE -ne 0) { throw 'API burst request failed' }
-  if ($_ -lt 6) { Start-Sleep -Seconds 2 }
+  if ($_ -lt 6) { Start-Sleep -Seconds $gap }
 }
 ```
 
@@ -1349,11 +1618,13 @@ $ErrorActionPreference = 'Stop'
 
 ```powershell
 $ErrorActionPreference = 'Stop'
+Start-DatnScenario 'C2-MALICIOUS-HTTP-BEACON'
+$gap = Get-DatnGap 15
 1..8 | ForEach-Object {
   curl.exe --fail --silent --show-error --output NUL `
-    "http://10.40.0.10:8081/beacon?run=$($_)"
+    "http://10.40.0.10:8081/beacon?v=$($DatnParameters.variant_index)&n=$_"
   if ($LASTEXITCODE -ne 0) { throw 'beacon request failed' }
-  if ($_ -lt 8) { Start-Sleep -Seconds 15 }
+  if ($_ -lt 8) { Start-Sleep -Seconds $gap }
 }
 ```
 
@@ -1361,10 +1632,11 @@ $ErrorActionPreference = 'Stop'
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-$gaps = @(8,21,13,30,11,24,17)
+Start-DatnScenario 'C2-MALICIOUS-JITTER-BEACON'
+$gaps = @(8,21,13,30,11,24,17) | ForEach-Object { Get-DatnGap $_ }
 for ($i=0; $i -lt 8; $i++) {
   curl.exe --fail --silent --show-error --output NUL `
-    "http://10.40.0.10:8081/beacon?run=$($i+1)"
+    "http://10.40.0.10:8081/beacon?v=$($DatnParameters.variant_index)&n=$i"
   if ($LASTEXITCODE -ne 0) { throw 'jitter beacon request failed' }
   if ($i -lt 7) { Start-Sleep -Seconds $gaps[$i] }
 }
@@ -1374,11 +1646,13 @@ for ($i=0; $i -lt 8; $i++) {
 
 ```powershell
 $ErrorActionPreference = 'Stop'
+Start-DatnScenario 'C2-MALICIOUS-DNS-BEACON'
+$gap = Get-DatnGap 15
 1..8 | ForEach-Object {
-  $name = "r{0:D2}.beacon.datn.test" -f $_
+  $name = "r$($DatnParameters.variant_index)-{0:D2}.beacon.datn.test" -f $_
   $answer = Resolve-DnsName $name -Server 10.40.0.10 -Type A
   if ('10.40.0.10' -notin $answer.IPAddress) { throw "Wrong DNS answer: $name" }
-  if ($_ -lt 8) { Start-Sleep -Seconds 15 }
+  if ($_ -lt 8) { Start-Sleep -Seconds $gap }
 }
 ```
 
@@ -1386,8 +1660,10 @@ $ErrorActionPreference = 'Stop'
 
 ```powershell
 $ErrorActionPreference = 'Stop'
+Start-DatnScenario 'C2-MALICIOUS-STAGED-TRANSFER'
 $expectedStageHash = 'de2f256064a0af797747c2b97505dc0b9f3df0de4f489eac731c23ae9ca9cc31'
-curl.exe --fail --silent --show-error http://10.40.0.10:9001/stage.bin `
+$uri = "http://10.40.0.10:9001/stage.bin?v=$($DatnParameters.variant_index)"
+curl.exe --fail --silent --show-error $uri `
   -o $env:TEMP\stage.bin
 if ($LASTEXITCODE -ne 0) { throw 'staged transfer failed' }
 $hash = (Get-FileHash $env:TEMP\stage.bin -Algorithm SHA256).Hash.ToLower()
@@ -1398,14 +1674,17 @@ if ($hash -ne $expectedStageHash) { throw "Unexpected stage hash: $hash" }
 
 ```powershell
 $ErrorActionPreference = 'Stop'
+Start-DatnScenario 'C2-MALICIOUS-STAGED-TRANSFER-RETRY'
 $expectedStageHash = 'de2f256064a0af797747c2b97505dc0b9f3df0de4f489eac731c23ae9ca9cc31'
+$gap = Get-DatnGap 20
 1..3 | ForEach-Object {
   $out = Join-Path $env:TEMP ("stage-{0:D2}.bin" -f $_)
-  curl.exe --fail --silent --show-error http://10.40.0.10:9001/stage.bin -o $out
+  $uri = "http://10.40.0.10:9001/stage.bin?v=$($DatnParameters.variant_index)&n=$_"
+  curl.exe --fail --silent --show-error $uri -o $out
   if ($LASTEXITCODE -ne 0) { throw "staged retry $_ failed" }
   $hash = (Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
   if ($hash -ne $expectedStageHash) { throw "Unexpected stage hash: $hash" }
-  if ($_ -lt 3) { Start-Sleep -Seconds 20 }
+  if ($_ -lt 3) { Start-Sleep -Seconds $gap }
 }
 Get-FileHash $env:TEMP\stage-*.bin -Algorithm SHA256
 ```
@@ -1727,7 +2006,7 @@ và không trộn dữ liệu mở rộng vào dataset v1.
 - Wazuh kiểm tra cấu hình: https://documentation.wazuh.com/current/user-manual/reference/ossec-conf/verifying-configuration.html
 - Wazuh Windows default channels: https://documentation.wazuh.com/current/user-manual/capabilities/log-data-collection/configuration.html
 - Microsoft Sysmon: https://learn.microsoft.com/sysinternals/downloads/sysmon
-- Microsoft OpenSSH Client: https://learn.microsoft.com/windows-server/administration/openssh/openssh_install_firstuse
+- Microsoft OpenSSH Client/Server: https://learn.microsoft.com/windows-server/administration/openssh/openssh_install_firstuse
 - Microsoft audit GUID constants: https://learn.microsoft.com/windows/win32/secauthz/auditing-constants
 - Suricata EVE JSON: https://docs.suricata.io/en/latest/output/eve/eve-json-output.html
 - Suricata rule-files/default-rule-path: https://docs.suricata.io/en/latest/configuration/suricata-yaml.html

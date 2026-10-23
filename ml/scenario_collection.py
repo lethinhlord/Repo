@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import os
 import random
@@ -338,16 +339,18 @@ def create_run_draft(
     if seed is None:
         seed = int.from_bytes(hashlib.sha256(run_id.encode()).digest()[:4], "big")
     rng = random.Random(seed)
+    common_parameters: dict[str, int | float | str | bool] = {
+        "pre_action_delay_seconds": round(rng.uniform(1.0, 5.0), 3),
+    }
     if scenario.family == "account":
-        parameters: dict[str, int | float | str | bool] = {
-            "attempt_delay_seconds": round(rng.uniform(1.0, 5.0), 3),
-            "operator_pause_jitter_percent": rng.randint(10, 30),
-            "variant_index": rng.randint(0, 999_999),
-        }
+        parameters = dict(common_parameters)
+        if scenario.scenario_id == "ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS":
+            parameters["attempt_delay_seconds"] = round(rng.uniform(1.0, 5.0), 3)
     else:
         parameters = {
+            **common_parameters,
             "interval_jitter_percent": rng.randint(10, 30),
-            "payload_size_bytes": rng.randint(256, 2048),
+            "interval_jitter_direction": rng.choice((-1, 1)),
             "variant_index": rng.randint(0, 999_999),
         }
     try:
@@ -643,6 +646,23 @@ def _account_user(eventdata: dict[str, Any]) -> str:
     return ""
 
 
+def _account_source(eventdata: dict[str, Any]) -> str:
+    raw = str(
+        eventdata.get("ipAddress")
+        or eventdata.get("IpAddress")
+        or eventdata.get("sourceIp")
+        or eventdata.get("workstationName")
+        or eventdata.get("WorkstationName")
+        or "local-console"
+    ).strip().casefold()
+    with suppress(ValueError):
+        address = ipaddress.ip_address(raw)
+        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+            return str(address.ipv4_mapped)
+        return str(address)
+    return raw
+
+
 def _is_interactive_logon(eventdata: dict[str, Any], attribution: Attribution) -> bool:
     """Keep only the logon types declared by the controlled scenario."""
     raw = eventdata.get("logonType", eventdata.get("LogonType"))
@@ -814,6 +834,7 @@ def _derive_account(
     events: list[dict[str, Any]], draft: RunDraft, windows_agent: str
 ) -> tuple[dict[str, float], list[dict[str, Any]], str | None]:
     users = _casefold_set(draft.attribution.account_names)
+    sources = _casefold_set(draft.attribution.source_ips)
     selected: list[dict[str, Any]] = []
     observations: list[AccountObservation] = []
     observed_accounts: set[str] = set()
@@ -821,10 +842,12 @@ def _derive_account(
         if str((event.get("agent") or {}).get("name")) != windows_agent:
             continue
         event_id, _, eventdata = _windows_fields(event)
+        source = _account_source(eventdata)
         if (
             event_id not in {"4624", "4625"}
             or _account_user(eventdata) not in users
             or not _is_interactive_logon(eventdata, draft.attribution)
+            or (sources and source not in sources)
         ):
             continue
         timestamp = _event_time(event)
@@ -833,14 +856,6 @@ def _derive_account(
         selected.append(event)
         observed_accounts.add(_account_user(eventdata))
         account = _account_user(eventdata)
-        source = str(
-            eventdata.get("ipAddress")
-            or eventdata.get("IpAddress")
-            or eventdata.get("sourceIp")
-            or eventdata.get("workstationName")
-            or eventdata.get("WorkstationName")
-            or "local-console"
-        ).strip().casefold()
         logon_type = str(
             eventdata.get("logonType", eventdata.get("LogonType", "unknown"))
         ).strip()
