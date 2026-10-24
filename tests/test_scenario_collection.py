@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -16,6 +17,7 @@ from ml.scenario_collection import (
     _matches_network,
     _matches_suricata,
     _parse_time,
+    _write_checksums,
     abort_run,
     begin_action,
     complete_action,
@@ -133,6 +135,35 @@ def test_start_rejects_clock_evidence_that_is_stale_at_start(tmp_path: Path) -> 
         )
 
 
+@pytest.mark.parametrize("tamper_target", ["source", "cursor"])
+def test_begin_action_rejects_runtime_source_or_cursor_changed_after_start(
+    tmp_path: Path,
+    tamper_target: str,
+) -> None:
+    config = source_config(tmp_path)
+    run_id = f"ACCOUNT-BENIGN-START-CONTRACT-{tamper_target.upper()}"
+    draft = write_draft(
+        tmp_path,
+        run_id=run_id,
+        family="account",
+        label="benign",
+        attribution={"account_names": ["labuser"]},
+    )
+    start_run(draft, config, tmp_path)
+    state_path = (
+        tmp_path / "evidence/scenario-runs" / run_id / ".collection_state.json"
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    if tamper_target == "source":
+        state["source"]["windows_agent_name"] = "UNTRUSTED-AGENT"
+    else:
+        state["archive_cursor"]["size"] += 1
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    with pytest.raises(CollectionError, match="start contract"):
+        begin_action(run_id, tmp_path)
+
+
 def test_finalize_requires_a_collector_managed_execution_receipt(tmp_path: Path) -> None:
     config = source_config(tmp_path)
     draft = write_draft(
@@ -156,6 +187,28 @@ def test_finalize_requires_a_collector_managed_execution_receipt(tmp_path: Path)
             tmp_path,
             now=started + timedelta(seconds=10),
         )
+
+
+def test_complete_action_rejects_a_modified_receipt_snapshot(tmp_path: Path) -> None:
+    config = source_config(tmp_path)
+    run_id = "ACCOUNT-BENIGN-RECEIPT-TAMPER-001"
+    draft = write_draft(
+        tmp_path,
+        run_id=run_id,
+        family="account",
+        label="benign",
+        attribution={"account_names": ["labuser"]},
+    )
+    started = datetime(2026, 10, 24, 8, 30, tzinfo=UTC)
+    start_run(draft, config, tmp_path, now=started)
+    begin_action(run_id, tmp_path, now=started + timedelta(seconds=1))
+    receipt_path = tmp_path / "evidence/scenario-runs" / run_id / "execution_receipt.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["run_id"] = "ACCOUNT-BENIGN-WRONG-RUN"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+
+    with pytest.raises(CollectionError, match="receipt"):
+        complete_action(run_id, tmp_path, now=started + timedelta(seconds=2))
 
 
 def append_jsonl(path: Path, payloads: list[dict]) -> None:
@@ -886,6 +939,46 @@ def test_validate_detects_evidence_tampering(tmp_path: Path) -> None:
         validate_run("ACCOUNT-BENIGN-002", tmp_path)
 
 
+def test_validate_rejects_receipt_identity_even_if_checksums_are_rewritten(
+    tmp_path: Path,
+) -> None:
+    config = source_config(tmp_path)
+    run_id = "ACCOUNT-BENIGN-RECEIPT-IDENTITY-001"
+    draft = write_draft(
+        tmp_path,
+        run_id=run_id,
+        family="account",
+        label="benign",
+        attribution={"account_names": ["labuser"]},
+    )
+    started = datetime(2026, 10, 16, 5, 15, tzinfo=UTC)
+    start_run(draft, config, tmp_path, now=started)
+    append_jsonl(
+        tmp_path / "archives.json",
+        [windows_event(4624, started + timedelta(seconds=5), {"targetUserName": "labuser"})],
+    )
+    finalize_run(run_id, tmp_path, now=started + timedelta(seconds=10))
+    evidence_dir = tmp_path / "evidence/scenario-runs" / run_id
+    receipt_path = evidence_dir / "execution_receipt.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["run_id"] = "ACCOUNT-BENIGN-WRONG-RUN"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    state_path = evidence_dir / ".collection_state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["execution_receipt"] = receipt
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    metadata_path = evidence_dir / "collection_metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["execution_receipt_sha256"] = hashlib.sha256(
+        receipt_path.read_bytes()
+    ).hexdigest()
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    _write_checksums(evidence_dir)
+
+    with pytest.raises(CollectionError, match="receipt"):
+        validate_run(run_id, tmp_path)
+
+
 def test_finalize_recovers_an_atomic_rename_interruption(tmp_path: Path) -> None:
     config = source_config(tmp_path)
     run_id = "ACCOUNT-BENIGN-RECOVERY-001"
@@ -1529,6 +1622,60 @@ def test_start_rejects_a_second_concurrent_run_and_abort_releases_lock(
     abort_run("ACCOUNT-BENIGN-CONCURRENT-001", tmp_path, "test cleanup")
     result = start_run(second, config, tmp_path)
     assert result["status"] == "STARTED"
+
+
+def test_start_rejects_orphaned_finalizing_run_without_active_lock(
+    tmp_path: Path,
+) -> None:
+    config = source_config(tmp_path)
+    first = write_draft(
+        tmp_path,
+        run_id="ACCOUNT-BENIGN-FINALIZING-001",
+        family="account",
+        label="benign",
+        attribution={"account_names": ["labuser"]},
+    )
+    second = write_draft(
+        tmp_path,
+        run_id="ACCOUNT-BENIGN-FINALIZING-002",
+        family="account",
+        label="benign",
+        attribution={"account_names": ["labuser"]},
+    )
+    start_run(first, config, tmp_path)
+    state_path = (
+        tmp_path
+        / "evidence/scenario-runs/ACCOUNT-BENIGN-FINALIZING-001/.collection_state.json"
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["status"] = "FINALIZING"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    (state_path.parent.parent / ".active-run.json").unlink()
+
+    with pytest.raises(CollectionError, match="active run"):
+        start_run(second, config, tmp_path)
+
+
+def test_abort_rejects_finalizing_run(tmp_path: Path) -> None:
+    config = source_config(tmp_path)
+    draft = write_draft(
+        tmp_path,
+        run_id="ACCOUNT-BENIGN-FINALIZING-ABORT-001",
+        family="account",
+        label="benign",
+        attribution={"account_names": ["labuser"]},
+    )
+    start_run(draft, config, tmp_path)
+    state_path = (
+        tmp_path
+        / "evidence/scenario-runs/ACCOUNT-BENIGN-FINALIZING-ABORT-001/.collection_state.json"
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["status"] = "FINALIZING"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    with pytest.raises(CollectionError, match="finalizing or finalized"):
+        abort_run("ACCOUNT-BENIGN-FINALIZING-ABORT-001", tmp_path, "unsafe abort")
 
 
 def test_finalize_rejects_modified_start_snapshot(tmp_path: Path) -> None:

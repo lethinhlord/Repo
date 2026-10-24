@@ -13,6 +13,8 @@ data:
   require_collection_audit: true
   evidence_dir: evidence/scenario-runs
   scenario_catalog: config/scenario-catalog.yaml
+  source_config: config/collection-sources.yaml
+  taxonomy: config/suspicious-process-taxonomy.yaml
   audit_report: evidence/dataset-audit.json
   minimum_runs: 10
   target_runs: 12

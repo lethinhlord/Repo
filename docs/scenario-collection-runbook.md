@@ -1419,9 +1419,10 @@ set -euo pipefail
 .venv-ml/bin/python -m scripts.scenario_session status --run-id "$RUN_ID"
 ```
 
-Phải thấy `STARTED`. Lệnh này đối chiếu draft với catalog, chụp cursor/snapshot và tạo
-khóa toàn cục; một lệnh `start` thứ hai sẽ bị từ chối. Chỉ sau đó mới thao tác trên
-Windows/Kali.
+Phải thấy `STARTED`. Lệnh này đối chiếu draft với catalog, chụp cursor/snapshot, tạo
+`start-contract.json` ràng buộc nguồn runtime + cursor với cấu hình tại thời điểm start,
+và tạo khóa toàn cục; một lệnh `start` thứ hai sẽ bị từ chối. Không sửa state, cursor,
+snapshot hoặc start contract bằng tay. Chỉ sau đó mới thao tác trên Windows/Kali.
 
 ### Bước 3 — Chạy đúng một kịch bản
 
@@ -2095,6 +2096,9 @@ gửi archive, `checksums.sha256`, `git-commit.txt` và báo cáo audit cùng nh
 | `no attributable Suricata...` | traffic đi tắt, sai `src_ip`, rule/interface hoặc EVE chưa forward | không retry bằng traffic mới trong cùng run; abort, sửa route/rule/ACL, chạy pilot mới |
 | checksum/`RUN_STATE_INVALID` | file bị sửa hoặc finalize bị gián đoạn | dùng `quarantine`, không sửa checksum/state để hợp thức hóa; thu ID mới |
 | `active run...` | còn run STARTED hoặc backup đang giữ khóa | đọc owner, finalize/abort/quarantine đúng run; không xóa `.active-run.json` bằng tay |
+| `execution receipt...` | chưa `begin-action`/`complete-action`, receipt bị sửa hoặc dùng export sai run | abort nếu hành động chưa hoàn tất; không tự sửa state/receipt; tạo run ID mới nếu đã thao tác sai |
+| `frozen action count`/`interval contract` | chạy thừa/thiếu request hoặc sai khoảng nghỉ | abort và thu run mới; không thêm traffic khi run đã kết thúc |
+| `collection contract` | catalog/schema/taxonomy/source config khác snapshot lúc start | quarantine run, đồng bộ đúng commit, chạy lại pilot rồi thu ID mới |
 | `SCENARIO_CATALOG_MISMATCH` | draft/manifest không thuộc catalog hoặc sai family/label | quarantine run, cập nhật repo đúng commit, tạo draft mới từ CLI |
 | `SCENARIO_IMBALANCE`/`STRATUM_EXCESS` | năm scenario lệch nhau quá 1 run hoặc nhóm đã quá 12 | không copy/xóa tùy tiện; dừng thu, bàn giao audit để người phụ trách quyết định dataset version mới |
 | duplicate incident/run | tái sử dụng dữ liệu hoặc ID | quarantine bản trùng và chạy mới |

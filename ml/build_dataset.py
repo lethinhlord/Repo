@@ -39,6 +39,14 @@ def build_dataset(config_path: Path) -> dict[str, object]:
                 data_config.get("maximum_scenario_share", 0.30)
             ),
             scenario_catalog_path=Path(data_config["scenario_catalog"]),
+            source_config_path=Path(
+                data_config.get("source_config", "config/collection-sources.yaml")
+            ),
+            taxonomy_path=Path(
+                data_config.get(
+                    "taxonomy", "config/suspicious-process-taxonomy.yaml"
+                )
+            ),
         )
         if report["status"] not in {"READY", "TARGET_MET"}:
             raise ValueError(

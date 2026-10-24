@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
+from datetime import UTC
 from itertools import combinations
 from pathlib import Path
 from typing import Any
@@ -16,7 +17,12 @@ from ml.dataset import (
     load_feature_schema,
     validate_feature_contract,
 )
-from ml.scenario_collection import ClockPreflight, ScenarioCatalog, ScenarioDefinition
+from ml.scenario_collection import (
+    ClockPreflight,
+    ScenarioCatalog,
+    ScenarioDefinition,
+    _parse_time,
+)
 
 STRATA = ("account:benign", "account:malicious", "c2:benign", "c2:malicious")
 
@@ -27,6 +33,12 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _payload_sha256(payload: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 def _issue(
@@ -105,6 +117,8 @@ def _audit_run(
     catalog: dict[str, ScenarioDefinition],
     expected_catalog_sha256: str,
     expected_schema_sha256: str,
+    expected_source_config_sha256: str,
+    expected_taxonomy_sha256: str,
 ) -> tuple[ScenarioManifest | None, list[IncidentRequest], list[str]]:
     errors: list[str] = []
     run_dir = manifest_path.parent
@@ -144,6 +158,12 @@ def _audit_run(
         errors.append(
             "COLLECTION_CONTRACT_INVALID: run used a different feature schema"
         )
+    if manifest.source_config_sha256 != expected_source_config_sha256:
+        errors.append(
+            "COLLECTION_CONTRACT_INVALID: run used a different source configuration"
+        )
+    if manifest.taxonomy_sha256 != expected_taxonomy_sha256:
+        errors.append("COLLECTION_CONTRACT_INVALID: run used a different taxonomy")
 
     incident_path = run_dir / "incidents.jsonl"
     if not incident_path.is_file():
@@ -266,6 +286,50 @@ def _audit_run(
         errors.append("collection metadata seed does not match manifest")
     if metadata.get("scenario_parameters") != manifest.scenario_parameters:
         errors.append("collection metadata parameters do not match manifest")
+    start_contract_path = evidence_dir / "start-contract.json"
+    try:
+        start_contract = json.loads(start_contract_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(f"COLLECTION_CONTRACT_INVALID: invalid start contract: {exc}")
+        start_contract = {}
+    start_contract_sha256 = (
+        _payload_sha256(start_contract) if isinstance(start_contract, dict) else ""
+    )
+    bound_start_fields = (
+        "run_id",
+        "started_at",
+        "draft_sha256",
+        "draft_snapshot_sha256",
+        "source_config_sha256",
+        "taxonomy_sha256",
+        "scenario_catalog_sha256",
+        "feature_schema_sha256",
+        "collection_contract_sha256",
+        "frozen_parameters_sha256",
+        "source",
+        "archive_cursor",
+    )
+    if (
+        not isinstance(start_contract, dict)
+        or start_contract.get("version") != "collection-start-contract-v1"
+        or start_contract_sha256 != state.get("start_contract_sha256")
+        or start_contract_sha256 != metadata.get("start_contract_sha256")
+        or any(start_contract.get(name) != state.get(name) for name in bound_start_fields)
+    ):
+        errors.append(
+            "COLLECTION_CONTRACT_INVALID: runtime source/cursor is not bound to the "
+            "immutable start contract"
+        )
+    cursor = start_contract.get("archive_cursor", {})
+    source = start_contract.get("source", {})
+    if (
+        not isinstance(cursor, dict)
+        or not isinstance(source, dict)
+        or cursor.get("path") != source.get("wazuh_archives_path")
+    ):
+        errors.append(
+            "COLLECTION_CONTRACT_INVALID: start contract archive cursor/source mismatch"
+        )
     try:
         frozen_parameters = json.loads(
             (evidence_dir / "execution-parameters.json").read_text(encoding="utf-8")
@@ -298,6 +362,10 @@ def _audit_run(
         or receipt.get("run_id") != manifest.run_id
         or receipt.get("scenario_id") != manifest.scenario_id
         or receipt.get("frozen_parameters_sha256") != frozen_digest
+        or _parse_time(receipt.get("action_started_at"))
+        != manifest.start_time.astimezone(UTC)
+        or _parse_time(receipt.get("action_ended_at"))
+        != manifest.end_time.astimezone(UTC)
         or not receipt_path.is_file()
         or metadata.get("execution_receipt_sha256") != _sha256(receipt_path)
     ):
@@ -391,6 +459,8 @@ def audit_dataset(
     minimum_scenarios: int = 5,
     maximum_scenario_share: float = 0.30,
     scenario_catalog_path: Path = Path("config/scenario-catalog.yaml"),
+    source_config_path: Path = Path("config/collection-sources.yaml"),
+    taxonomy_path: Path = Path("config/suspicious-process-taxonomy.yaml"),
 ) -> dict[str, Any]:
     if minimum_runs < 5:
         raise ValueError("minimum_runs must be at least 5 for the configured grouped split")
@@ -415,6 +485,11 @@ def audit_dataset(
     schema = load_feature_schema(Path(__file__).with_name("feature_schema.json"))
     catalog_sha256 = _sha256(scenario_catalog_path)
     schema_sha256 = _sha256(Path(__file__).with_name("feature_schema.json"))
+    try:
+        source_config_sha256 = _sha256(source_config_path)
+        taxonomy_sha256 = _sha256(taxonomy_path)
+    except OSError as exc:
+        raise ValueError(f"invalid canonical collection contract: {exc}") from exc
     issues: list[dict[str, str]] = []
     candidates: dict[str, tuple[ScenarioManifest, list[IncidentRequest]]] = {}
     invalid_runs: set[str] = set()
@@ -445,6 +520,8 @@ def audit_dataset(
             catalog,
             catalog_sha256,
             schema_sha256,
+            source_config_sha256,
+            taxonomy_sha256,
         )
         run_id = manifest.run_id if manifest is not None else manifest_path.parent.name
         if errors:

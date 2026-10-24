@@ -27,6 +27,8 @@ def test_training_config_preserves_60_20_20_grouped_split() -> None:
     assert config["data"]["group_key"] == "scenario_id"
     assert config["data"]["require_collection_audit"] is True
     assert config["data"]["scenario_catalog"] == "config/scenario-catalog.yaml"
+    assert config["data"]["source_config"] == "config/collection-sources.yaml"
+    assert config["data"]["taxonomy"] == "config/suspicious-process-taxonomy.yaml"
     assert config["split"] == {
         "train_folds": [0, 1, 2],
         "validation_folds": [3],

@@ -274,6 +274,20 @@ def _resolve(project_root: Path, value: str) -> Path:
     return path if path.is_absolute() else project_root / path
 
 
+def _normalized_source(source: SourceConfig, project_root: Path) -> dict[str, Any]:
+    payload = source.model_dump(mode="json")
+    payload["wazuh_archives_path"] = str(
+        _resolve(project_root, source.wazuh_archives_path).resolve()
+    )
+    payload["taxonomy_path"] = str(
+        _resolve(project_root, source.taxonomy_path).resolve()
+    )
+    payload["scenario_catalog_path"] = str(
+        _resolve(project_root, source.scenario_catalog_path).resolve()
+    )
+    return payload
+
+
 def _validate_draft_against_catalog(draft: RunDraft, catalog_path: Path) -> None:
     try:
         catalog = ScenarioCatalog.model_validate(_read_yaml(catalog_path))
@@ -475,7 +489,7 @@ def _acquire_active_run(evidence_root: Path, run_id: str) -> None:
             raise CollectionError(
                 f"cannot verify collection state before start: {state_path}: {exc}"
             ) from exc
-        if state.get("status") == "STARTED":
+        if state.get("status") in {"STARTED", "FINALIZING"}:
             raise CollectionError(
                 f"active run already exists: {state.get('run_id', state_path.parent.name)}"
             )
@@ -590,10 +604,8 @@ def start_run(
         "scenario_parameters": draft.scenario_parameters,
     }
     frozen_parameters_sha256 = _payload_sha256(frozen_parameters)
-    source_snapshot = source.model_dump(mode="json")
-    source_snapshot["wazuh_archives_path"] = str(archive_path)
-    source_snapshot["taxonomy_path"] = str(taxonomy_path)
-    source_snapshot["scenario_catalog_path"] = str(catalog_path)
+    source_snapshot = _normalized_source(source, project_root)
+    archive_cursor = _cursor(archive_path)
     state = {
         "version": "scenario-collection-v1",
         "status": "STARTED",
@@ -601,21 +613,15 @@ def start_run(
         "started_at": _iso(started_at),
         "draft": draft_snapshot,
         "source": source_snapshot,
-        "archive_cursor": _cursor(archive_path),
+        "archive_cursor": archive_cursor,
         "draft_sha256": _sha256(draft_path),
+        "draft_snapshot_sha256": _payload_sha256(draft_snapshot),
         "source_config_sha256": _sha256(source_config_path),
         "taxonomy_sha256": _sha256(taxonomy_path),
         "feature_schema_sha256": _sha256(schema_path),
         "frozen_parameters_sha256": frozen_parameters_sha256,
         "execution_receipt": None,
     }
-    start_marker = {
-        "event": "START",
-        "run_id": draft.run_id,
-        "timestamp": _iso(started_at),
-        "draft_sha256": state["draft_sha256"],
-    }
-    state["start_marker"] = start_marker
     state["scenario_catalog_sha256"] = _sha256(catalog_path)
     state["collection_contract_sha256"] = _payload_sha256(
         {
@@ -625,6 +631,30 @@ def start_run(
             "feature_schema_sha256": state["feature_schema_sha256"],
         }
     )
+    start_contract = {
+        "version": "collection-start-contract-v1",
+        "run_id": draft.run_id,
+        "started_at": state["started_at"],
+        "draft_sha256": state["draft_sha256"],
+        "draft_snapshot_sha256": state["draft_snapshot_sha256"],
+        "source_config_sha256": state["source_config_sha256"],
+        "taxonomy_sha256": state["taxonomy_sha256"],
+        "scenario_catalog_sha256": state["scenario_catalog_sha256"],
+        "feature_schema_sha256": state["feature_schema_sha256"],
+        "collection_contract_sha256": state["collection_contract_sha256"],
+        "frozen_parameters_sha256": state["frozen_parameters_sha256"],
+        "source": source_snapshot,
+        "archive_cursor": archive_cursor,
+    }
+    state["start_contract_sha256"] = _payload_sha256(start_contract)
+    start_marker = {
+        "event": "START",
+        "run_id": draft.run_id,
+        "timestamp": _iso(started_at),
+        "draft_sha256": state["draft_sha256"],
+        "start_contract_sha256": state["start_contract_sha256"],
+    }
+    state["start_marker"] = start_marker
     evidence_root = evidence_dir.parent
     _acquire_active_run(evidence_root, draft.run_id)
     try:
@@ -635,6 +665,7 @@ def start_run(
             staging_dir = Path(temporary)
             _write_json(staging_dir / "ground_truth.json", draft_snapshot)
             _write_json(staging_dir / "execution-parameters.json", frozen_parameters)
+            _write_json(staging_dir / "start-contract.json", start_contract)
             shutil.copyfile(source_config_path, staging_dir / "collection-sources.yaml")
             shutil.copyfile(
                 taxonomy_path,
@@ -1302,7 +1333,11 @@ def _write_checksums(evidence_dir: Path) -> None:
     _atomic_text(evidence_dir / "checksums.sha256", "".join(rows))
 
 
-def _verify_start_snapshot(evidence_dir: Path, state: dict[str, Any]) -> None:
+def _verify_start_snapshot(
+    evidence_dir: Path,
+    state: dict[str, Any],
+    project_root: Path,
+) -> dict[str, Any]:
     ground_truth_path = evidence_dir / "ground_truth.json"
     source_snapshot_path = evidence_dir / "collection-sources.yaml"
     taxonomy_snapshot_path = evidence_dir / "suspicious-process-taxonomy.yaml"
@@ -1310,8 +1345,38 @@ def _verify_start_snapshot(evidence_dir: Path, state: dict[str, Any]) -> None:
         ground_truth = json.loads(ground_truth_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise CollectionError(f"invalid start snapshot ground_truth.json: {exc}") from exc
-    if ground_truth != state.get("draft"):
+    if (
+        ground_truth != state.get("draft")
+        or _payload_sha256(ground_truth) != state.get("draft_snapshot_sha256")
+    ):
         raise CollectionError("start snapshot ground_truth.json changed after run start")
+    start_contract_path = evidence_dir / "start-contract.json"
+    try:
+        start_contract = json.loads(start_contract_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CollectionError(f"invalid immutable start contract: {exc}") from exc
+    if (
+        not isinstance(start_contract, dict)
+        or start_contract.get("version") != "collection-start-contract-v1"
+        or _payload_sha256(start_contract) != state.get("start_contract_sha256")
+    ):
+        raise CollectionError("immutable start contract digest is inconsistent")
+    bound_fields = (
+        "run_id",
+        "started_at",
+        "draft_sha256",
+        "draft_snapshot_sha256",
+        "source_config_sha256",
+        "taxonomy_sha256",
+        "scenario_catalog_sha256",
+        "feature_schema_sha256",
+        "collection_contract_sha256",
+        "frozen_parameters_sha256",
+        "source",
+        "archive_cursor",
+    )
+    if any(start_contract.get(name) != state.get(name) for name in bound_fields):
+        raise CollectionError("runtime state differs from the immutable start contract")
     parameters_path = evidence_dir / "execution-parameters.json"
     try:
         parameters = json.loads(parameters_path.read_text(encoding="utf-8"))
@@ -1328,20 +1393,55 @@ def _verify_start_snapshot(evidence_dir: Path, state: dict[str, Any]) -> None:
         ]
     except (OSError, json.JSONDecodeError) as exc:
         raise CollectionError(f"invalid run marker evidence: {exc}") from exc
-    if not markers or markers[0] != state.get("start_marker"):
+    if (
+        not markers
+        or markers[0] != state.get("start_marker")
+        or markers[0].get("start_contract_sha256")
+        != state.get("start_contract_sha256")
+    ):
         raise CollectionError("START marker does not match immutable collection state")
     protected = {
-        source_snapshot_path: state.get("source_config_sha256"),
-        taxonomy_snapshot_path: state.get("taxonomy_sha256"),
-        evidence_dir / "feature-schema.json": state.get("feature_schema_sha256"),
+        source_snapshot_path: start_contract.get("source_config_sha256"),
+        taxonomy_snapshot_path: start_contract.get("taxonomy_sha256"),
+        evidence_dir / "feature-schema.json": start_contract.get(
+            "feature_schema_sha256"
+        ),
     }
-    if state.get("scenario_catalog_sha256") is not None:
-        protected[evidence_dir / "scenario-catalog.yaml"] = state.get(
+    if start_contract.get("scenario_catalog_sha256") is not None:
+        protected[evidence_dir / "scenario-catalog.yaml"] = start_contract.get(
             "scenario_catalog_sha256"
         )
     for path, expected in protected.items():
         if not isinstance(expected, str) or not path.is_file() or _sha256(path) != expected:
             raise CollectionError(f"start snapshot changed after run start: {path.name}")
+    try:
+        snapshot_source = SourceConfig.model_validate(_read_yaml(source_snapshot_path))
+    except ValueError as exc:
+        raise CollectionError(f"invalid start snapshot source config: {exc}") from exc
+    normalized_source = _normalized_source(snapshot_source, project_root.resolve())
+    if normalized_source != start_contract.get("source"):
+        raise CollectionError("normalized source differs from the immutable start contract")
+    cursor = start_contract.get("archive_cursor")
+    if (
+        not isinstance(cursor, dict)
+        or cursor.get("path") != normalized_source["wazuh_archives_path"]
+        or not isinstance(cursor.get("size"), int)
+        or not isinstance(cursor.get("device"), int)
+        or not isinstance(cursor.get("inode"), int)
+        or int(cursor["size"]) < 0
+    ):
+        raise CollectionError("archive cursor differs from the immutable start contract")
+    contract_components = {
+        "source_config_sha256": start_contract.get("source_config_sha256"),
+        "taxonomy_sha256": start_contract.get("taxonomy_sha256"),
+        "scenario_catalog_sha256": start_contract.get("scenario_catalog_sha256"),
+        "feature_schema_sha256": start_contract.get("feature_schema_sha256"),
+    }
+    if _payload_sha256(contract_components) != start_contract.get(
+        "collection_contract_sha256"
+    ):
+        raise CollectionError("immutable start contract components are inconsistent")
+    return start_contract
 
 
 def begin_action(
@@ -1358,7 +1458,7 @@ def begin_action(
     state = json.loads(state_path.read_text(encoding="utf-8"))
     if state.get("status") != "STARTED" or state.get("execution_receipt") is not None:
         raise CollectionError("action can begin only once for a STARTED run")
-    _verify_start_snapshot(evidence_dir, state)
+    _verify_start_snapshot(evidence_dir, state, project_root)
     action_started_at = _utc(now)
     collection_started_at = _parse_time(state.get("started_at"))
     if collection_started_at is None or action_started_at < collection_started_at:
@@ -1395,6 +1495,14 @@ def complete_action(
     receipt = state.get("execution_receipt")
     if state.get("status") != "STARTED" or not isinstance(receipt, dict):
         raise CollectionError("action was not started for this run")
+    _verify_start_snapshot(evidence_dir, state, project_root)
+    receipt_path = evidence_dir / "execution_receipt.json"
+    try:
+        receipt_snapshot = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CollectionError(f"invalid execution receipt: {exc}") from exc
+    if receipt_snapshot != receipt:
+        raise CollectionError("execution receipt does not match collection state")
     if receipt.get("status") != "STARTED":
         raise CollectionError("action can be completed only once")
     action_started_at = _parse_time(receipt.get("action_started_at"))
@@ -1405,7 +1513,7 @@ def complete_action(
     receipt["action_ended_at"] = _iso(action_ended_at)
     state["execution_receipt"] = receipt
     _write_json(state_path, state)
-    _write_json(evidence_dir / "execution_receipt.json", receipt)
+    _write_json(receipt_path, receipt)
     _append_log(evidence_dir, f"ACTION_COMPLETED run_id={run_id}")
     return receipt
 
@@ -1451,7 +1559,7 @@ def finalize_run(
         source = SourceConfig.model_validate(state["source"])
     except ValueError as exc:
         raise CollectionError(f"stored collection state is invalid: {exc}") from exc
-    _verify_start_snapshot(evidence_dir, state)
+    _verify_start_snapshot(evidence_dir, state, project_root)
     receipt = state.get("execution_receipt")
     if not isinstance(receipt, dict) or receipt.get("status") != "COMPLETED":
         raise CollectionError(
@@ -1635,6 +1743,7 @@ def finalize_run(
         "attributed_windows_events": len(windows_events),
         "attributed_suricata_events": len(suricata_events),
         "execution_receipt_sha256": _sha256(receipt_path),
+        "start_contract_sha256": state["start_contract_sha256"],
         "frozen_parameters_sha256": state["frozen_parameters_sha256"],
         "source_config_sha256": state["source_config_sha256"],
         "taxonomy_sha256": state["taxonomy_sha256"],
@@ -1714,7 +1823,7 @@ def validate_run(run_id: str, project_root: Path) -> dict[str, Any]:
         raise CollectionError(f"invalid collection state: {exc}") from exc
     if state.get("status") != "FINALIZED" or state.get("run_id") != run_id:
         raise CollectionError("collection state is not FINALIZED for this run")
-    _verify_start_snapshot(evidence_dir, state)
+    _verify_start_snapshot(evidence_dir, state, project_root)
     contract_components = {
         "source_config_sha256": state.get("source_config_sha256"),
         "taxonomy_sha256": state.get("taxonomy_sha256"),
@@ -1743,6 +1852,8 @@ def validate_run(run_id: str, project_root: Path) -> dict[str, Any]:
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     if (
         metadata.get("execution_receipt_sha256") != _sha256(receipt_path)
+        or metadata.get("start_contract_sha256")
+        != state.get("start_contract_sha256")
         or metadata.get("frozen_parameters_sha256")
         != state.get("frozen_parameters_sha256")
     ):
@@ -1784,6 +1895,14 @@ def validate_run(run_id: str, project_root: Path) -> dict[str, Any]:
         incident = IncidentRequest.model_validate_json(lines[0])
     except (OSError, ValueError) as exc:
         raise CollectionError(f"invalid finalized run {run_id}: {exc}") from exc
+    try:
+        frozen_parameters = json.loads(
+            (evidence_dir / "execution-parameters.json").read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CollectionError(f"invalid frozen execution parameters: {exc}") from exc
+    frozen_digest = _payload_sha256(frozen_parameters)
+    draft = state.get("draft") if isinstance(state.get("draft"), dict) else {}
     if manifest.run_id != run_id or incident.family_hint != manifest.family:
         raise CollectionError("finalized run identity/family mismatch")
     if incident.asset_id != manifest.host:
@@ -1796,6 +1915,33 @@ def validate_run(run_id: str, project_root: Path) -> dict[str, Any]:
         }.items()
     ):
         raise CollectionError("manifest collection contract does not match run state")
+    if (
+        frozen_parameters.get("run_id") != manifest.run_id
+        or frozen_parameters.get("scenario_id") != manifest.scenario_id
+        or frozen_parameters.get("family") != manifest.family
+        or frozen_parameters.get("label") != manifest.label
+        or frozen_parameters.get("scenario_parameters") != manifest.scenario_parameters
+        or frozen_digest != state.get("frozen_parameters_sha256")
+        or draft.get("run_id") != manifest.run_id
+        or draft.get("scenario_id") != manifest.scenario_id
+        or draft.get("family") != manifest.family
+        or draft.get("label") != manifest.label
+        or draft.get("scenario_parameters") != manifest.scenario_parameters
+    ):
+        raise CollectionError(
+            "frozen execution parameters do not match the finalized manifest"
+        )
+    receipt_start = _parse_time(receipt.get("action_started_at"))
+    receipt_end = _parse_time(receipt.get("action_ended_at"))
+    if (
+        receipt.get("run_id") != manifest.run_id
+        or receipt.get("scenario_id") != manifest.scenario_id
+        or receipt.get("operator") != draft.get("operator")
+        or receipt.get("frozen_parameters_sha256") != frozen_digest
+        or receipt_start != manifest.start_time.astimezone(UTC)
+        or receipt_end != manifest.end_time.astimezone(UTC)
+    ):
+        raise CollectionError("execution receipt identity/window is inconsistent")
     if incident.start_time < manifest.start_time or incident.end_time > manifest.end_time:
         raise CollectionError("incident lies outside scenario window")
     if manifest.family == "c2":
@@ -1826,8 +1972,10 @@ def abort_run(run_id: str, project_root: Path, reason: str) -> dict[str, Any]:
     if not state_path.is_file():
         raise CollectionError(f"unknown run_id: {run_id}")
     state = json.loads(state_path.read_text(encoding="utf-8"))
-    if state.get("status") == "FINALIZED":
-        raise CollectionError("a finalized run cannot be aborted")
+    if state.get("status") in {"FINALIZING", "FINALIZED"}:
+        raise CollectionError(
+            "a finalizing or finalized run cannot be aborted; recover finalize or quarantine"
+        )
     state["status"] = "ABORTED"
     state["abort_reason"] = reason.strip()
     state["aborted_at"] = _iso(datetime.now(UTC))

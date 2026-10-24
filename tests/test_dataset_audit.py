@@ -5,6 +5,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 import yaml
 
 from ml.dataset_audit import audit_dataset
@@ -104,9 +105,11 @@ def write_run(
     evidence_dir = root / "evidence/scenario-runs" / run_id
     evidence_dir.mkdir(parents=True)
     source_snapshot = evidence_dir / "collection-sources.yaml"
-    source_snapshot.write_text("version: collection-sources-v1\n", encoding="utf-8")
+    source_snapshot.write_bytes((root / "collection-sources.yaml").read_bytes())
     taxonomy_snapshot = evidence_dir / "suspicious-process-taxonomy.yaml"
-    taxonomy_snapshot.write_text("revision: test-v1\nrules: []\n", encoding="utf-8")
+    taxonomy_snapshot.write_bytes(
+        (root / "suspicious-process-taxonomy.yaml").read_bytes()
+    )
     catalog_snapshot = evidence_dir / "scenario-catalog.yaml"
     catalog_snapshot.write_bytes(catalog_path.read_bytes())
     schema_source = Path(__file__).parents[1] / "ml/feature_schema.json"
@@ -121,6 +124,13 @@ def write_run(
     collection_contract_sha256 = hashlib.sha256(
         json.dumps(contract_hashes, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+    source_payload = yaml.safe_load(source_snapshot.read_text(encoding="utf-8"))
+    archive_cursor = {
+        "path": source_payload["wazuh_archives_path"],
+        "size": 0,
+        "device": 0,
+        "inode": 0,
+    }
     frozen_parameters = {
         "run_id": run_id,
         "scenario_id": scenario.scenario_id,
@@ -130,6 +140,23 @@ def write_run(
     }
     frozen_parameters_sha256 = hashlib.sha256(
         json.dumps(frozen_parameters, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    start_contract = {
+        "version": "collection-start-contract-v1",
+        "run_id": run_id,
+        "started_at": started.isoformat(),
+        "draft_sha256": provenance_sha256,
+        "draft_snapshot_sha256": provenance_sha256,
+        **contract_hashes,
+        "collection_contract_sha256": collection_contract_sha256,
+        "frozen_parameters_sha256": frozen_parameters_sha256,
+        "source": source_payload,
+        "archive_cursor": archive_cursor,
+    }
+    start_contract_path = evidence_dir / "start-contract.json"
+    start_contract_path.write_text(json.dumps(start_contract), encoding="utf-8")
+    start_contract_sha256 = hashlib.sha256(
+        json.dumps(start_contract, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     receipt = {
         "version": "execution-receipt-v1",
@@ -204,6 +231,7 @@ def write_run(
                 "collection_seed": index,
                 "scenario_parameters": scenario_parameters,
                 "run_marker_count": 2,
+                "start_contract_sha256": start_contract_sha256,
                 **contract_hashes,
                 "collection_contract_sha256": collection_contract_sha256,
                 "frozen_parameters_sha256": frozen_parameters_sha256,
@@ -222,6 +250,7 @@ def write_run(
                 "event": "START",
                 "run_id": run_id,
                 "timestamp": started.isoformat(),
+                "start_contract_sha256": start_contract_sha256,
             }
         )
         + "\n"
@@ -242,9 +271,16 @@ def write_run(
             {
                 "status": "FINALIZED",
                 "run_id": run_id,
+                "started_at": started.isoformat(),
+                "draft": ground_truth,
+                "source": source_payload,
+                "archive_cursor": archive_cursor,
+                "draft_sha256": provenance_sha256,
+                "draft_snapshot_sha256": provenance_sha256,
                 **contract_hashes,
                 "collection_contract_sha256": collection_contract_sha256,
                 "frozen_parameters_sha256": frozen_parameters_sha256,
+                "start_contract_sha256": start_contract_sha256,
                 "execution_receipt": receipt,
             }
         ),
@@ -288,6 +324,23 @@ def write_catalog(root: Path) -> Path:
         ),
         encoding="utf-8",
     )
+    (root / "collection-sources.yaml").write_text(
+        "\n".join(
+            (
+                "version: collection-sources-v1",
+                "wazuh_archives_path: /var/ossec/logs/archives/archives.json",
+                "windows_agent_name: WIN11-TARGET",
+                "suricata_agent_name: NET-SENSOR",
+                "taxonomy_path: config/suspicious-process-taxonomy.yaml",
+                "scenario_catalog_path: config/scenario-catalog.yaml",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    (root / "suspicious-process-taxonomy.yaml").write_text(
+        "revision: test-v1\nrules: []\n", encoding="utf-8"
+    )
     return path
 
 
@@ -299,6 +352,8 @@ def run_audit(root: Path, **kwargs) -> dict:
         root / "data/raw",
         root / "evidence/scenario-runs",
         scenario_catalog_path=catalog_path,
+        source_config_path=root / "collection-sources.yaml",
+        taxonomy_path=root / "suspicious-process-taxonomy.yaml",
         minimum_runs=10,
         target_runs=12,
         **kwargs,
@@ -329,6 +384,100 @@ def test_audit_reports_ready_at_ten_independent_runs_per_stratum(tmp_path: Path)
     assert report["total_valid_runs"] == 40
     assert report["strata"]["c2:benign"]["valid_runs"] == 10
     assert report["strata"]["c2:benign"]["shortage_to_target"] == 2
+
+
+@pytest.mark.parametrize(
+    ("snapshot_name", "hash_field", "old_value", "new_value"),
+    [
+        (
+            "collection-sources.yaml",
+            "source_config_sha256",
+            "windows_agent_name: WIN11-TARGET",
+            "windows_agent_name: UNTRUSTED-AGENT",
+        ),
+        (
+            "suspicious-process-taxonomy.yaml",
+            "taxonomy_sha256",
+            "revision: test-v1",
+            "revision: untrusted-v2",
+        ),
+    ],
+)
+def test_audit_rejects_a_run_with_a_different_canonical_contract(
+    tmp_path: Path,
+    snapshot_name: str,
+    hash_field: str,
+    old_value: str,
+    new_value: str,
+) -> None:
+    populate(tmp_path, count=10)
+    run_id = "ACCOUNT-BENIGN-00"
+    run_dir = tmp_path / "data/raw" / run_id
+    evidence_dir = tmp_path / "evidence/scenario-runs" / run_id
+    contract_snapshot = evidence_dir / snapshot_name
+    contract_snapshot.write_text(
+        contract_snapshot.read_text(encoding="utf-8").replace(old_value, new_value),
+        encoding="utf-8",
+    )
+    manifest_path = run_dir / "scenario_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest[hash_field] = hashlib.sha256(contract_snapshot.read_bytes()).hexdigest()
+    contract_hashes = {
+        name: manifest[name]
+        for name in (
+            "source_config_sha256",
+            "taxonomy_sha256",
+            "scenario_catalog_sha256",
+            "feature_schema_sha256",
+        )
+    }
+    manifest["collection_contract_sha256"] = hashlib.sha256(
+        json.dumps(contract_hashes, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    start_contract_path = evidence_dir / "start-contract.json"
+    start_contract = json.loads(start_contract_path.read_text(encoding="utf-8"))
+    start_contract.update(contract_hashes)
+    start_contract["collection_contract_sha256"] = manifest[
+        "collection_contract_sha256"
+    ]
+    if hash_field == "source_config_sha256":
+        start_contract["source"]["windows_agent_name"] = "UNTRUSTED-AGENT"
+    start_contract_path.write_text(json.dumps(start_contract), encoding="utf-8")
+    start_contract_sha256 = hashlib.sha256(
+        json.dumps(start_contract, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    for filename in (".collection_state.json", "collection_metadata.json"):
+        path = evidence_dir / filename
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload.update(contract_hashes)
+        payload["collection_contract_sha256"] = manifest[
+            "collection_contract_sha256"
+        ]
+        payload["start_contract_sha256"] = start_contract_sha256
+        if filename == "collection_metadata.json":
+            payload["scenario_manifest_sha256"] = hashlib.sha256(
+                manifest_path.read_bytes()
+            ).hexdigest()
+        elif hash_field == "source_config_sha256":
+            payload["source"]["windows_agent_name"] = "UNTRUSTED-AGENT"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+    marker_path = evidence_dir / "run_markers.jsonl"
+    markers = [json.loads(line) for line in marker_path.read_text().splitlines()]
+    markers[0]["start_contract_sha256"] = start_contract_sha256
+    marker_path.write_text(
+        "".join(json.dumps(marker) + "\n" for marker in markers), encoding="utf-8"
+    )
+    checksums(evidence_dir)
+
+    report = run_audit(tmp_path)
+
+    assert report["status"] == "NOT_READY"
+    assert any(
+        issue["code"] == "COLLECTION_CONTRACT_INVALID"
+        and issue["run_id"] == run_id
+        for issue in report["issues"]
+    )
 
 
 def test_audit_reports_exact_shortage_for_sparse_c2_benign(tmp_path: Path) -> None:
@@ -523,17 +672,35 @@ def test_audit_requires_even_distribution_at_ten_runs(tmp_path: Path) -> None:
     ).hexdigest()
     state_path = evidence / ".collection_state.json"
     state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["draft"] = ground_truth
+    state["draft_snapshot_sha256"] = manifest["provenance_sha256"]
     state["frozen_parameters_sha256"] = frozen_digest
     state["execution_receipt"]["scenario_id"] = "C2-BENIGN-S1"
     state["execution_receipt"]["frozen_parameters_sha256"] = frozen_digest
+    start_contract_path = evidence / "start-contract.json"
+    start_contract = json.loads(start_contract_path.read_text(encoding="utf-8"))
+    start_contract["draft_snapshot_sha256"] = manifest["provenance_sha256"]
+    start_contract["frozen_parameters_sha256"] = frozen_digest
+    start_contract_path.write_text(json.dumps(start_contract), encoding="utf-8")
+    start_contract_sha256 = hashlib.sha256(
+        json.dumps(start_contract, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    state["start_contract_sha256"] = start_contract_sha256
     receipt_path = evidence / "execution_receipt.json"
     receipt_path.write_text(json.dumps(state["execution_receipt"]), encoding="utf-8")
     state_path.write_text(json.dumps(state), encoding="utf-8")
     metadata["frozen_parameters_sha256"] = frozen_digest
+    metadata["start_contract_sha256"] = start_contract_sha256
     metadata["execution_receipt_sha256"] = hashlib.sha256(
         receipt_path.read_bytes()
     ).hexdigest()
     metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    marker_path = evidence / "run_markers.jsonl"
+    markers = [json.loads(line) for line in marker_path.read_text().splitlines()]
+    markers[0]["start_contract_sha256"] = start_contract_sha256
+    marker_path.write_text(
+        "".join(json.dumps(marker) + "\n" for marker in markers), encoding="utf-8"
+    )
     checksums(evidence)
 
     report = run_audit(tmp_path)
