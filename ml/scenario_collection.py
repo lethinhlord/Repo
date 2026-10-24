@@ -8,7 +8,7 @@ import random
 import shutil
 import tempfile
 from contextlib import suppress
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -352,6 +352,7 @@ def create_run_draft(
             "interval_jitter_percent": rng.randint(10, 30),
             "interval_jitter_direction": rng.choice((-1, 1)),
             "variant_index": rng.randint(0, 999_999),
+            "run_nonce": hashlib.sha256(f"{run_id}:{seed}".encode()).hexdigest()[:16],
         }
     try:
         draft = RunDraft(
@@ -391,6 +392,12 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _payload_sha256(payload: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 def _cursor(path: Path) -> dict[str, int | str]:
@@ -532,6 +539,14 @@ def start_run(
         raise CollectionError(f"run_id already exists: {draft.run_id}")
 
     draft_snapshot = draft.model_dump(mode="json")
+    frozen_parameters = {
+        "run_id": draft.run_id,
+        "scenario_id": draft.scenario_id,
+        "family": draft.family,
+        "label": draft.label,
+        "scenario_parameters": draft.scenario_parameters,
+    }
+    frozen_parameters_sha256 = _payload_sha256(frozen_parameters)
     source_snapshot = source.model_dump(mode="json")
     source_snapshot["wazuh_archives_path"] = str(archive_path)
     source_snapshot["taxonomy_path"] = str(taxonomy_path)
@@ -547,6 +562,8 @@ def start_run(
         "draft_sha256": _sha256(draft_path),
         "source_config_sha256": _sha256(source_config_path),
         "taxonomy_sha256": _sha256(taxonomy_path),
+        "frozen_parameters_sha256": frozen_parameters_sha256,
+        "execution_receipt": None,
     }
     start_marker = {
         "event": "START",
@@ -565,6 +582,7 @@ def start_run(
         ) as temporary:
             staging_dir = Path(temporary)
             _write_json(staging_dir / "ground_truth.json", draft_snapshot)
+            _write_json(staging_dir / "execution-parameters.json", frozen_parameters)
             shutil.copyfile(source_config_path, staging_dir / "collection-sources.yaml")
             shutil.copyfile(
                 taxonomy_path,
@@ -578,7 +596,12 @@ def start_run(
     except OSError as exc:
         _release_active_run(evidence_root, draft.run_id)
         raise CollectionError(f"could not initialize run evidence: {exc}") from exc
-    return {"status": "STARTED", "run_id": draft.run_id, "started_at": state["started_at"]}
+    return {
+        "status": "STARTED",
+        "run_id": draft.run_id,
+        "started_at": state["started_at"],
+        "frozen_parameters_sha256": frozen_parameters_sha256,
+    }
 
 
 def _read_appended_jsonl(cursor: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1089,6 +1112,13 @@ def _verify_start_snapshot(evidence_dir: Path, state: dict[str, Any]) -> None:
         raise CollectionError(f"invalid start snapshot ground_truth.json: {exc}") from exc
     if ground_truth != state.get("draft"):
         raise CollectionError("start snapshot ground_truth.json changed after run start")
+    parameters_path = evidence_dir / "execution-parameters.json"
+    try:
+        parameters = json.loads(parameters_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CollectionError(f"invalid frozen execution parameters: {exc}") from exc
+    if _payload_sha256(parameters) != state.get("frozen_parameters_sha256"):
+        raise CollectionError("frozen execution parameters changed after run start")
     marker_path = evidence_dir / "run_markers.jsonl"
     try:
         markers = [
@@ -1113,6 +1143,72 @@ def _verify_start_snapshot(evidence_dir: Path, state: dict[str, Any]) -> None:
             raise CollectionError(f"start snapshot changed after run start: {path.name}")
 
 
+def begin_action(
+    run_id: str,
+    project_root: Path,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    project_root = project_root.resolve()
+    evidence_dir = project_root / "evidence/scenario-runs" / run_id
+    state_path = evidence_dir / ".collection_state.json"
+    if not state_path.is_file():
+        raise CollectionError(f"run was not started: {run_id}")
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    if state.get("status") != "STARTED" or state.get("execution_receipt") is not None:
+        raise CollectionError("action can begin only once for a STARTED run")
+    _verify_start_snapshot(evidence_dir, state)
+    action_started_at = _utc(now)
+    collection_started_at = _parse_time(state.get("started_at"))
+    if collection_started_at is None or action_started_at < collection_started_at:
+        raise CollectionError("action start cannot precede collection start")
+    receipt = {
+        "version": "execution-receipt-v1",
+        "status": "STARTED",
+        "run_id": run_id,
+        "scenario_id": state["draft"]["scenario_id"],
+        "operator": state["draft"]["operator"],
+        "frozen_parameters_sha256": state["frozen_parameters_sha256"],
+        "action_started_at": _iso(action_started_at),
+        "action_ended_at": None,
+    }
+    state["execution_receipt"] = receipt
+    _write_json(state_path, state)
+    _write_json(evidence_dir / "execution_receipt.json", receipt)
+    _append_log(evidence_dir, f"ACTION_STARTED run_id={run_id}")
+    return receipt
+
+
+def complete_action(
+    run_id: str,
+    project_root: Path,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    project_root = project_root.resolve()
+    evidence_dir = project_root / "evidence/scenario-runs" / run_id
+    state_path = evidence_dir / ".collection_state.json"
+    if not state_path.is_file():
+        raise CollectionError(f"run was not started: {run_id}")
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    receipt = state.get("execution_receipt")
+    if state.get("status") != "STARTED" or not isinstance(receipt, dict):
+        raise CollectionError("action was not started for this run")
+    if receipt.get("status") != "STARTED":
+        raise CollectionError("action can be completed only once")
+    action_started_at = _parse_time(receipt.get("action_started_at"))
+    action_ended_at = _utc(now)
+    if action_started_at is None or action_ended_at <= action_started_at:
+        raise CollectionError("action end must be later than action start")
+    receipt["status"] = "COMPLETED"
+    receipt["action_ended_at"] = _iso(action_ended_at)
+    state["execution_receipt"] = receipt
+    _write_json(state_path, state)
+    _write_json(evidence_dir / "execution_receipt.json", receipt)
+    _append_log(evidence_dir, f"ACTION_COMPLETED run_id={run_id}")
+    return receipt
+
+
 def finalize_run(
     run_id: str,
     project_root: Path,
@@ -1125,6 +1221,28 @@ def finalize_run(
     if not state_path.is_file():
         raise CollectionError(f"run was not started: {run_id}")
     state = json.loads(state_path.read_text(encoding="utf-8"))
+    final_dir = project_root / "data/raw" / run_id
+    temporary_dir = final_dir.with_name(f".{run_id}.tmp")
+    if state.get("status") == "FINALIZING":
+        if final_dir.exists() and temporary_dir.exists():
+            raise CollectionError(
+                "finalization recovery found both staged and final output; quarantine the run"
+            )
+        if temporary_dir.is_dir():
+            temporary_dir.replace(final_dir)
+        if not final_dir.is_dir():
+            raise CollectionError(
+                "finalization recovery found neither staged nor final dataset output"
+            )
+        state["status"] = "FINALIZED"
+        state["ended_at"] = state.get("pending_ended_at")
+        state.pop("pending_ended_at", None)
+        _write_json(state_path, state)
+        _release_active_run(evidence_dir.parent, run_id)
+        validate_run(run_id, project_root)
+        return json.loads(
+            (evidence_dir / "collection_metadata.json").read_text(encoding="utf-8")
+        )
     if state.get("status") != "STARTED":
         raise CollectionError(f"run is not in STARTED state: {run_id}")
     try:
@@ -1133,16 +1251,45 @@ def finalize_run(
     except ValueError as exc:
         raise CollectionError(f"stored collection state is invalid: {exc}") from exc
     _verify_start_snapshot(evidence_dir, state)
-    ended_at = _utc(now)
-    started_at = _parse_time(state["started_at"])
-    if started_at is None or ended_at <= started_at:
-        raise CollectionError("finalize time must be later than start time")
+    receipt = state.get("execution_receipt")
+    if not isinstance(receipt, dict) or receipt.get("status") != "COMPLETED":
+        raise CollectionError(
+            "a completed collector-managed execution receipt is required before finalize"
+        )
+    receipt_path = evidence_dir / "execution_receipt.json"
+    try:
+        receipt_snapshot = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CollectionError(f"invalid execution receipt: {exc}") from exc
+    if receipt_snapshot != receipt:
+        raise CollectionError("execution receipt does not match immutable collection state")
+    if receipt.get("frozen_parameters_sha256") != state.get(
+        "frozen_parameters_sha256"
+    ):
+        raise CollectionError("execution receipt references the wrong frozen parameters")
+    collection_started_at = _parse_time(state["started_at"])
+    started_at = _parse_time(receipt.get("action_started_at"))
+    ended_at = _parse_time(receipt.get("action_ended_at"))
+    finalized_at = _utc(now)
+    if (
+        collection_started_at is None
+        or started_at is None
+        or ended_at is None
+        or started_at < collection_started_at
+        or ended_at <= started_at
+        or finalized_at < ended_at
+    ):
+        raise CollectionError("execution receipt contains an invalid action window")
 
     events = _read_appended_jsonl(state["archive_cursor"])
+    tolerance = timedelta(seconds=draft.clock_preflight.maximum_skew_seconds)
+    window_start = started_at - tolerance
+    window_end = ended_at + tolerance
     in_window = [
         event
         for event in events
-        if (timestamp := _event_time(event)) is not None and started_at <= timestamp <= ended_at
+        if (timestamp := _event_time(event)) is not None
+        and window_start <= timestamp <= window_end
     ]
     if not in_window:
         raise CollectionError("no timestamped events fall inside the run window")
@@ -1156,10 +1303,28 @@ def finalize_run(
             in_window, draft, source.windows_agent_name
         )
         suricata_events: list[dict[str, Any]] = []
+        scoped_archive_events = list(windows_events)
         evidence_sources = ["wazuh-archives"]
     else:
         features, windows_events, suricata_events, indicator = _derive_c2(
             in_window, draft, source, taxonomy
+        )
+        selected_suricata = {
+            json.dumps(item, sort_keys=True, separators=(",", ":"))
+            for item in suricata_events
+        }
+        suricata_wrappers = [
+            event
+            for event in in_window
+            if str((event.get("agent") or {}).get("name"))
+            == source.suricata_agent_name
+            and (payload := _suricata_payload(event)) is not None
+            and json.dumps(payload, sort_keys=True, separators=(",", ":"))
+            in selected_suricata
+        ]
+        scoped_archive_events = list(windows_events) + suricata_wrappers
+        scoped_archive_events.sort(
+            key=lambda item: _event_time(item) or datetime.min.replace(tzinfo=UTC)
         )
         evidence_sources = ["wazuh-archives", "suricata-eve"]
 
@@ -1221,17 +1386,19 @@ def finalize_run(
                 f"declared execution log does not exist: {execution_log_source}"
             )
 
-    final_dir = project_root / "data/raw" / run_id
     if final_dir.exists():
         raise CollectionError(f"final output already exists: {final_dir}")
-    temporary_dir = final_dir.with_name(f".{run_id}.tmp")
     if temporary_dir.exists():
-        raise CollectionError(f"stale temporary output must be reviewed: {temporary_dir}")
+        if not temporary_dir.is_dir():
+            raise CollectionError(
+                f"stale temporary output is not a directory: {temporary_dir}"
+            )
+        shutil.rmtree(temporary_dir)
     temporary_dir.mkdir(parents=True)
     _write_json(temporary_dir / "scenario_manifest.json", manifest.model_dump(mode="json"))
     _write_jsonl(temporary_dir / "incidents.jsonl", [incident.model_dump(mode="json")])
 
-    _write_jsonl(evidence_dir / "wazuh_archives.jsonl", in_window)
+    _write_jsonl(evidence_dir / "wazuh_archives.jsonl", scoped_archive_events)
     _write_jsonl(evidence_dir / "windows_events.jsonl", windows_events)
     _write_jsonl(evidence_dir / "suricata_eve.jsonl", suricata_events)
     marker_path = evidence_dir / "run_markers.jsonl"
@@ -1254,11 +1421,15 @@ def finalize_run(
         "version": "scenario-collection-v1",
         "status": "FINALIZED",
         "run_id": run_id,
+        "collection_started_at": _iso(collection_started_at),
         "started_at": _iso(started_at),
         "ended_at": _iso(ended_at),
-        "archive_events": len(in_window),
+        "finalized_at": _iso(finalized_at),
+        "archive_events": len(scoped_archive_events),
         "attributed_windows_events": len(windows_events),
         "attributed_suricata_events": len(suricata_events),
+        "execution_receipt_sha256": _sha256(receipt_path),
+        "frozen_parameters_sha256": state["frozen_parameters_sha256"],
         "taxonomy_revision": taxonomy["revision"],
         "collection_seed": draft.collection_seed,
         "scenario_parameters": draft.scenario_parameters,
@@ -1272,9 +1443,13 @@ def finalize_run(
     _write_json(evidence_dir / "collection_metadata.json", metadata)
     _append_log(evidence_dir, f"RUN_FINALIZED run_id={run_id}")
     _write_checksums(evidence_dir)
+    state["status"] = "FINALIZING"
+    state["pending_ended_at"] = _iso(ended_at)
+    _write_json(state_path, state)
     temporary_dir.replace(final_dir)
     state["status"] = "FINALIZED"
     state["ended_at"] = _iso(ended_at)
+    state.pop("pending_ended_at", None)
     _write_json(state_path, state)
     _release_active_run(evidence_dir.parent, run_id)
     return metadata
@@ -1329,10 +1504,28 @@ def validate_run(run_id: str, project_root: Path) -> dict[str, Any]:
     if state.get("status") != "FINALIZED" or state.get("run_id") != run_id:
         raise CollectionError("collection state is not FINALIZED for this run")
     _verify_start_snapshot(evidence_dir, state)
+    receipt_path = evidence_dir / "execution_receipt.json"
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CollectionError(f"invalid execution receipt: {exc}") from exc
+    if (
+        receipt != state.get("execution_receipt")
+        or receipt.get("status") != "COMPLETED"
+        or receipt.get("frozen_parameters_sha256")
+        != state.get("frozen_parameters_sha256")
+    ):
+        raise CollectionError("execution receipt is incomplete or inconsistent")
     metadata_path = evidence_dir / "collection_metadata.json"
     if not metadata_path.is_file():
         raise CollectionError("missing collection_metadata.json")
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if (
+        metadata.get("execution_receipt_sha256") != _sha256(receipt_path)
+        or metadata.get("frozen_parameters_sha256")
+        != state.get("frozen_parameters_sha256")
+    ):
+        raise CollectionError("execution receipt metadata is inconsistent")
     markers = [
         json.loads(line)
         for line in (evidence_dir / "run_markers.jsonl")

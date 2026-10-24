@@ -9,11 +9,14 @@ RUFF="${RUFF:-.venv-ml/bin/ruff}"
 "$PYTHON" -m pytest -q \
   tests/test_scenario_collection.py \
   tests/test_dataset_audit.py \
-  tests/test_collection_configuration.py
+  tests/test_collection_configuration.py \
+  tests/test_export_run_parameters.py \
+  tests/test_ml_dataset.py
 "$RUFF" check \
   ml/scenario_collection.py \
   ml/dataset_audit.py \
   scripts/create_run_draft.py \
+  scripts/export_run_parameters.py \
   scripts/scenario_session.py \
   scripts/audit_dataset.py
 

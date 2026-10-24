@@ -7,6 +7,8 @@ from pathlib import Path
 from ml.scenario_collection import (
     CollectionError,
     abort_run,
+    begin_action,
+    complete_action,
     finalize_run,
     quarantine_run,
     run_status,
@@ -26,7 +28,7 @@ def parser() -> argparse.ArgumentParser:
         "--source-config", type=Path, default=Path("config/collection-sources.yaml")
     )
 
-    for name in ("finalize", "validate", "status"):
+    for name in ("begin-action", "complete-action", "finalize", "validate", "status"):
         command = subcommands.add_parser(name)
         command.add_argument("--run-id", required=True)
 
@@ -45,6 +47,10 @@ def main() -> int:
     try:
         if args.command == "start":
             payload = start_run(args.draft, args.source_config, root)
+        elif args.command == "begin-action":
+            payload = begin_action(args.run_id, root)
+        elif args.command == "complete-action":
+            payload = complete_action(args.run_id, root)
         elif args.command == "finalize":
             payload = finalize_run(args.run_id, root)
         elif args.command == "validate":

@@ -24,6 +24,8 @@ evidence/dataset-audit.json
 evidence/live-week2-*.json
 run-drafts/
 operator-logs/
+evidence/operator-parameter-exports/
+evidence/collection-source-commit.txt
 n8n/data/
 artifacts/runtime/
 ml/splits/*.txt

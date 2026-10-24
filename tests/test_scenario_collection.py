@@ -17,11 +17,13 @@ from ml.scenario_collection import (
     _matches_suricata,
     _parse_time,
     abort_run,
-    finalize_run,
+    begin_action,
+    complete_action,
     quarantine_run,
-    start_run as _start_run,
     validate_run,
 )
+from ml.scenario_collection import finalize_run as _finalize_run
+from ml.scenario_collection import start_run as _start_run
 
 
 def test_declared_remote_logon_type_is_accepted_without_accepting_service_noise() -> None:
@@ -108,6 +110,31 @@ def test_start_rejects_clock_evidence_that_is_stale_at_start(tmp_path: Path) -> 
             config,
             tmp_path,
             now=captured + timedelta(seconds=121),
+        )
+
+
+def test_finalize_requires_a_collector_managed_execution_receipt(tmp_path: Path) -> None:
+    config = source_config(tmp_path)
+    draft = write_draft(
+        tmp_path,
+        run_id="ACCOUNT-BENIGN-RECEIPT-001",
+        family="account",
+        label="benign",
+        attribution={"account_names": ["labuser"]},
+        quality_gates={"min_account_successes": 1, "max_account_successes": 1},
+    )
+    started = datetime(2026, 10, 24, 9, 0, tzinfo=UTC)
+    start_run(draft, config, tmp_path, now=started)
+    append_jsonl(
+        tmp_path / "archives.json",
+        [windows_event(4624, started + timedelta(seconds=5), {"targetUserName": "labuser"})],
+    )
+
+    with pytest.raises(CollectionError, match="execution receipt"):
+        _finalize_run(
+            "ACCOUNT-BENIGN-RECEIPT-001",
+            tmp_path,
+            now=started + timedelta(seconds=10),
         )
 
 
@@ -256,6 +283,22 @@ def start_run(
         clock[field] = started.isoformat()
     draft_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
     return _start_run(draft_path, source_config_path, project_root, now=started)
+
+
+def finalize_run(
+    run_id: str,
+    project_root: Path,
+    *,
+    now: datetime | None = None,
+) -> dict:
+    ended = now or datetime.now(UTC)
+    state_path = project_root / "evidence/scenario-runs" / run_id / ".collection_state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    if not state.get("execution_receipt"):
+        started = datetime.fromisoformat(state["started_at"].replace("Z", "+00:00"))
+        begin_action(run_id, project_root, now=started + timedelta(seconds=1))
+        complete_action(run_id, project_root, now=ended - timedelta(seconds=1))
+    return _finalize_run(run_id, project_root, now=ended)
 
 
 def windows_event(

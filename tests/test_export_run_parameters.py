@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
+import pytest
+
 from ml.scenario_collection import ClockPreflight, RunDraft
-from scripts.export_run_parameters import render_parameters
+from scripts.export_run_parameters import load_frozen_parameters, render_parameters
 
 
 def clock_preflight() -> ClockPreflight:
@@ -61,3 +66,32 @@ def test_render_bash_parameters() -> None:
     assert "DATN_RUN_ID=C2-MALICIOUS-HTTP-BEACON-R01-20261023" in rendered
     assert "DATN_INTERVAL_JITTER_PERCENT=17" in rendered
     assert "DATN_INTERVAL_JITTER_DIRECTION=-1" in rendered
+
+
+def test_load_frozen_parameters_rejects_changed_snapshot(tmp_path: Path) -> None:
+    run_id = "C2-MALICIOUS-HTTP-BEACON-R01-20261023"
+    evidence = tmp_path / "evidence/scenario-runs" / run_id
+    evidence.mkdir(parents=True)
+    payload = {
+        "run_id": run_id,
+        "scenario_id": "C2-MALICIOUS-HTTP-BEACON",
+        "family": "c2",
+        "label": "malicious",
+        "scenario_parameters": {"run_nonce": "tampered"},
+    }
+    (evidence / "execution-parameters.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+    (evidence / ".collection_state.json").write_text(
+        json.dumps(
+            {
+                "status": "STARTED",
+                "execution_receipt": None,
+                "frozen_parameters_sha256": "0" * 64,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="inconsistent"):
+        load_frozen_parameters(tmp_path, run_id)
