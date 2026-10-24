@@ -25,6 +25,9 @@ from ml.scenario_collection import (
 from ml.scenario_collection import finalize_run as _finalize_run
 from ml.scenario_collection import start_run as _start_run
 
+TEST_NONCE = "testnonce001"
+TEST_PROCESS_GUID = "{11111111-1111-1111-1111-111111111111}"
+
 
 def test_declared_remote_logon_type_is_accepted_without_accepting_service_noise() -> None:
     attribution = Attribution(account_names=["datn_attack"], logon_types=[3])
@@ -45,6 +48,23 @@ def test_source_config_requires_a_scenario_catalog() -> None:
                 "taxonomy_path": "config/taxonomy.yaml",
             }
         )
+
+
+def test_c2_draft_requires_a_valid_run_nonce(tmp_path: Path) -> None:
+    config = source_config(tmp_path)
+    draft_path = write_draft(
+        tmp_path,
+        run_id="C2-NONCE-MISSING-001",
+        family="c2",
+        label="malicious",
+        attribution={"destination_ips": ["10.40.0.10"]},
+    )
+    payload = yaml.safe_load(draft_path.read_text(encoding="utf-8"))
+    payload["scenario_parameters"].pop("run_nonce")
+    draft_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(CollectionError, match="run_nonce"):
+        start_run(draft_path, config, tmp_path)
 
 
 def test_timestamp_parser_rejects_timezone_ambiguous_values() -> None:
@@ -213,6 +233,7 @@ def write_draft(
                 "scenario_parameters": {
                     "attempt_delay_seconds": 2.0,
                     "variant_index": 1,
+                    "run_nonce": TEST_NONCE,
                 },
                 "expected_observables": ["Controlled observable is present."],
                 "clock_preflight": {
@@ -309,6 +330,19 @@ def windows_event(
     eventdata = dict(eventdata)
     if event_id in {4624, 4625}:
         eventdata.setdefault("logonType", "2")
+    if event_id == 1:
+        eventdata.setdefault("processGuid", TEST_PROCESS_GUID)
+        command_line = str(eventdata.get("commandLine", ""))
+        if TEST_NONCE.casefold() not in command_line.casefold():
+            eventdata["commandLine"] = f"{command_line} nonce={TEST_NONCE}".strip()
+    if event_id == 3:
+        eventdata.setdefault("processGuid", TEST_PROCESS_GUID)
+        eventdata.setdefault("sourceIp", "10.20.0.10")
+    if event_id == 22:
+        eventdata.setdefault("processGuid", TEST_PROCESS_GUID)
+        query = str(eventdata.get("queryName", ""))
+        if TEST_NONCE.casefold() not in query.casefold():
+            eventdata["queryName"] = f"{TEST_NONCE}.{query}".strip(".")
     return {
         "timestamp": when.isoformat(),
         "agent": {"name": "WIN11-TARGET"},
@@ -326,6 +360,28 @@ def windows_event(
 
 
 def suricata_event(when: datetime, payload: dict) -> dict:
+    payload = json.loads(json.dumps(payload))
+    dns = payload.get("dns")
+    if isinstance(dns, dict):
+        def add_nonce(record: dict) -> None:
+            name = record.get("rrname")
+            if isinstance(name, str) and TEST_NONCE.casefold() not in name.casefold():
+                record["rrname"] = f"{TEST_NONCE}.{name}"
+
+        add_nonce(dns)
+        for field in ("queries", "query"):
+            records = dns.get(field)
+            if isinstance(records, dict):
+                add_nonce(records)
+            elif isinstance(records, list):
+                for record in records:
+                    if isinstance(record, dict):
+                        add_nonce(record)
+        if isinstance(dns.get("answer"), dict):
+            add_nonce(dns["answer"])
+    elif payload.get("event_type") in {"http", "alert"}:
+        http = payload.setdefault("http", {})
+        http.setdefault("url", f"/beacon?run_nonce={TEST_NONCE}")
     eve = {"timestamp": when.isoformat(), **payload}
     return {
         "timestamp": when.isoformat(),
@@ -570,7 +626,7 @@ def test_c2_run_requires_correlated_sysmon_and_suricata_and_calculates_features(
             suricata_event(
                 started + timedelta(seconds=6),
                 {
-                    "event_type": "flow",
+                    "event_type": "http",
                     "src_ip": "10.20.0.10",
                     "dest_ip": "10.40.0.10",
                     "dest_port": 8081,
@@ -619,6 +675,70 @@ def test_c2_run_requires_correlated_sysmon_and_suricata_and_calculates_features(
         "flow_total_bytes_log1p": 0.0,
     }
     assert incident["evidence_sources"] == ["wazuh-archives", "suricata-eve"]
+
+
+@pytest.mark.parametrize("fault", ["wrong-guid", "wrong-nonce", "wrong-time"])
+def test_c2_finalize_rejects_telemetry_that_is_not_run_correlated(
+    tmp_path: Path, fault: str
+) -> None:
+    config = source_config(tmp_path)
+    run_id = f"C2-CORRELATION-{fault.upper()}-001"
+    draft_path = write_draft(
+        tmp_path,
+        run_id=run_id,
+        family="c2",
+        label="malicious",
+        attribution={
+            "process_names": ["curl.exe"],
+            "source_ips": ["10.20.0.10"],
+            "destination_ips": ["10.40.0.10"],
+            "destination_ports": [8081],
+            "command_contains_any": ["/beacon"],
+        },
+        quality_gates={
+            "min_process_events": 1,
+            "min_network_events": 1,
+            "min_suricata_events": 1,
+        },
+    )
+    started = datetime(2026, 10, 16, 2, 30, tzinfo=UTC)
+    start_run(draft_path, config, tmp_path, now=started)
+    process = windows_event(
+        1,
+        started + timedelta(seconds=2),
+        {"image": r"C:\Windows\System32\curl.exe", "commandLine": "curl /beacon"},
+    )
+    network = windows_event(
+        3,
+        started + timedelta(seconds=5),
+        {
+            "image": r"C:\Windows\System32\curl.exe",
+            "initiated": "true",
+            "destinationIp": "10.40.0.10",
+            "destinationPort": "8081",
+        },
+    )
+    if fault == "wrong-guid":
+        network["data"]["win"]["eventdata"]["processGuid"] = "{DIFFERENT-GUID}"
+    suricata_at = started + timedelta(seconds=20 if fault == "wrong-time" else 6)
+    sensor = suricata_event(
+        suricata_at,
+        {
+            "event_type": "http",
+            "src_ip": "10.20.0.10",
+            "dest_ip": "10.40.0.10",
+            "dest_port": 8081,
+            "http": {"url": f"/beacon?run_nonce={TEST_NONCE}"},
+        },
+    )
+    if fault == "wrong-nonce":
+        payload = json.loads(sensor["full_log"])
+        payload["http"]["url"] = "/beacon?run_nonce=anothernonce"
+        sensor["full_log"] = json.dumps(payload)
+    append_jsonl(tmp_path / "archives.json", [process, network, sensor])
+
+    with pytest.raises(CollectionError, match="network|Suricata"):
+        finalize_run(run_id, tmp_path, now=started + timedelta(seconds=30))
 
 
 def test_c2_finalize_fails_closed_without_suricata_evidence(tmp_path: Path) -> None:

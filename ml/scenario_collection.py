@@ -5,6 +5,7 @@ import ipaddress
 import json
 import os
 import random
+import re
 import shutil
 import tempfile
 from contextlib import suppress
@@ -178,6 +179,14 @@ class RunDraft(BaseModel):
             or self.attribution.dns_suffixes
         ):
             raise ValueError("c2 run requires destination IP, port or DNS attribution")
+        if self.family == "c2":
+            nonce = self.scenario_parameters.get("run_nonce")
+            if not isinstance(nonce, str) or not re.fullmatch(
+                r"[A-Za-z0-9_-]{8,64}", nonce
+            ):
+                raise ValueError(
+                    "c2 run requires an 8-64 character scenario_parameters.run_nonce"
+                )
         return self
 
 
@@ -874,6 +883,53 @@ def _taxonomy_match(eventdata: dict[str, Any], taxonomy: dict[str, Any]) -> bool
     return False
 
 
+def _process_guid(eventdata: dict[str, Any]) -> str:
+    return str(
+        eventdata.get("processGuid") or eventdata.get("ProcessGuid") or ""
+    ).strip().casefold()
+
+
+def _suricata_has_nonce(payload: dict[str, Any], nonce: str) -> bool:
+    expected = nonce.casefold()
+    if any(expected in name for name in _suricata_dns_names(payload.get("dns"))):
+        return True
+    http = payload.get("http")
+    if isinstance(http, dict):
+        for field in ("url", "hostname", "http_user_agent"):
+            if expected in str(http.get(field, "")).casefold():
+                return True
+    return False
+
+
+def _suricata_correlates(
+    payload: dict[str, Any],
+    timestamp: datetime,
+    observations: list[NetworkObservation],
+    maximum_delta_seconds: float,
+) -> bool:
+    dns_names = set(_suricata_dns_names(payload.get("dns")))
+    payload_ip = str(payload.get("dest_ip", "")).strip().casefold()
+    payload_port: int | None = None
+    with suppress(TypeError, ValueError):
+        payload_port = int(payload.get("dest_port"))
+    for observation in observations:
+        if abs((timestamp - observation.timestamp).total_seconds()) > maximum_delta_seconds:
+            continue
+        if observation.dns_query is not None:
+            if observation.dns_query.strip(".").casefold() in dns_names:
+                return True
+            continue
+        if observation.destination.strip().casefold() != payload_ip:
+            continue
+        if (
+            observation.destination_port is None
+            or payload_port is None
+            or observation.destination_port == payload_port
+        ):
+            return True
+    return False
+
+
 def periodicity_score(timestamps: list[datetime]) -> float:
     return interval_features(timestamps)[0]
 
@@ -967,21 +1023,41 @@ def _derive_c2(
     process_events = 0
     dns_events = 0
     suspicious = False
+    nonce = str(draft.scenario_parameters["run_nonce"]).casefold()
+    attributed_process_guids: set[str] = set()
+    process_names = _casefold_set(draft.attribution.process_names)
+    command_terms = [
+        term.casefold() for term in draft.attribution.command_contains_any
+    ]
     for event in events:
         if str((event.get("agent") or {}).get("name")) != source.windows_agent_name:
             continue
         event_id, _, eventdata = _windows_fields(event)
-        if event_id == "1" and (
-            _basename(eventdata.get("image")) in _casefold_set(draft.attribution.process_names)
-            or any(
-                term.casefold() in str(eventdata.get("commandLine", "")).casefold()
-                for term in draft.attribution.command_contains_any
-            )
+        command_line = str(eventdata.get("commandLine", "")).casefold()
+        guid = _process_guid(eventdata)
+        if event_id != "1":
+            continue
+        if (
+            (not process_names or _basename(eventdata.get("image")) in process_names)
+            and (not command_terms or any(term in command_line for term in command_terms))
+            and nonce in command_line
+            and guid
         ):
             windows.append(event)
             process_events += 1
+            attributed_process_guids.add(guid)
             suspicious = suspicious or _taxonomy_match(eventdata, taxonomy)
-        elif event_id == "3" and _matches_network(eventdata, draft.attribution):
+
+    for event in events:
+        if str((event.get("agent") or {}).get("name")) != source.windows_agent_name:
+            continue
+        event_id, _, eventdata = _windows_fields(event)
+        guid = _process_guid(eventdata)
+        if (
+            event_id == "3"
+            and _matches_network(eventdata, draft.attribution)
+            and (not attributed_process_guids or guid in attributed_process_guids)
+        ):
             timestamp = _event_time(event)
             if timestamp is None:
                 continue
@@ -994,7 +1070,13 @@ def _derive_c2(
                 NetworkObservation(timestamp, destination, destination_port)
             )
             suspicious = suspicious or _taxonomy_match(eventdata, taxonomy)
-        elif event_id == "22" and _matches_dns(eventdata, draft.attribution):
+        elif (
+            event_id == "22"
+            and _matches_dns(eventdata, draft.attribution)
+            and nonce
+            in str(eventdata.get("queryName", "")).strip(".").casefold()
+            and (not attributed_process_guids or guid in attributed_process_guids)
+        ):
             timestamp = _event_time(event)
             if timestamp is None:
                 continue
@@ -1008,6 +1090,27 @@ def _derive_c2(
     if not network_observations:
         raise CollectionError("no attributable Sysmon network or DNS telemetry was collected")
 
+    nonce_flow_ids: set[str] = set()
+    maximum_delta = max(5.0, draft.clock_preflight.maximum_skew_seconds * 2)
+    for event in events:
+        if str((event.get("agent") or {}).get("name")) != source.suricata_agent_name:
+            continue
+        payload = _suricata_payload(event)
+        timestamp = _event_time(event)
+        if (
+            payload is None
+            or timestamp is None
+            or not _matches_suricata(payload, draft.attribution)
+            or not _suricata_correlates(
+                payload, timestamp, network_observations, maximum_delta
+            )
+        ):
+            continue
+        if _suricata_has_nonce(payload, nonce):
+            flow_id = str(payload.get("flow_id", "")).strip()
+            if flow_id:
+                nonce_flow_ids.add(flow_id)
+
     suricata: list[dict[str, Any]] = []
     seen: set[str] = set()
     signature_ids: set[int] = set()
@@ -1015,7 +1118,20 @@ def _derive_c2(
         if str((event.get("agent") or {}).get("name")) != source.suricata_agent_name:
             continue
         payload = _suricata_payload(event)
-        if payload is None or not _matches_suricata(payload, draft.attribution):
+        timestamp = _event_time(event)
+        if (
+            payload is None
+            or timestamp is None
+            or not _matches_suricata(payload, draft.attribution)
+            or not _suricata_correlates(
+                payload, timestamp, network_observations, maximum_delta
+            )
+        ):
+            continue
+        flow_id = str(payload.get("flow_id", "")).strip()
+        if not _suricata_has_nonce(payload, nonce) and (
+            not flow_id or flow_id not in nonce_flow_ids
+        ):
             continue
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(canonical.encode()).hexdigest()
