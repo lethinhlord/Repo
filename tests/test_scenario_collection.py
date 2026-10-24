@@ -434,6 +434,11 @@ def test_account_run_creates_strict_manifest_incident_and_checksums(tmp_path: Pa
         "collection_seed",
         "scenario_parameters",
         "provenance_sha256",
+            "source_config_sha256",
+            "taxonomy_sha256",
+            "scenario_catalog_sha256",
+            "feature_schema_sha256",
+            "collection_contract_sha256",
     }
     assert incident["asset_id"] == "WIN11-TARGET"
     assert incident["features"]["failed_login_count"] == 2.0

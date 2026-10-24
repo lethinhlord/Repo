@@ -103,6 +103,8 @@ def _audit_run(
     evidence_root: Path,
     schema: dict[str, Any],
     catalog: dict[str, ScenarioDefinition],
+    expected_catalog_sha256: str,
+    expected_schema_sha256: str,
 ) -> tuple[ScenarioManifest | None, list[IncidentRequest], list[str]]:
     errors: list[str] = []
     run_dir = manifest_path.parent
@@ -133,6 +135,14 @@ def _audit_run(
         errors.append(
             "RUN_PROVENANCE_MISSING: manifest requires collection seed, randomized "
             "parameters and provenance hash"
+        )
+    if manifest.scenario_catalog_sha256 != expected_catalog_sha256:
+        errors.append(
+            "COLLECTION_CONTRACT_INVALID: run used a different scenario catalog"
+        )
+    if manifest.feature_schema_sha256 != expected_schema_sha256:
+        errors.append(
+            "COLLECTION_CONTRACT_INVALID: run used a different feature schema"
         )
 
     incident_path = run_dir / "incidents.jsonl"
@@ -202,6 +212,21 @@ def _audit_run(
     }
     if any(ground_truth.get(name) != value for name, value in manifest_identity.items()):
         errors.append("ground truth identity does not match finalized scenario manifest")
+    if catalog_scenario is not None:
+        catalog_contract = {
+            "expected_behavior": catalog_scenario.expected_behavior,
+            "attribution": catalog_scenario.attribution.model_dump(mode="json"),
+            "quality_gates": catalog_scenario.quality_gates.model_dump(mode="json"),
+            "expected_observables": catalog_scenario.expected_observables,
+        }
+        if any(
+            ground_truth.get(name) != value
+            for name, value in catalog_contract.items()
+        ):
+            errors.append(
+                "SCENARIO_CATALOG_MISMATCH: ground truth does not match the full "
+                "catalog scenario contract"
+            )
     if manifest.provenance_sha256 is not None:
         actual_provenance = hashlib.sha256(
             json.dumps(ground_truth, sort_keys=True, separators=(",", ":")).encode()
@@ -241,6 +266,74 @@ def _audit_run(
         errors.append("collection metadata seed does not match manifest")
     if metadata.get("scenario_parameters") != manifest.scenario_parameters:
         errors.append("collection metadata parameters do not match manifest")
+    try:
+        frozen_parameters = json.loads(
+            (evidence_dir / "execution-parameters.json").read_text(encoding="utf-8")
+        )
+        receipt_path = evidence_dir / "execution_receipt.json"
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        errors.append(f"EXECUTION_RECEIPT_INVALID: {exc}")
+        frozen_parameters = {}
+        receipt = {}
+        receipt_path = evidence_dir / "execution_receipt.json"
+    frozen_digest = hashlib.sha256(
+        json.dumps(frozen_parameters, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if (
+        frozen_parameters.get("run_id") != manifest.run_id
+        or frozen_parameters.get("scenario_id") != manifest.scenario_id
+        or frozen_parameters.get("family") != manifest.family
+        or frozen_parameters.get("label") != manifest.label
+        or frozen_parameters.get("scenario_parameters") != manifest.scenario_parameters
+        or frozen_digest != state.get("frozen_parameters_sha256")
+        or frozen_digest != metadata.get("frozen_parameters_sha256")
+    ):
+        errors.append(
+            "EXECUTION_RECEIPT_INVALID: frozen execution parameters are inconsistent"
+        )
+    if (
+        receipt != state.get("execution_receipt")
+        or receipt.get("status") != "COMPLETED"
+        or receipt.get("run_id") != manifest.run_id
+        or receipt.get("scenario_id") != manifest.scenario_id
+        or receipt.get("frozen_parameters_sha256") != frozen_digest
+        or not receipt_path.is_file()
+        or metadata.get("execution_receipt_sha256") != _sha256(receipt_path)
+    ):
+        errors.append(
+            "EXECUTION_RECEIPT_INVALID: collector-managed action receipt is inconsistent"
+        )
+    contract_hashes = {
+        "source_config_sha256": manifest.source_config_sha256,
+        "taxonomy_sha256": manifest.taxonomy_sha256,
+        "scenario_catalog_sha256": manifest.scenario_catalog_sha256,
+        "feature_schema_sha256": manifest.feature_schema_sha256,
+    }
+    expected_contract = hashlib.sha256(
+        json.dumps(contract_hashes, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if manifest.collection_contract_sha256 != expected_contract:
+        errors.append("COLLECTION_CONTRACT_INVALID: manifest contract digest mismatch")
+    for name, expected in {
+        **contract_hashes,
+        "collection_contract_sha256": manifest.collection_contract_sha256,
+    }.items():
+        if metadata.get(name) != expected or state.get(name) != expected:
+            errors.append(
+                f"COLLECTION_CONTRACT_INVALID: {name} differs across run artifacts"
+            )
+    for filename, expected in {
+        "collection-sources.yaml": manifest.source_config_sha256,
+        "suspicious-process-taxonomy.yaml": manifest.taxonomy_sha256,
+        "scenario-catalog.yaml": manifest.scenario_catalog_sha256,
+        "feature-schema.json": manifest.feature_schema_sha256,
+    }.items():
+        snapshot = evidence_dir / filename
+        if not snapshot.is_file() or _sha256(snapshot) != expected:
+            errors.append(
+                f"COLLECTION_CONTRACT_INVALID: snapshot {filename} is missing or changed"
+            )
     marker_path = evidence_dir / "run_markers.jsonl"
     try:
         markers = [
@@ -320,6 +413,8 @@ def audit_dataset(
     for item in parsed_catalog.scenarios:
         expected_scenarios[f"{item.family}:{item.label}"].add(item.scenario_id)
     schema = load_feature_schema(Path(__file__).with_name("feature_schema.json"))
+    catalog_sha256 = _sha256(scenario_catalog_path)
+    schema_sha256 = _sha256(Path(__file__).with_name("feature_schema.json"))
     issues: list[dict[str, str]] = []
     candidates: dict[str, tuple[ScenarioManifest, list[IncidentRequest]]] = {}
     invalid_runs: set[str] = set()
@@ -344,7 +439,12 @@ def audit_dataset(
 
     for manifest_path in manifest_paths:
         manifest, incidents, errors = _audit_run(
-            manifest_path, evidence_dir, schema, catalog
+            manifest_path,
+            evidence_dir,
+            schema,
+            catalog,
+            catalog_sha256,
+            schema_sha256,
         )
         run_id = manifest.run_id if manifest is not None else manifest_path.parent.name
         if errors:
@@ -366,6 +466,8 @@ def audit_dataset(
                         "EXPECTED_OBSERVABLES_MISSING",
                         "EXPECTED_OBSERVABLES_INVALID",
                         "RUN_MARKERS_INVALID",
+                        "COLLECTION_CONTRACT_INVALID",
+                        "EXECUTION_RECEIPT_INVALID",
                     )
                 ):
                     code, message = message.split(":", 1)

@@ -38,6 +38,11 @@ def generate(output_dir: Path, *, random_seed: int = 42) -> None:
                         "variant_index": run_number,
                     },
                     "provenance_sha256": "0" * 64,
+                    "source_config_sha256": "0" * 64,
+                    "taxonomy_sha256": "0" * 64,
+                    "scenario_catalog_sha256": "0" * 64,
+                    "feature_schema_sha256": "0" * 64,
+                    "collection_contract_sha256": "0" * 64,
                 }
                 (run_dir / "scenario_manifest.json").write_text(
                     json.dumps(manifest, indent=2) + "\n", encoding="utf-8"

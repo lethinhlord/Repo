@@ -531,6 +531,11 @@ def start_run(
     if not catalog_path.is_file():
         raise CollectionError(f"scenario catalog does not exist: {catalog_path}")
     _validate_draft_against_catalog(draft, catalog_path)
+    schema_path = project_root / "ml/feature_schema.json"
+    if not schema_path.is_file():
+        schema_path = Path(__file__).with_name("feature_schema.json")
+    if not schema_path.is_file():
+        raise CollectionError(f"feature schema does not exist: {schema_path}")
 
     started_at = _utc(now)
     clock_age = (started_at - _utc(draft.clock_preflight.captured_at)).total_seconds()
@@ -571,6 +576,7 @@ def start_run(
         "draft_sha256": _sha256(draft_path),
         "source_config_sha256": _sha256(source_config_path),
         "taxonomy_sha256": _sha256(taxonomy_path),
+        "feature_schema_sha256": _sha256(schema_path),
         "frozen_parameters_sha256": frozen_parameters_sha256,
         "execution_receipt": None,
     }
@@ -582,6 +588,14 @@ def start_run(
     }
     state["start_marker"] = start_marker
     state["scenario_catalog_sha256"] = _sha256(catalog_path)
+    state["collection_contract_sha256"] = _payload_sha256(
+        {
+            "source_config_sha256": state["source_config_sha256"],
+            "taxonomy_sha256": state["taxonomy_sha256"],
+            "scenario_catalog_sha256": state["scenario_catalog_sha256"],
+            "feature_schema_sha256": state["feature_schema_sha256"],
+        }
+    )
     evidence_root = evidence_dir.parent
     _acquire_active_run(evidence_root, draft.run_id)
     try:
@@ -598,6 +612,7 @@ def start_run(
                 staging_dir / "suspicious-process-taxonomy.yaml",
             )
             shutil.copyfile(catalog_path, staging_dir / "scenario-catalog.yaml")
+            shutil.copyfile(schema_path, staging_dir / "feature-schema.json")
             _write_jsonl(staging_dir / "run_markers.jsonl", [start_marker])
             _write_json(staging_dir / ".collection_state.json", state)
             _append_log(staging_dir, f"RUN_STARTED run_id={draft.run_id}")
@@ -1249,6 +1264,7 @@ def _verify_start_snapshot(evidence_dir: Path, state: dict[str, Any]) -> None:
     protected = {
         source_snapshot_path: state.get("source_config_sha256"),
         taxonomy_snapshot_path: state.get("taxonomy_sha256"),
+        evidence_dir / "feature-schema.json": state.get("feature_schema_sha256"),
     }
     if state.get("scenario_catalog_sha256") is not None:
         protected[evidence_dir / "scenario-catalog.yaml"] = state.get(
@@ -1475,10 +1491,15 @@ def finalize_run(
                 separators=(",", ":"),
             ).encode()
         ).hexdigest(),
+        source_config_sha256=state["source_config_sha256"],
+        taxonomy_sha256=state["taxonomy_sha256"],
+        scenario_catalog_sha256=state["scenario_catalog_sha256"],
+        feature_schema_sha256=state["feature_schema_sha256"],
+        collection_contract_sha256=state["collection_contract_sha256"],
     )
-    schema_path = project_root / "ml/feature_schema.json"
-    if not schema_path.is_file():
-        schema_path = Path(__file__).with_name("feature_schema.json")
+    schema_path = evidence_dir / "feature-schema.json"
+    if _sha256(schema_path) != state["feature_schema_sha256"]:
+        raise CollectionError("feature schema changed after run start")
     schema = load_feature_schema(schema_path)
     validate_feature_contract(
         [
@@ -1546,6 +1567,11 @@ def finalize_run(
         "attributed_suricata_events": len(suricata_events),
         "execution_receipt_sha256": _sha256(receipt_path),
         "frozen_parameters_sha256": state["frozen_parameters_sha256"],
+        "source_config_sha256": state["source_config_sha256"],
+        "taxonomy_sha256": state["taxonomy_sha256"],
+        "scenario_catalog_sha256": state["scenario_catalog_sha256"],
+        "feature_schema_sha256": state["feature_schema_sha256"],
+        "collection_contract_sha256": state["collection_contract_sha256"],
         "taxonomy_revision": taxonomy["revision"],
         "collection_seed": draft.collection_seed,
         "scenario_parameters": draft.scenario_parameters,
@@ -1620,6 +1646,16 @@ def validate_run(run_id: str, project_root: Path) -> dict[str, Any]:
     if state.get("status") != "FINALIZED" or state.get("run_id") != run_id:
         raise CollectionError("collection state is not FINALIZED for this run")
     _verify_start_snapshot(evidence_dir, state)
+    contract_components = {
+        "source_config_sha256": state.get("source_config_sha256"),
+        "taxonomy_sha256": state.get("taxonomy_sha256"),
+        "scenario_catalog_sha256": state.get("scenario_catalog_sha256"),
+        "feature_schema_sha256": state.get("feature_schema_sha256"),
+    }
+    if _payload_sha256(contract_components) != state.get(
+        "collection_contract_sha256"
+    ):
+        raise CollectionError("collection contract digest is inconsistent")
     receipt_path = evidence_dir / "execution_receipt.json"
     try:
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
@@ -1683,6 +1719,14 @@ def validate_run(run_id: str, project_root: Path) -> dict[str, Any]:
         raise CollectionError("finalized run identity/family mismatch")
     if incident.asset_id != manifest.host:
         raise CollectionError("finalized run host mismatch")
+    if any(
+        getattr(manifest, name) != value
+        for name, value in {
+            **contract_components,
+            "collection_contract_sha256": state["collection_contract_sha256"],
+        }.items()
+    ):
+        raise CollectionError("manifest collection contract does not match run state")
     if incident.start_time < manifest.start_time or incident.end_time > manifest.end_time:
         raise CollectionError("incident lies outside scenario window")
     if manifest.family == "c2":

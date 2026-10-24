@@ -8,6 +8,7 @@ from pathlib import Path
 import yaml
 
 from ml.dataset_audit import audit_dataset
+from ml.scenario_collection import ScenarioCatalog
 
 FEATURES = {
     "failed_login_count": 0.0,
@@ -63,6 +64,15 @@ def write_run(
     run_dir = root / "data/raw" / run_id
     run_dir.mkdir(parents=True)
     scenario_parameters = {"variant_index": index, "timing_jitter_percent": 10 + index}
+    catalog_path = root / "scenario-catalog.yaml"
+    parsed_catalog = ScenarioCatalog.model_validate(
+        yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+    )
+    scenario = next(
+        item
+        for item in parsed_catalog.scenarios
+        if item.scenario_id == f"{family.upper()}-{label.upper()}-S{scenario_slot}"
+    )
     clock_preflight = {
         "captured_at": started.isoformat(),
         "controller_utc": started.isoformat(),
@@ -78,7 +88,11 @@ def write_run(
         "family": family,
         "label": label,
         "host": "WIN11-TARGET",
-        "expected_behavior": "Controlled lab activity.",
+        "expected_behavior": scenario.expected_behavior,
+        "operator": "Kien",
+        "attribution": scenario.attribution.model_dump(mode="json"),
+        "quality_gates": scenario.quality_gates.model_dump(mode="json"),
+        "execution_log_path": None,
         "collection_seed": index,
         "scenario_parameters": scenario_parameters,
         "expected_observables": ["test"],
@@ -87,6 +101,51 @@ def write_run(
     provenance_sha256 = hashlib.sha256(
         json.dumps(ground_truth, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+    evidence_dir = root / "evidence/scenario-runs" / run_id
+    evidence_dir.mkdir(parents=True)
+    source_snapshot = evidence_dir / "collection-sources.yaml"
+    source_snapshot.write_text("version: collection-sources-v1\n", encoding="utf-8")
+    taxonomy_snapshot = evidence_dir / "suspicious-process-taxonomy.yaml"
+    taxonomy_snapshot.write_text("revision: test-v1\nrules: []\n", encoding="utf-8")
+    catalog_snapshot = evidence_dir / "scenario-catalog.yaml"
+    catalog_snapshot.write_bytes(catalog_path.read_bytes())
+    schema_source = Path(__file__).parents[1] / "ml/feature_schema.json"
+    schema_snapshot = evidence_dir / "feature-schema.json"
+    schema_snapshot.write_bytes(schema_source.read_bytes())
+    contract_hashes = {
+        "source_config_sha256": hashlib.sha256(source_snapshot.read_bytes()).hexdigest(),
+        "taxonomy_sha256": hashlib.sha256(taxonomy_snapshot.read_bytes()).hexdigest(),
+        "scenario_catalog_sha256": hashlib.sha256(catalog_snapshot.read_bytes()).hexdigest(),
+        "feature_schema_sha256": hashlib.sha256(schema_snapshot.read_bytes()).hexdigest(),
+    }
+    collection_contract_sha256 = hashlib.sha256(
+        json.dumps(contract_hashes, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    frozen_parameters = {
+        "run_id": run_id,
+        "scenario_id": scenario.scenario_id,
+        "family": family,
+        "label": label,
+        "scenario_parameters": scenario_parameters,
+    }
+    frozen_parameters_sha256 = hashlib.sha256(
+        json.dumps(frozen_parameters, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    receipt = {
+        "version": "execution-receipt-v1",
+        "status": "COMPLETED",
+        "run_id": run_id,
+        "scenario_id": scenario.scenario_id,
+        "operator": "Kien",
+        "frozen_parameters_sha256": frozen_parameters_sha256,
+        "action_started_at": started.isoformat(),
+        "action_ended_at": ended.isoformat(),
+    }
+    (evidence_dir / "execution-parameters.json").write_text(
+        json.dumps(frozen_parameters), encoding="utf-8"
+    )
+    receipt_path = evidence_dir / "execution_receipt.json"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
     manifest = {
         "scenario_id": f"{family.upper()}-{label.upper()}-S{scenario_slot}",
         "run_id": run_id,
@@ -95,10 +154,12 @@ def write_run(
         "host": "WIN11-TARGET",
         "start_time": started.isoformat(),
         "end_time": ended.isoformat(),
-        "expected_behavior": "Controlled lab activity.",
+        "expected_behavior": scenario.expected_behavior,
         "collection_seed": index,
         "scenario_parameters": scenario_parameters,
         "provenance_sha256": provenance_sha256,
+        **contract_hashes,
+        "collection_contract_sha256": collection_contract_sha256,
     }
     (run_dir / "scenario_manifest.json").write_text(
         json.dumps(manifest), encoding="utf-8"
@@ -127,8 +188,6 @@ def write_run(
         incident["features"]["outbound_connection_count"] = float(index + 1)
     (run_dir / "incidents.jsonl").write_text(json.dumps(incident) + "\n", encoding="utf-8")
 
-    evidence_dir = root / "evidence/scenario-runs" / run_id
-    evidence_dir.mkdir(parents=True)
     (evidence_dir / "ground_truth.json").write_text(
         json.dumps(ground_truth),
         encoding="utf-8",
@@ -145,6 +204,12 @@ def write_run(
                 "collection_seed": index,
                 "scenario_parameters": scenario_parameters,
                 "run_marker_count": 2,
+                **contract_hashes,
+                "collection_contract_sha256": collection_contract_sha256,
+                "frozen_parameters_sha256": frozen_parameters_sha256,
+                "execution_receipt_sha256": hashlib.sha256(
+                    receipt_path.read_bytes()
+                ).hexdigest(),
             }
         ),
         encoding="utf-8",
@@ -173,7 +238,16 @@ def write_run(
     if family == "c2" and include_suricata:
         (evidence_dir / "suricata_eve.jsonl").write_text("{}\n", encoding="utf-8")
     (evidence_dir / ".collection_state.json").write_text(
-        json.dumps({"status": "FINALIZED", "run_id": run_id}),
+        json.dumps(
+            {
+                "status": "FINALIZED",
+                "run_id": run_id,
+                **contract_hashes,
+                "collection_contract_sha256": collection_contract_sha256,
+                "frozen_parameters_sha256": frozen_parameters_sha256,
+                "execution_receipt": receipt,
+            }
+        ),
         encoding="utf-8",
     )
     checksums(evidence_dir)
@@ -218,10 +292,13 @@ def write_catalog(root: Path) -> Path:
 
 
 def run_audit(root: Path, **kwargs) -> dict:
+    catalog_path = root / "scenario-catalog.yaml"
+    if not catalog_path.is_file():
+        catalog_path = write_catalog(root)
     return audit_dataset(
         root / "data/raw",
         root / "evidence/scenario-runs",
-        scenario_catalog_path=write_catalog(root),
+        scenario_catalog_path=catalog_path,
         minimum_runs=10,
         target_runs=12,
         **kwargs,
@@ -229,6 +306,7 @@ def run_audit(root: Path, **kwargs) -> dict:
 
 
 def populate(root: Path, count: int = 10) -> None:
+    write_catalog(root)
     for family in ("account", "c2"):
         for label in ("benign", "malicious"):
             for index in range(count):
@@ -435,6 +513,25 @@ def test_audit_requires_even_distribution_at_ten_runs(tmp_path: Path) -> None:
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     metadata["scenario_manifest_sha256"] = hashlib.sha256(
         manifest_path.read_bytes()
+    ).hexdigest()
+    parameters_path = evidence / "execution-parameters.json"
+    parameters = json.loads(parameters_path.read_text(encoding="utf-8"))
+    parameters["scenario_id"] = "C2-BENIGN-S1"
+    parameters_path.write_text(json.dumps(parameters), encoding="utf-8")
+    frozen_digest = hashlib.sha256(
+        json.dumps(parameters, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    state_path = evidence / ".collection_state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["frozen_parameters_sha256"] = frozen_digest
+    state["execution_receipt"]["scenario_id"] = "C2-BENIGN-S1"
+    state["execution_receipt"]["frozen_parameters_sha256"] = frozen_digest
+    receipt_path = evidence / "execution_receipt.json"
+    receipt_path.write_text(json.dumps(state["execution_receipt"]), encoding="utf-8")
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    metadata["frozen_parameters_sha256"] = frozen_digest
+    metadata["execution_receipt_sha256"] = hashlib.sha256(
+        receipt_path.read_bytes()
     ).hexdigest()
     metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
     checksums(evidence)
