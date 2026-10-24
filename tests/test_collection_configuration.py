@@ -204,6 +204,54 @@ def test_scenario_catalog_has_enforceable_quality_gates_and_alert_overlap() -> N
     assert any(not item.quality_gates.required_suricata_signature_ids for item in malicious_c2)
 
 
+def test_catalog_design_does_not_encode_labels_in_known_low_cardinality_pairs() -> None:
+    catalog = ScenarioCatalog.model_validate(
+        yaml.safe_load(
+            (PROJECT_ROOT / "config/scenario-catalog.yaml").read_text(encoding="utf-8")
+        )
+    )
+    taxonomy = yaml.safe_load(
+        (PROJECT_ROOT / "config/suspicious-process-taxonomy.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    suspicious_terms = {
+        str(term).casefold()
+        for rule in taxonomy["rules"]
+        for term in rule.get("command_contains_any", [])
+    }
+
+    account_pairs: dict[str, set[tuple[float, float]]] = {
+        "benign": set(),
+        "malicious": set(),
+    }
+    c2_pairs: dict[str, set[tuple[float, float]]] = {
+        "benign": set(),
+        "malicious": set(),
+    }
+    for scenario in catalog.scenarios:
+        if scenario.family == "account":
+            account_pairs[scenario.label].add(
+                (
+                    float(scenario.quality_gates.min_account_successes),
+                    float(3 in scenario.attribution.logon_types),
+                )
+            )
+            continue
+        command_terms = {
+            item.casefold() for item in scenario.attribution.command_contains_any
+        }
+        c2_pairs[scenario.label].add(
+            (
+                float(bool(command_terms & suspicious_terms)),
+                float(scenario.quality_gates.min_dns_events),
+            )
+        )
+
+    assert account_pairs["benign"] & account_pairs["malicious"]
+    assert c2_pairs["benign"] & c2_pairs["malicious"]
+
+
 def test_create_run_draft_uses_catalog_without_copying_execution_commands(
     tmp_path: Path,
 ) -> None:

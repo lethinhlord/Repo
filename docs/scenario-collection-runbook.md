@@ -1473,7 +1473,7 @@ SMB thành console, WinRM, RDP hay scheduled task.
 | `ACCOUNT-MALICIOUS-REPEATED-FAILURES-3` | nhập sai đúng 3 lần cho `datn_attack`, không đăng nhập đúng |
 | `ACCOUNT-MALICIOUS-REPEATED-FAILURES-6` | nhập sai đúng 6 lần cho `datn_attack`, không đăng nhập đúng |
 | `ACCOUNT-MALICIOUS-REPEATED-FAILURES-10` | nhập sai đúng 10 lần cho `datn_attack`, không đăng nhập đúng |
-| `ACCOUNT-MALICIOUS-PASSWORD-SPRAY` | nhập sai đúng 1 lần lần lượt cho `datn_spray01`, `02`, `03` |
+| `ACCOUNT-MALICIOUS-PASSWORD-SPRAY` | nhập sai đúng 1 lần lần lượt cho `datn_spray01`, `02`, `03`, sau đó đăng nhập đúng đúng 1 lần vào `datn_spray03`; thứ tự này tạo mẫu spray có một credential compromise nhưng vẫn chồng lấp hợp lệ với benign ở các feature success/logon type |
 | `ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS` | trên Kali chạy đúng block SMB bên dưới: sai 1 lần, chờ delay trong draft, đúng 1 lần từ cùng nguồn; đây là mẫu low-noise nhưng có ngữ cảnh network-logon phân biệt được |
 
 Không tạo thêm lần thử ngoài bảng trong cùng cửa sổ. Kết thúc run benign/malicious có
@@ -1550,7 +1550,7 @@ $ErrorActionPreference = 'Stop'
 Start-DatnScenario 'C2-BENIGN-HEALTH-POLL'
 $gap = Get-DatnGap 30
 1..5 | ForEach-Object {
-  $uri = "http://10.40.0.10:8080/health?v=$($DatnParameters.variant_index)&n=$_"
+  $uri = "http://10.40.0.10:8081/beacon?mode=health&v=$($DatnParameters.variant_index)&n=$_"
   curl.exe --fail --silent --show-error --output NUL $uri
   if ($LASTEXITCODE -ne 0) { throw 'health request failed' }
   if ($_ -lt 5) { Start-Sleep -Seconds $gap }
