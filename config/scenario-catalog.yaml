@@ -314,7 +314,7 @@ scenarios:
       - Kali dnsmasq answers www.datn.test on 10.40.0.10.
       - Windows can route UDP and TCP port 53 through NET-SENSOR.
     execution_steps:
-      - Query four unique draft-nonce subdomains below www.datn.test through 10.40.0.10 with jitter-scaled irregular pauses.
+      - Query four unique draft-nonce subdomains below www.datn.test through 10.40.0.10 using base gaps 7, 19 and 11 seconds scaled by the frozen draft jitter.
     expected_observables:
       - Four Sysmon event 22 and matching Suricata DNS records, including local benign-canary SID 900004.
     cleanup_steps:

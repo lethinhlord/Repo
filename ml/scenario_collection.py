@@ -356,12 +356,41 @@ def create_run_draft(
         if scenario.scenario_id == "ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS":
             parameters["attempt_delay_seconds"] = round(rng.uniform(1.0, 5.0), 3)
     else:
+        base_intervals: dict[str, list[float]] = {
+            "C2-BENIGN-HEALTH-POLL": [30.0] * 4,
+            "C2-BENIGN-SINGLE-DOWNLOAD": [],
+            "C2-BENIGN-IRREGULAR-API": [10.0, 35.0, 20.0],
+            "C2-BENIGN-DNS": [7.0, 19.0, 11.0],
+            "C2-BENIGN-API-BURST": [2.0] * 5,
+            "C2-MALICIOUS-HTTP-BEACON": [15.0] * 7,
+            "C2-MALICIOUS-JITTER-BEACON": [8.0, 21.0, 13.0, 30.0, 11.0, 24.0, 17.0],
+            "C2-MALICIOUS-DNS-BEACON": [15.0] * 7,
+            "C2-MALICIOUS-STAGED-TRANSFER": [],
+            "C2-MALICIOUS-STAGED-TRANSFER-RETRY": [20.0] * 2,
+        }
+        if scenario.scenario_id not in base_intervals:
+            raise CollectionError(
+                f"missing timing contract for C2 scenario: {scenario.scenario_id}"
+            )
+        jitter_percent = rng.randint(10, 30)
+        jitter_direction = rng.choice((-1, 1))
+        factor = 1.0 + jitter_direction * jitter_percent / 100.0
+        expected_action_count = max(
+            scenario.quality_gates.min_process_events,
+            scenario.quality_gates.min_network_events,
+            scenario.quality_gates.min_dns_events,
+        )
         parameters = {
             **common_parameters,
-            "interval_jitter_percent": rng.randint(10, 30),
-            "interval_jitter_direction": rng.choice((-1, 1)),
+            "interval_jitter_percent": jitter_percent,
+            "interval_jitter_direction": jitter_direction,
             "variant_index": rng.randint(0, 999_999),
             "run_nonce": hashlib.sha256(f"{run_id}:{seed}".encode()).hexdigest()[:16],
+            "expected_action_count": expected_action_count,
+            "expected_intervals_seconds": ",".join(
+                str(round(value * factor, 3))
+                for value in base_intervals[scenario.scenario_id]
+            ),
         }
     try:
         draft = RunDraft(
@@ -1104,6 +1133,46 @@ def _derive_c2(
             suspicious = suspicious or _taxonomy_match(eventdata, taxonomy)
     if not network_observations:
         raise CollectionError("no attributable Sysmon network or DNS telemetry was collected")
+
+    expected_action_count = draft.scenario_parameters.get("expected_action_count")
+    expected_intervals_text = draft.scenario_parameters.get(
+        "expected_intervals_seconds"
+    )
+    if isinstance(expected_action_count, int):
+        action_observations = (
+            [item for item in network_observations if item.dns_query is not None]
+            if draft.quality_gates.min_dns_events
+            else [item for item in network_observations if item.dns_query is None]
+        )
+        if len(action_observations) != expected_action_count:
+            raise CollectionError(
+                "frozen action count does not match attributable telemetry: "
+                f"observed={len(action_observations)}, expected={expected_action_count}"
+            )
+        if isinstance(expected_intervals_text, str) and expected_intervals_text:
+            try:
+                expected_intervals = [
+                    float(value) for value in expected_intervals_text.split(",")
+                ]
+            except ValueError as exc:
+                raise CollectionError("invalid frozen interval contract") from exc
+            observed_times = sorted(item.timestamp for item in action_observations)
+            observed_intervals = [
+                (current - previous).total_seconds()
+                for previous, current in zip(
+                    observed_times, observed_times[1:], strict=False
+                )
+            ]
+            if len(observed_intervals) != len(expected_intervals) or any(
+                abs(observed - expected) > max(3.0, expected * 0.20)
+                for observed, expected in zip(
+                    observed_intervals, expected_intervals, strict=True
+                )
+            ):
+                raise CollectionError(
+                    "observed action timing does not match the frozen interval contract: "
+                    f"observed={observed_intervals}, expected={expected_intervals}"
+                )
 
     nonce_flow_ids: set[str] = set()
     maximum_delta = max(5.0, draft.clock_preflight.maximum_skew_seconds * 2)
