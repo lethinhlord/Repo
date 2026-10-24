@@ -746,6 +746,61 @@ def test_c2_finalize_rejects_telemetry_that_is_not_run_correlated(
         finalize_run(run_id, tmp_path, now=started + timedelta(seconds=30))
 
 
+def test_c2_finalize_enforces_frozen_action_count_and_timing(tmp_path: Path) -> None:
+    config = source_config(tmp_path)
+    run_id = "C2-TIMING-CONTRACT-001"
+    draft_path = write_draft(
+        tmp_path,
+        run_id=run_id,
+        family="c2",
+        label="malicious",
+        attribution={
+            "process_names": ["curl.exe"],
+            "source_ips": ["10.20.0.10"],
+            "destination_ips": ["10.40.0.10"],
+            "destination_ports": [8081],
+            "command_contains_any": ["/beacon"],
+        },
+        quality_gates={"min_network_events": 2, "min_suricata_events": 2},
+    )
+    payload = yaml.safe_load(draft_path.read_text(encoding="utf-8"))
+    payload["scenario_parameters"].update(
+        {"expected_action_count": 2, "expected_intervals_seconds": "10"}
+    )
+    draft_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    started = datetime(2026, 10, 16, 2, 45, tzinfo=UTC)
+    start_run(draft_path, config, tmp_path, now=started)
+    events = []
+    for offset in (5, 30):
+        events.extend(
+            [
+                windows_event(
+                    3,
+                    started + timedelta(seconds=offset),
+                    {
+                        "image": r"C:\Windows\System32\curl.exe",
+                        "initiated": "true",
+                        "destinationIp": "10.40.0.10",
+                        "destinationPort": "8081",
+                    },
+                ),
+                suricata_event(
+                    started + timedelta(seconds=offset + 1),
+                    {
+                        "event_type": "http",
+                        "src_ip": "10.20.0.10",
+                        "dest_ip": "10.40.0.10",
+                        "dest_port": 8081,
+                    },
+                ),
+            ]
+        )
+    append_jsonl(tmp_path / "archives.json", events)
+
+    with pytest.raises(CollectionError, match="interval contract"):
+        finalize_run(run_id, tmp_path, now=started + timedelta(seconds=40))
+
+
 def test_c2_finalize_fails_closed_without_suricata_evidence(tmp_path: Path) -> None:
     config = source_config(tmp_path)
     draft = write_draft(
@@ -829,6 +884,46 @@ def test_validate_detects_evidence_tampering(tmp_path: Path) -> None:
 
     with pytest.raises(CollectionError, match="checksum"):
         validate_run("ACCOUNT-BENIGN-002", tmp_path)
+
+
+def test_finalize_recovers_an_atomic_rename_interruption(tmp_path: Path) -> None:
+    config = source_config(tmp_path)
+    run_id = "ACCOUNT-BENIGN-RECOVERY-001"
+    draft_path = write_draft(
+        tmp_path,
+        run_id=run_id,
+        family="account",
+        label="benign",
+        attribution={"account_names": ["labuser"]},
+        quality_gates={"min_account_successes": 1, "max_account_successes": 1},
+    )
+    started = datetime(2026, 10, 16, 5, 30, tzinfo=UTC)
+    start_run(draft_path, config, tmp_path, now=started)
+    append_jsonl(
+        tmp_path / "archives.json",
+        [windows_event(4624, started + timedelta(seconds=5), {"targetUserName": "labuser"})],
+    )
+    result = finalize_run(run_id, tmp_path, now=started + timedelta(seconds=10))
+    run_dir = tmp_path / "data/raw" / run_id
+    staged_dir = run_dir.with_name(f".{run_id}.tmp")
+    run_dir.replace(staged_dir)
+    state_path = tmp_path / "evidence/scenario-runs" / run_id / ".collection_state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["status"] = "FINALIZING"
+    state["pending_ended_at"] = state.pop("ended_at")
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    (state_path.parent.parent / ".active-run.json").write_text(
+        json.dumps({"run_id": run_id}), encoding="utf-8"
+    )
+
+    recovered = _finalize_run(
+        run_id, tmp_path, now=started + timedelta(seconds=20)
+    )
+
+    assert recovered == result
+    assert run_dir.is_dir()
+    assert not staged_dir.exists()
+    assert validate_run(run_id, tmp_path)["status"] == "VALID"
 
 
 def test_dns_only_attribution_rejects_unrelated_non_dns_suricata_events() -> None:

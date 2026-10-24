@@ -1,17 +1,21 @@
 # QUY TRÌNH CHUẨN THU THẬP DỮ LIỆU TRAIN TRÊN LAB 4 VM
 
-Phiên bản: 2.0 — 23/10/2026
+Phiên bản: 2.1 — 24/10/2026
 Phạm vi: dữ liệu `account-benign`, `account-malicious`, `c2-benign`,
 `c2-malicious` cho nhánh `feature/week3-model-training`.
 
-Baseline sửa lỗi bắt buộc: tag bất biến `data-collection-v2.0.0` phải là ancestor của
-commit đang chạy. Không chỉ kiểm tra tên branch; cổng ở mục 6.2 sẽ từ chối repo cũ chưa
-có đủ bản vá collector/auditor và runbook v2.0.
+Baseline sửa lỗi bắt buộc: người bàn giao ghi **commit SHA đã được merge** vào
+`COLLECTION_BASELINE_COMMIT`; SHA đó phải là ancestor của commit đang chạy. Không chỉ
+kiểm tra tên branch và không dùng một tag có thể bị force-move.
 
 ## 1. Kết quả bắt buộc
 
 Mỗi lần chạy kịch bản là **một mẫu độc lập**, có một `run_id`, một nhãn được khai báo
 trước khi chạy, bằng chứng gốc và checksum. Không coi từng dòng log là một mẫu.
+
+Mỗi code block Bash là một phiên lệnh fail-closed. Nếu block không lặp lại dòng khởi tạo,
+phải chạy `set -euo pipefail` trong cùng shell trước khi chạy; dừng ngay ở exit code khác
+0, không copy riêng các dòng sau lỗi và không thêm `|| true` ngoài vị trí đã ghi rõ.
 
 | Nhóm | Tối thiểu để bắt đầu train | Mục tiêu nên thu |
 |---|---:|---:|
@@ -411,6 +415,10 @@ sudo apt install -y curl git jq python3 python3-venv python3-pip openssh-server
 curl -sO https://packages.wazuh.com/4.14/wazuh-install.sh
 sudo bash ./wazuh-install.sh -a
 sudo systemctl is-active wazuh-manager wazuh-indexer wazuh-dashboard
+dpkg-query -W -f='${Package}=${Version}\n' \
+  wazuh-manager wazuh-indexer wazuh-dashboard | tee wazuh-package-versions.txt
+grep -E '^wazuh-(manager|indexer|dashboard)=4\.14\.' wazuh-package-versions.txt
+sudo apt-mark hold wazuh-manager wazuh-indexer wazuh-dashboard
 ```
 
 Lưu thông tin đăng nhập từ output cài đặt ở nơi riêng, không đưa mật khẩu vào repo hoặc
@@ -466,12 +474,11 @@ test -z "$(git status --porcelain)" || {
   exit 1
 }
 test "$(git rev-parse HEAD)" = "$(git rev-parse origin/feature/week3-model-training)"
-REQUIRED_BASELINE_TAG=data-collection-v2.0.0
-git fetch --force origin \
-  "refs/tags/$REQUIRED_BASELINE_TAG:refs/tags/$REQUIRED_BASELINE_TAG"
-REQUIRED_BASELINE=$(git rev-parse "$REQUIRED_BASELINE_TAG^{commit}")
-git merge-base --is-ancestor "$REQUIRED_BASELINE" HEAD || {
-  echo "FAIL: repository is older than $REQUIRED_BASELINE_TAG" >&2
+: "${COLLECTION_BASELINE_COMMIT:?Nhap commit SHA da duoc merge do nguoi ban giao cung cap}"
+[[ "$COLLECTION_BASELINE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+git cat-file -e "$COLLECTION_BASELINE_COMMIT^{commit}"
+git merge-base --is-ancestor "$COLLECTION_BASELINE_COMMIT" HEAD || {
+  echo "FAIL: repository is older than $COLLECTION_BASELINE_COMMIT" >&2
   exit 1
 }
 git rev-parse HEAD | tee evidence/collection-source-commit.txt
@@ -480,7 +487,9 @@ chmod +x scripts/bootstrap_ml.sh scripts/deploy_week2.sh scripts/verify_week2.sh
 .venv-ml/bin/python -m pytest -q \
   tests/test_scenario_collection.py \
   tests/test_dataset_audit.py \
-  tests/test_collection_configuration.py
+  tests/test_collection_configuration.py \
+  tests/test_export_run_parameters.py \
+  tests/test_ml_dataset.py
 echo 'REPOSITORY_PREFLIGHT=PASS'
 ```
 
@@ -527,14 +536,23 @@ Mở PowerShell bằng quyền Administrator. Tạo các tài khoản **chỉ d�
 `New-LocalUser`; không ghi mật khẩu vào hướng dẫn, Git hoặc manifest:
 
 ```powershell
-$p = Read-Host "Password for datn_benign" -AsSecureString
-New-LocalUser -Name datn_benign -Password $p -Description "DATN benign lab account"
-$p = Read-Host "Password for datn_attack" -AsSecureString
-New-LocalUser -Name datn_attack -Password $p -Description "DATN attack decoy"
+$ErrorActionPreference = 'Stop'
+function Ensure-DatnLabUser([string]$Name, [string]$Description) {
+  $existing = Get-LocalUser -Name $Name -ErrorAction SilentlyContinue
+  if (-not $existing) {
+    $password = Read-Host "Password for $Name" -AsSecureString
+    New-LocalUser -Name $Name -Password $password -Description $Description | Out-Null
+  } else {
+    Enable-LocalUser -Name $Name
+    Set-LocalUser -Name $Name -Description $Description
+  }
+  $verified = Get-LocalUser -Name $Name
+  if (-not $verified.Enabled) { throw "Lab account is disabled: $Name" }
+}
+Ensure-DatnLabUser datn_benign 'DATN benign lab account'
+Ensure-DatnLabUser datn_attack 'DATN attack decoy'
 1..3 | ForEach-Object {
-  $name = "datn_spray{0:D2}" -f $_
-  $p = Read-Host "Password for $name" -AsSecureString
-  New-LocalUser -Name $name -Password $p -Description "DATN spray decoy"
+  Ensure-DatnLabUser ("datn_spray{0:D2}" -f $_) 'DATN spray decoy'
 }
 $LogonAuditGuid = '{0CCE9215-69AE-11D9-BED3-505054503030}'
 auditpol /set /subcategory:$LogonAuditGuid /success:enable /failure:enable
@@ -575,6 +593,18 @@ New-NetFirewallRule -Name DATN-SMB-From-Kali `
   -Direction Inbound -Action Allow -Protocol TCP -LocalPort 445 `
   -RemoteAddress 10.40.0.10 -Profile Any | Out-Null
 Get-NetFirewallRule -Name DATN-SMB-From-Kali | Format-List Name,Enabled,Action
+$wideSmbRules = Get-NetFirewallRule -Enabled True -Direction Inbound -Action Allow |
+  Where-Object Name -ne 'DATN-SMB-From-Kali' | ForEach-Object {
+    $port = $_ | Get-NetFirewallPortFilter
+    $address = $_ | Get-NetFirewallAddressFilter
+    if (($port.LocalPort -contains '445' -or $port.LocalPort -eq 'Any') -and
+        ($address.RemoteAddress -contains 'Any' -or
+         $address.RemoteAddress -contains 'LocalSubnet')) { $_ }
+  }
+if ($wideSmbRules) {
+  $wideSmbRules | Select-Object Name,DisplayName
+  throw 'Broad inbound SMB allow rule exists; disable it before collection'
+}
 ```
 
 Sau khi đóng dataset, khôi phục policy gốc bằng snapshot `01-TELEMETRY-READY` hoặc lệnh
@@ -679,6 +709,8 @@ $sysmonCount = (Select-String -Path $conf -SimpleMatch `
 if ($securityCount -ne 1 -or $sysmonCount -ne 1) {
   throw "ossec.conf must contain exactly one Security and one Sysmon localfile"
 }
+[xml]$validatedConfig = Get-Content -LiteralPath $conf -Raw
+if (-not $validatedConfig.ossec_config) { throw 'ossec.conf XML root is invalid' }
 Restart-Service WazuhSvc
 Get-Service WazuhSvc
 Get-Content 'C:\Program Files (x86)\ossec-agent\ossec.log' -Tail 30
@@ -701,6 +733,7 @@ sổ đang thu. Trên SOC-AI, tạo một key riêng (nếu file đã có thì g
 ```bash
 set -euo pipefail
 CLOCK_KEY="$HOME/.ssh/id_ed25519_datn_clock"
+install -d -m 700 "$HOME/.ssh"
 if [ ! -f "$CLOCK_KEY" ]; then
   ssh-keygen -t ed25519 -N '' -C datn-clock -f "$CLOCK_KEY"
 fi
@@ -778,7 +811,7 @@ cho địa chỉ khác.
 
 ```bash
 sudo apt update
-sudo apt install -y software-properties-common jq curl gnupg acl
+sudo apt install -y software-properties-common jq curl gnupg acl netcat-openbsd
 sudo add-apt-repository -y ppa:oisf/suricata-stable
 sudo apt update
 sudo apt install -y suricata
@@ -1003,15 +1036,47 @@ lặp lại toàn bộ bước đồng bộ rồi cô lập này.
 
 ```bash
 sudo ip route del default 2>/dev/null || true
+sudo ip -6 route del default 2>/dev/null || true
 test -z "$(ip -4 route show default)"
+test -z "$(ip -6 route show default)"
+# Chặn DNS ra ngoài nhưng vẫn cho phép DNS lab 10.40.0.10.
+sudo iptables -C OUTPUT -p udp --dport 53 ! -d 10.40.0.10 -j REJECT 2>/dev/null || \
+  sudo iptables -I OUTPUT 1 -p udp --dport 53 ! -d 10.40.0.10 -j REJECT
+sudo iptables -C OUTPUT -p tcp --dport 53 ! -d 10.40.0.10 -j REJECT 2>/dev/null || \
+  sudo iptables -I OUTPUT 1 -p tcp --dport 53 ! -d 10.40.0.10 -j REJECT
+sudo ip6tables -C OUTPUT -p udp --dport 53 -j REJECT 2>/dev/null || \
+  sudo ip6tables -I OUTPUT 1 -p udp --dport 53 -j REJECT
+sudo ip6tables -C OUTPUT -p tcp --dport 53 -j REJECT 2>/dev/null || \
+  sudo ip6tables -I OUTPUT 1 -p tcp --dport 53 -j REJECT
+if timeout 3 curl -fsS --connect-timeout 2 https://1.1.1.1/ >/dev/null 2>&1; then
+  echo 'FAIL: public IPv4 is still reachable' >&2; exit 1
+fi
 ```
 
 ```powershell
 $ErrorActionPreference = 'Stop'
 Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' `
   -ErrorAction SilentlyContinue | Remove-NetRoute -Confirm:$false
+Get-NetRoute -AddressFamily IPv6 -DestinationPrefix '::/0' `
+  -ErrorAction SilentlyContinue | Remove-NetRoute -Confirm:$false
 if (Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' `
   -ErrorAction SilentlyContinue) { throw 'Internet default route still exists' }
+if (Get-NetRoute -AddressFamily IPv6 -DestinationPrefix '::/0' `
+  -ErrorAction SilentlyContinue) { throw 'IPv6 Internet default route still exists' }
+Get-NetAdapter | Where-Object Status -eq Up | ForEach-Object {
+  Set-DnsClientServerAddress -InterfaceIndex $_.InterfaceIndex `
+    -ServerAddresses '10.40.0.10'
+}
+if ((Test-NetConnection 1.1.1.1 -Port 443 -WarningAction SilentlyContinue).TcpTestSucceeded) {
+  throw 'Public IPv4 is still reachable'
+}
+Clear-DnsClientCache
+try {
+  Resolve-DnsName example.com -DnsOnly -NoHostsFile -ErrorAction Stop | Out-Null
+  throw 'Public DNS resolution is still available'
+} catch {
+  if ($_.Exception.Message -eq 'Public DNS resolution is still available') { throw }
+}
 ```
 
 Nếu cần Internet để cập nhật, dừng thu, đóng run đang mở, reboot/khôi phục route, cập nhật
@@ -1029,6 +1094,10 @@ printf '%s\n' "$AGENTS" | grep -E 'Name: WIN11-TARGET,.*Active'
 printf '%s\n' "$AGENTS" | grep -E 'Name: NET-SENSOR,.*Active'
 ARCHIVE=/var/ossec/logs/archives/archives.json
 sudo test -s "$ARCHIVE"
+# Không mở run trong vùng 23:45-00:15 UTC vì Archives có thể rotate qua ngày.
+UTC_HHMM=$(date -u +%H%M)
+test "$UTC_HHMM" -lt 2345
+test "$UTC_HHMM" -gt 0015
 test "$(timedatectl show -p NTPSynchronized --value)" = yes
 AVAILABLE_KB=$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)
 FREE_KB=$(df -Pk /var/ossec | awk 'NR==2 {print $4}')
@@ -1037,9 +1106,9 @@ test "$FREE_KB" -ge 10485760
 cd "$HOME/datn-ai-soar"
 test -z "$(git status --porcelain)"
 test "$(git branch --show-current)" = feature/week3-model-training
-REQUIRED_BASELINE_TAG=data-collection-v2.0.0
-REQUIRED_BASELINE=$(git rev-parse "$REQUIRED_BASELINE_TAG^{commit}")
-git merge-base --is-ancestor "$REQUIRED_BASELINE" HEAD
+: "${COLLECTION_BASELINE_COMMIT:?Missing merged collection baseline SHA}"
+[[ "$COLLECTION_BASELINE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+git merge-base --is-ancestor "$COLLECTION_BASELINE_COMMIT" HEAD
 test ! -e evidence/scenario-runs/.active-run.json
 while IFS= read -r -d '' STATE; do
   jq -e . "$STATE" >/dev/null
@@ -1063,7 +1132,12 @@ sudo suricata --dump-config -c /etc/suricata/suricata.yaml \
 sudo -u wazuh test -r /var/log/suricata/eve.json
 ip -4 route show 10.40.0.0/24 | grep -q 'scope link'
 ip -4 route show 10.20.0.0/24 | grep -q 'scope link'
+if nc -z -w 2 -s 10.20.0.1 10.20.0.10 445; then
+  echo 'FAIL: NET-SENSOR can reach SMB; Windows rule is too broad' >&2
+  exit 1
+fi
 test -z "$(ip -4 route show default)"
+test -z "$(ip -6 route show default)"
 test "$(timedatectl show -p NTPSynchronized --value)" = yes
 echo 'SENSOR_PREFLIGHT=PASS'
 ```
@@ -1080,6 +1154,7 @@ for port in 53 8080 8081 9001; do
 done
 ip route get 10.20.0.10 | grep -q 'via 10.40.0.1'
 test -z "$(ip -4 route show default)"
+test -z "$(ip -6 route show default)"
 test "$(timedatectl show -p NTPSynchronized --value)" = yes
 echo 'KALI_PREFLIGHT=PASS'
 ```
@@ -1094,6 +1169,8 @@ $route = Get-NetRoute -DestinationPrefix '10.40.0.0/24' -ErrorAction Stop
 if (-not $route.Where({$_.NextHop -eq '10.20.0.1'})) { throw 'Wrong data route' }
 if (Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' `
   -ErrorAction SilentlyContinue) { throw 'Internet default route still exists' }
+if (Get-NetRoute -AddressFamily IPv6 -DestinationPrefix '::/0' `
+  -ErrorAction SilentlyContinue) { throw 'IPv6 Internet default route still exists' }
 foreach ($port in 8080,8081,9001) {
   $test = Test-NetConnection 10.40.0.10 -Port $port -WarningAction SilentlyContinue
   if (-not $test.TcpTestSucceeded) { throw "Kali TCP $port is unreachable" }
@@ -1180,10 +1257,18 @@ Resolve-DnsName preflight.www.datn.test -Server 10.40.0.10 | Out-Null
 Resolve-DnsName preflight.beacon.datn.test -Server 10.40.0.10 | Out-Null
 ```
 
-Trên Kali, tạo **một** SMB canary thành công bằng mật khẩu lab đúng của `datn_attack`.
-Đây là preflight trước mọi run, không phải mẫu train:
+Tại console Windows, khóa màn hình, nhập sai mật khẩu `datn_benign` đúng một lần rồi
+đăng nhập đúng một lần. Trên Kali, tạo một SMB canary thất bại có chủ đích rồi một
+canary thành công cho `datn_attack`. Đây là preflight trước mọi run, không phải mẫu train:
 
 ```bash
+set -euo pipefail
+if smbclient '//10.20.0.10/IPC$' \
+  -U 'WIN11-TARGET\datn_attack%INTENTIONALLY-WRONG-DATN-PREFLIGHT' \
+  -c 'quit'; then
+  echo 'FAIL: intentionally wrong SMB password unexpectedly succeeded' >&2
+  exit 1
+fi
 smbclient '//10.20.0.10/IPC$' -U 'WIN11-TARGET\datn_attack' -c 'quit'
 echo 'SMB_COMMAND_PREFLIGHT=PASS'
 ```
@@ -1200,12 +1285,19 @@ PASS=0
 for attempt in $(seq 1 18); do
   sudo tail -c "+$((CURSOR + 1))" "$ARCHIVE" > "$FRESH"
   if jq -e 'select(.agent.name=="WIN11-TARGET" and
+      ((.data.win.system.eventID//"")|tostring)=="1")' "$FRESH" >/dev/null 2>&1 \
+    && jq -e 'select(.agent.name=="WIN11-TARGET" and
       ((.data.win.system.eventID//"")|tostring)=="3")' "$FRESH" >/dev/null 2>&1 \
     && jq -e 'select(.agent.name=="WIN11-TARGET" and
       ((.data.win.system.eventID//"")|tostring)=="22")' "$FRESH" >/dev/null 2>&1 \
     && jq -e 'select(.agent.name=="NET-SENSOR") |
       (.full_log|fromjson?) | select(.src_ip=="10.20.0.10" and
       .dest_ip=="10.40.0.10")' "$FRESH" >/dev/null 2>&1 \
+    && jq -e 'select(.agent.name=="NET-SENSOR") |
+      (.full_log|fromjson?) |
+      select(.event_type=="alert" and
+      (.alert.signature_id==900001 or .alert.signature_id==900002 or
+       .alert.signature_id==900004))' "$FRESH" >/dev/null 2>&1 \
     && jq -e 'select(.agent.name=="WIN11-TARGET" and
       ((.data.win.system.eventID//"")|tostring)=="4624" and
       ((.data.win.eventdata.targetUserName//"")|ascii_downcase)=="datn_attack" and
@@ -1217,11 +1309,44 @@ for attempt in $(seq 1 18); do
   sleep 5
 done
 test "$PASS" -eq 1
+for EVENT_ID in 4624 4625; do
+  jq -e --arg id "$EVENT_ID" 'select(.agent.name=="WIN11-TARGET" and
+    ((.data.win.system.eventID//"")|tostring)==$id and
+    ((.data.win.eventdata.targetUserName//"")|ascii_downcase)=="datn_benign" and
+    ((.data.win.eventdata.logonType//"")|tostring)=="2")' \
+    "$FRESH" >/dev/null
+  jq -e --arg id "$EVENT_ID" 'select(.agent.name=="WIN11-TARGET" and
+    ((.data.win.system.eventID//"")|tostring)==$id and
+    ((.data.win.eventdata.targetUserName//"")|ascii_downcase)=="datn_attack" and
+    ((.data.win.eventdata.logonType//"")|tostring)=="3")' \
+    "$FRESH" >/dev/null
+done
+for SID in 900001 900002 900004; do
+  jq -e --argjson sid "$SID" 'select(.agent.name=="NET-SENSOR") |
+    (.full_log|fromjson?) |
+    select(.event_type=="alert" and .alert.signature_id==$sid)' \
+    "$FRESH" >/dev/null
+done
 echo 'END_TO_END_PREFLIGHT=PASS'
 ```
 
 Nếu bất kỳ block nào không in `PASS`, không bắt đầu run. Sửa nguyên nhân rồi chạy lại
 từ 10.1; không dùng event cũ, không tạo file Archives giả và không hạ ngưỡng kiểm tra.
+
+### 10.5 Pilot collector bắt buộc sau khi cài mới hoặc đổi code/config
+
+Chạy trọn quy trình mục 11 cho đúng hai pilot sau, gồm `start`, export tham số bất biến,
+`begin-action`, hành động, `complete-action`, `finalize` và `validate`:
+
+1. `ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS` để kiểm đường SMB, LogonType 3 và chuỗi
+   4625→4624;
+2. `C2-MALICIOUS-HTTP-BEACON` để kiểm Event 1/3, nonce, ProcessGuid, timing, HTTP EVE
+   và SID 900001.
+
+Hai pilot phải in `VALID`. Sau khi chụp bằng chứng, loại khỏi dataset train bằng lệnh
+`quarantine` với lý do `installation-pilot`; không đổi tên pilot thành run thật. Canary
+mục 10.4 đã phủ thêm console 4624/4625, DNS benign/malicious SID 900004/900002,
+HTTP benign và staged-transfer. Vì vậy toàn bộ đường thu đã được kiểm trước run thật.
 
 ## 11. Quy trình chuẩn cho MỖI run
 
@@ -1239,18 +1364,21 @@ Ví dụ trên SOC-AI:
 
 ```bash
 cd "$HOME/datn-ai-soar"
+set -euo pipefail
 date -u --iso-8601=seconds
 timedatectl show -p NTPSynchronized --value
 RUN_DATE=$(date -u +%Y%m%d)
 RUN_ID="C2-MALICIOUS-HTTP-BEACON-R01-$RUN_DATE"
 CLOCK_FILE="run-drafts/$RUN_ID-clock.yaml"
 
-# Thay đúng hai username đã kiểm tra ở mục 10.3.
-SENSOR_USER='sensor-user'
-KALI_USER='kali-user'
+# Nhập user thật; placeholder bị từ chối.
+read -rp 'NET-SENSOR SSH username: ' SENSOR_USER
+read -rp 'Kali SSH username: ' KALI_USER
 CLOCK_KEY="$HOME/.ssh/id_ed25519_datn_clock"
 [[ "$SENSOR_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
 [[ "$KALI_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+test "$SENSOR_USER" != sensor-user
+test "$KALI_USER" != kali-user
 
 # Các kết nối dùng SSH key/BatchMode, không nhập mật khẩu giữa phép đo.
 CONTROLLER_UTC=$(date -u --iso-8601=seconds)
@@ -1273,8 +1401,6 @@ ATTACKER_UTC=$(ssh -i "$CLOCK_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
   --operator Kien \
   --clock-preflight "$CLOCK_FILE"
 sed -n '1,120p' "run-drafts/$RUN_ID.yaml"
-.venv-ml/bin/python -m scripts.export_run_parameters \
-  --draft "run-drafts/$RUN_ID.yaml" --format json
 ```
 
 Lệnh `build_clock_preflight` từ chối file có bất kỳ máy nào lệch quá 5 giây và không
@@ -1287,6 +1413,7 @@ tạo lại; đã start thì dùng lệnh `abort`, không tái sử dụng `run_
 ### Bước 2 — Start collector trước hoạt động
 
 ```bash
+set -euo pipefail
 .venv-ml/bin/python -m scripts.scenario_session start \
   --draft "run-drafts/$RUN_ID.yaml"
 .venv-ml/bin/python -m scripts.scenario_session status --run-id "$RUN_ID"
@@ -1304,12 +1431,13 @@ và mọi sai lệch vào nhật ký vận hành. Trước khi chạy, xuất th
 đọc rồi gõ lại từng số bằng trí nhớ:
 
 ```bash
+set -euo pipefail
 mkdir -p evidence/operator-parameter-exports
 .venv-ml/bin/python -m scripts.export_run_parameters \
-  --draft "run-drafts/$RUN_ID.yaml" --format powershell \
+  --project-root . --run-id "$RUN_ID" --format powershell \
   | tee "evidence/operator-parameter-exports/$RUN_ID.ps1"
 .venv-ml/bin/python -m scripts.export_run_parameters \
-  --draft "run-drafts/$RUN_ID.yaml" --format bash \
+  --project-root . --run-id "$RUN_ID" --format bash \
   | tee "evidence/operator-parameter-exports/$RUN_ID.env"
 ```
 
@@ -1321,33 +1449,43 @@ dùng chính xác `DATN_ATTEMPT_DELAY_SECONDS`. Chuyển file đó từ SOC-AI b
 hình (thay đúng username Kali):
 
 ```bash
-KALI_USER='kali-user'
+set -euo pipefail
+read -rp 'Kali SSH username: ' KALI_USER
 [[ "$KALI_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+test "$KALI_USER" != kali-user
 scp -i "$HOME/.ssh/id_ed25519_datn_clock" \
   "evidence/operator-parameter-exports/$RUN_ID.env" \
   "${KALI_USER}@192.168.58.132:/tmp/datn-current-run.env"
 ssh -i "$HOME/.ssh/id_ed25519_datn_clock" \
   "${KALI_USER}@192.168.58.132" chmod 600 /tmp/datn-current-run.env
+.venv-ml/bin/python -m scripts.scenario_session begin-action --run-id "$RUN_ID"
 ```
 
 Hai file export không chứa mật khẩu. Xóa `/tmp/datn-current-run.env` trên Kali khi cleanup.
+Trước `begin-action`, đã phải paste file `.ps1` vào PowerShell Windows hoặc source file
+`.env` ở đúng máy nhưng **chưa chạy hành động**. `begin-action` là lệnh cuối cùng ngay
+trước thao tác, tạo receipt bắt buộc và gắn hành động với SHA-256 của tham số đóng băng.
+Không chạy nó lần hai và không dùng file export của run khác.
 
 `pre_action_delay_seconds`, dải jitter và cách sinh nonce giống nhau giữa benign và
 malicious. Không thay tham số theo cảm tính, không sử dụng giá trị của run trước và không
 thay kích thước hai payload cố định; SHA-256 của payload là cổng an toàn bắt buộc.
 
-### Bước 4 — Chờ pipeline chuyển log
+### Bước 4 — Đóng receipt rồi chờ pipeline chuyển log
 
-Sau khi hoạt động kết thúc, chờ 90 giây nhưng không tạo traffic khác tới destination của
-kịch bản:
+Ngay khi hoạt động kết thúc, đóng receipt rồi chờ 90 giây; không tạo traffic khác tới
+destination của kịch bản:
 
 ```bash
+set -euo pipefail
+.venv-ml/bin/python -m scripts.scenario_session complete-action --run-id "$RUN_ID"
 sleep 90
 ```
 
 Kiểm tra nhanh Archives có byte mới, không sửa file:
 
 ```bash
+set -euo pipefail
 sudo tail -n 20 /var/ossec/logs/archives/archives.json | jq -c \
   'select(.agent.name=="WIN11-TARGET" or .agent.name=="NET-SENSOR")'
 ```
@@ -1355,12 +1493,14 @@ sudo tail -n 20 /var/ossec/logs/archives/archives.json | jq -c \
 ### Bước 5 — Finalize fail-closed
 
 ```bash
+set -euo pipefail
 .venv-ml/bin/python -m scripts.scenario_session finalize --run-id "$RUN_ID"
 ```
 
-Collector chỉ nhận log nằm trong cửa sổ, đúng agent và đúng account/process/IP/port/DNS
-đã khai báo. C2 bắt buộc có cả Sysmon network/DNS và Suricata. Thiếu một nguồn thì
-finalize lỗi và không tạo mẫu cuối.
+Collector chỉ nhận log trong cửa sổ receipt (cộng dung sai clock đã khai báo), đúng
+agent và đúng account/process/IP/port/DNS. C2 còn bắt buộc nonce trong command/URI/DNS,
+ProcessGuid thống nhất, tương quan thời gian Sysmon–Suricata, đúng số hành động và nhịp
+đã đóng băng. Thiếu một nguồn hoặc receipt thì finalize lỗi và không tạo mẫu cuối.
 
 Nếu lỗi chỉ cho biết log đang đến chậm (`no Wazuh Archive bytes`, dòng JSON chưa hoàn
 chỉnh, hoặc chưa thấy nguồn dự kiến), giữ nguyên run ở trạng thái `STARTED`, không tạo
@@ -1372,6 +1512,7 @@ checksum, rotate/truncate hoặc quality gate sai không được retry để h�
 ### Bước 6 — Validate run
 
 ```bash
+set -euo pipefail
 .venv-ml/bin/python -m scripts.scenario_session validate --run-id "$RUN_ID"
 find "data/raw/$RUN_ID" -maxdepth 1 -type f -printf '%f\n' | sort
 find "evidence/scenario-runs/$RUN_ID" -maxdepth 1 -type f -printf '%f\n' | sort
@@ -1383,6 +1524,7 @@ tay file đã finalize. Nếu validate sai, bảo toàn dữ liệu hỏng để
 raw/evidence ra khỏi dataset bằng lệnh duy nhất:
 
 ```bash
+set -euo pipefail
 .venv-ml/bin/python -m scripts.scenario_session quarantine \
   --run-id "$RUN_ID" --reason "ghi ro loi validate"
 ```
@@ -1394,6 +1536,7 @@ mới. Không xóa một phía và không tự sửa checksum.
 ### Bước 7 — Audit toàn dataset
 
 ```bash
+set -euo pipefail
 .venv-ml/bin/python -m scripts.audit_dataset \
   --raw-dir data/raw \
   --evidence-dir evidence/scenario-runs \
@@ -1419,6 +1562,7 @@ tái dùng `run_id`.
 Nếu thao tác sai giữa run:
 
 ```bash
+set -euo pipefail
 .venv-ml/bin/python -m scripts.scenario_session abort \
   --run-id "$RUN_ID" --reason "ghi ro ly do"
 ```
@@ -1514,11 +1658,13 @@ Block sẽ từ chối thiếu tham số, sai hướng jitter hoặc giá trị 
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-if (-not $DatnRunId -or -not $DatnScenarioId -or -not $DatnParameters) {
+if (-not $DatnRunId -or -not $DatnScenarioId -or -not $DatnParameters -or
+    $DatnParametersSha256 -notmatch '^[0-9a-f]{64}$') {
   throw 'Paste the current run parameter export first'
 }
 foreach ($key in 'pre_action_delay_seconds','interval_jitter_percent',
-  'interval_jitter_direction','variant_index') {
+  'interval_jitter_direction','variant_index','run_nonce',
+  'expected_action_count','expected_intervals_seconds') {
   if (-not $DatnParameters.ContainsKey($key)) { throw "Missing run parameter: $key" }
 }
 if ($DatnParameters.interval_jitter_percent -lt 10 -or
@@ -1537,11 +1683,13 @@ function Start-DatnScenario([string]$ExpectedScenario) {
   }
   Start-Sleep -Milliseconds ([int][Math]::Round(
     1000 * $DatnParameters.pre_action_delay_seconds))
+  $script:DatnOperatorPid = $PID
 }
 ```
 
-Không sửa hàm để tạo timing theo nhãn. `variant_index` phải xuất hiện trong URL hoặc DNS
-name để mỗi run có request nonce riêng nhưng vẫn khớp suffix/path của catalog.
+Không sửa hàm để tạo timing theo nhãn. `run_nonce` và `variant_index` phải xuất hiện
+trong URL hoặc DNS name. Collector đối chiếu nonce, số hành động và khoảng nghỉ với
+contract đã đóng băng; tự gõ một giá trị khác sẽ làm run bị từ chối.
 
 ### C2-BENIGN-HEALTH-POLL
 
@@ -1550,7 +1698,7 @@ $ErrorActionPreference = 'Stop'
 Start-DatnScenario 'C2-BENIGN-HEALTH-POLL'
 $gap = Get-DatnGap 30
 1..5 | ForEach-Object {
-  $uri = "http://10.40.0.10:8081/beacon?mode=health&v=$($DatnParameters.variant_index)&n=$_"
+  $uri = "http://10.40.0.10:8081/beacon?mode=health&run=$($DatnParameters.run_nonce)&v=$($DatnParameters.variant_index)&n=$_"
   curl.exe --fail --silent --show-error --output NUL $uri
   if ($LASTEXITCODE -ne 0) { throw 'health request failed' }
   if ($_ -lt 5) { Start-Sleep -Seconds $gap }
@@ -1562,7 +1710,7 @@ $gap = Get-DatnGap 30
 ```powershell
 $ErrorActionPreference = 'Stop'
 Start-DatnScenario 'C2-BENIGN-SINGLE-DOWNLOAD'
-$uri = "http://10.40.0.10:8080/payload-benign.txt?v=$($DatnParameters.variant_index)"
+$uri = "http://10.40.0.10:8080/payload-benign.txt?run=$($DatnParameters.run_nonce)&v=$($DatnParameters.variant_index)"
 curl.exe --fail --silent --show-error $uri `
   -o $env:TEMP\payload-benign.txt
 if ($LASTEXITCODE -ne 0) { throw 'benign download failed' }
@@ -1579,7 +1727,7 @@ $ErrorActionPreference = 'Stop'
 Start-DatnScenario 'C2-BENIGN-IRREGULAR-API'
 $gaps = @(10,35,20) | ForEach-Object { Get-DatnGap $_ }
 for ($i=0; $i -lt 4; $i++) {
-  $uri = "http://10.40.0.10:8080/api/status?v=$($DatnParameters.variant_index)&n=$i"
+  $uri = "http://10.40.0.10:8080/api/status?run=$($DatnParameters.run_nonce)&v=$($DatnParameters.variant_index)&n=$i"
   curl.exe --fail --silent --show-error --output NUL $uri
   if ($LASTEXITCODE -ne 0) { throw 'API request failed' }
   if ($i -lt 3) { Start-Sleep -Seconds $gaps[$i] }
@@ -1591,9 +1739,9 @@ for ($i=0; $i -lt 4; $i++) {
 ```powershell
 $ErrorActionPreference = 'Stop'
 Start-DatnScenario 'C2-BENIGN-DNS'
-$gaps = @(7,23,11) | ForEach-Object { Get-DatnGap $_ }
+$gaps = @(7,19,11) | ForEach-Object { Get-DatnGap $_ }
 for ($i=0; $i -lt 4; $i++) {
-  $name = "b$($DatnParameters.variant_index)-{0:D2}.www.datn.test" -f ($i + 1)
+  $name = "$($DatnParameters.run_nonce)-b$($DatnParameters.variant_index)-{0:D2}.www.datn.test" -f ($i + 1)
   $answer = Resolve-DnsName $name -Server 10.40.0.10 -Type A
   if ('10.40.0.10' -notin $answer.IPAddress) { throw "Wrong DNS answer: $name" }
   if ($i -lt 3) { Start-Sleep -Seconds $gaps[$i] }
@@ -1607,7 +1755,7 @@ $ErrorActionPreference = 'Stop'
 Start-DatnScenario 'C2-BENIGN-API-BURST'
 $gap = Get-DatnGap 2
 1..6 | ForEach-Object {
-  $uri = "http://10.40.0.10:8080/api/status?v=$($DatnParameters.variant_index)&n=$_"
+  $uri = "http://10.40.0.10:8080/api/status?run=$($DatnParameters.run_nonce)&v=$($DatnParameters.variant_index)&n=$_"
   curl.exe --fail --silent --show-error --output NUL $uri
   if ($LASTEXITCODE -ne 0) { throw 'API burst request failed' }
   if ($_ -lt 6) { Start-Sleep -Seconds $gap }
@@ -1622,7 +1770,7 @@ Start-DatnScenario 'C2-MALICIOUS-HTTP-BEACON'
 $gap = Get-DatnGap 15
 1..8 | ForEach-Object {
   curl.exe --fail --silent --show-error --output NUL `
-    "http://10.40.0.10:8081/beacon?v=$($DatnParameters.variant_index)&n=$_"
+    "http://10.40.0.10:8081/beacon?run=$($DatnParameters.run_nonce)&v=$($DatnParameters.variant_index)&n=$_"
   if ($LASTEXITCODE -ne 0) { throw 'beacon request failed' }
   if ($_ -lt 8) { Start-Sleep -Seconds $gap }
 }
@@ -1636,7 +1784,7 @@ Start-DatnScenario 'C2-MALICIOUS-JITTER-BEACON'
 $gaps = @(8,21,13,30,11,24,17) | ForEach-Object { Get-DatnGap $_ }
 for ($i=0; $i -lt 8; $i++) {
   curl.exe --fail --silent --show-error --output NUL `
-    "http://10.40.0.10:8081/beacon?v=$($DatnParameters.variant_index)&n=$i"
+    "http://10.40.0.10:8081/beacon?run=$($DatnParameters.run_nonce)&v=$($DatnParameters.variant_index)&n=$i"
   if ($LASTEXITCODE -ne 0) { throw 'jitter beacon request failed' }
   if ($i -lt 7) { Start-Sleep -Seconds $gaps[$i] }
 }
@@ -1649,7 +1797,7 @@ $ErrorActionPreference = 'Stop'
 Start-DatnScenario 'C2-MALICIOUS-DNS-BEACON'
 $gap = Get-DatnGap 15
 1..8 | ForEach-Object {
-  $name = "r$($DatnParameters.variant_index)-{0:D2}.beacon.datn.test" -f $_
+  $name = "$($DatnParameters.run_nonce)-r$($DatnParameters.variant_index)-{0:D2}.beacon.datn.test" -f $_
   $answer = Resolve-DnsName $name -Server 10.40.0.10 -Type A
   if ('10.40.0.10' -notin $answer.IPAddress) { throw "Wrong DNS answer: $name" }
   if ($_ -lt 8) { Start-Sleep -Seconds $gap }
@@ -1662,7 +1810,7 @@ $gap = Get-DatnGap 15
 $ErrorActionPreference = 'Stop'
 Start-DatnScenario 'C2-MALICIOUS-STAGED-TRANSFER'
 $expectedStageHash = 'de2f256064a0af797747c2b97505dc0b9f3df0de4f489eac731c23ae9ca9cc31'
-$uri = "http://10.40.0.10:9001/stage.bin?v=$($DatnParameters.variant_index)"
+$uri = "http://10.40.0.10:9001/stage.bin?run=$($DatnParameters.run_nonce)&v=$($DatnParameters.variant_index)"
 curl.exe --fail --silent --show-error $uri `
   -o $env:TEMP\stage.bin
 if ($LASTEXITCODE -ne 0) { throw 'staged transfer failed' }
@@ -1679,7 +1827,7 @@ $expectedStageHash = 'de2f256064a0af797747c2b97505dc0b9f3df0de4f489eac731c23ae9c
 $gap = Get-DatnGap 20
 1..3 | ForEach-Object {
   $out = Join-Path $env:TEMP ("stage-{0:D2}.bin" -f $_)
-  $uri = "http://10.40.0.10:9001/stage.bin?v=$($DatnParameters.variant_index)&n=$_"
+  $uri = "http://10.40.0.10:9001/stage.bin?run=$($DatnParameters.run_nonce)&v=$($DatnParameters.variant_index)&n=$_"
   curl.exe --fail --silent --show-error $uri -o $out
   if ($LASTEXITCODE -ne 0) { throw "staged retry $_ failed" }
   $hash = (Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
@@ -1692,15 +1840,23 @@ Get-FileHash $env:TEMP\stage-*.bin -Algorithm SHA256
 Cleanup:
 
 ```powershell
+$children = Get-CimInstance Win32_Process | Where-Object {
+  $_.ParentProcessId -eq $DatnOperatorPid -and $_.Name -eq 'curl.exe'
+}
+if ($children) {
+  $children | Select-Object ProcessId,Name,CommandLine
+  throw 'A curl child from this scenario is still running; abort this run'
+}
 Remove-Item $env:TEMP\payload-benign.txt -ErrorAction SilentlyContinue
 Remove-Item $env:TEMP\stage.bin -ErrorAction SilentlyContinue
 Remove-Item $env:TEMP\stage-*.bin -ErrorAction SilentlyContinue
-Get-Process curl,powershell,pwsh -ErrorAction SilentlyContinue
+Clear-DnsClientCache
+Remove-Variable DatnRunId,DatnScenarioId,DatnParameters,DatnParametersSha256 `
+  -ErrorAction SilentlyContinue
 ```
 
-Lệnh `Get-Process` chỉ là kiểm tra hỗ trợ. Trước mỗi loop, ghi lại PID PowerShell đang
-chạy bằng `$PID`; sau loop, xác nhận không còn tiến trình `curl.exe` con của phiên đó.
-Không kết luận chỉ dựa vào việc danh sách vẫn có chính PowerShell của người vận hành.
+Chỉ hoàn tất `complete-action` sau khi block cleanup không báo lỗi. Không kết luận bằng
+danh sách process toàn máy vì có thể nhầm PowerShell của người vận hành khác.
 
 Đây là mô phỏng traffic an toàn trong lab, không tạo reverse shell, persistence, mã độc
 hoặc kết nối ra Internet.
@@ -1818,20 +1974,25 @@ BACKUP_DIR="$HOME/datn-backups/$BACKUP_ID"
 ARCHIVE="$BACKUP_DIR/collection-$BACKUP_ID.tar.gz"
 mkdir -p "$BACKUP_DIR"
 git rev-parse HEAD > "$BACKUP_DIR/git-commit.txt"
+git bundle create "$BACKUP_DIR/source.bundle" --all
+git bundle verify "$BACKUP_DIR/source.bundle"
 RAW_COUNT=$(find data/raw -mindepth 2 -maxdepth 2 -name scenario_manifest.json | wc -l)
 tar --create --gzip --file "$ARCHIVE" \
   --exclude='evidence/scenario-runs/.active-run.json' \
-  data/raw evidence run-drafts operator-logs \
+  --exclude='evidence/operator-parameter-exports' \
+  --exclude='*.env' --exclude='*.ps1' \
+  data/raw evidence run-drafts \
   config/scenario-catalog.yaml config/collection-sources.yaml \
   config/suspicious-process-taxonomy.yaml ml/feature_schema.json
 (
   cd "$BACKUP_DIR"
-  sha256sum "$(basename "$ARCHIVE")" git-commit.txt > checksums.sha256
+  sha256sum "$(basename "$ARCHIVE")" git-commit.txt source.bundle > checksums.sha256
   sha256sum --check checksums.sha256
 )
 tar -tzf "$ARCHIVE" > "$BACKUP_DIR/archive.list"
 grep -q '^data/raw/' "$BACKUP_DIR/archive.list"
 grep -q '^evidence/scenario-runs/' "$BACKUP_DIR/archive.list"
+! grep -Eq '(^|/)([^/]*\.env|[^/]*\.ps1)$' "$BACKUP_DIR/archive.list"
 ARCHIVE_RUNS=$(grep -c '/scenario_manifest.json$' "$BACKUP_DIR/archive.list")
 test "$ARCHIVE_RUNS" -eq "$RAW_COUNT"
 cleanup_backup_lock
@@ -1872,10 +2033,11 @@ BACKUP_DIR="$HOME/datn-backups/$BACKUP_ID"
 ARCHIVE="$BACKUP_DIR/collection-$BACKUP_ID.tar.gz"
 test -f "$ARCHIVE"
 test -f "$BACKUP_DIR/git-commit.txt"
+test -f "$BACKUP_DIR/source.bundle"
 RESTORE_ROOT="$HOME/datn-ai-soar-restored-$BACKUP_ID"
 test ! -e "$RESTORE_ROOT"
 COMMIT=$(cat "$BACKUP_DIR/git-commit.txt")
-git clone https://github.com/lethinhlord/Repo.git "$RESTORE_ROOT"
+git clone "$BACKUP_DIR/source.bundle" "$RESTORE_ROOT"
 git -C "$RESTORE_ROOT" checkout --detach "$COMMIT"
 tar -xzf "$ARCHIVE" -C "$RESTORE_ROOT"
 cd "$RESTORE_ROOT"
