@@ -10,12 +10,16 @@ import yaml
 from ml.scenario_collection import (
     Attribution,
     CollectionError,
+    SourceConfig,
+    _event_time,
     _is_interactive_logon,
+    _matches_network,
     _matches_suricata,
+    _parse_time,
     abort_run,
     finalize_run,
     quarantine_run,
-    start_run,
+    start_run as _start_run,
     validate_run,
 )
 
@@ -26,6 +30,85 @@ def test_declared_remote_logon_type_is_accepted_without_accepting_service_noise(
     assert _is_interactive_logon({"logonType": "3"}, attribution)
     assert not _is_interactive_logon({"logonType": "2"}, attribution)
     assert not _is_interactive_logon({"logonType": "5"}, attribution)
+
+
+def test_source_config_requires_a_scenario_catalog() -> None:
+    with pytest.raises(ValueError, match="scenario_catalog_path"):
+        SourceConfig.model_validate(
+            {
+                "version": "collection-sources-v1",
+                "wazuh_archives_path": "/tmp/archives.json",
+                "windows_agent_name": "WIN11-TARGET",
+                "suricata_agent_name": "NET-SENSOR",
+                "taxonomy_path": "config/taxonomy.yaml",
+            }
+        )
+
+
+def test_timestamp_parser_rejects_timezone_ambiguous_values() -> None:
+    assert _parse_time("2026-10-24T08:00:00") is None
+
+
+def test_sysmon_network_attribution_requires_direction_and_declared_source() -> None:
+    attribution = Attribution(
+        source_ips=["10.20.0.10"],
+        destination_ips=["10.40.0.10"],
+        destination_ports=[8081],
+    )
+    base = {
+        "destinationIp": "10.40.0.10",
+        "destinationPort": "8081",
+    }
+
+    assert not _matches_network(base, attribution)
+    assert not _matches_network(
+        {**base, "initiated": "true", "sourceIp": "192.168.58.148"},
+        attribution,
+    )
+    assert _matches_network(
+        {**base, "initiated": "true", "sourceIp": "10.20.0.10"},
+        attribution,
+    )
+
+
+def test_suricata_event_time_uses_original_eve_timestamp() -> None:
+    eve_time = datetime(2026, 10, 24, 8, 0, tzinfo=UTC)
+    wrapper_time = eve_time + timedelta(minutes=2)
+    event = suricata_event(eve_time, {"event_type": "flow"})
+    event["timestamp"] = wrapper_time.isoformat()
+
+    assert _event_time(event) == eve_time
+
+
+def test_start_rejects_clock_evidence_that_is_stale_at_start(tmp_path: Path) -> None:
+    config = source_config(tmp_path)
+    draft = write_draft(
+        tmp_path,
+        run_id="ACCOUNT-BENIGN-STALE-CLOCK-001",
+        family="account",
+        label="benign",
+        attribution={"account_names": ["labuser"]},
+    )
+    captured = datetime(2026, 10, 24, 8, 0, tzinfo=UTC)
+    payload = yaml.safe_load(draft.read_text(encoding="utf-8"))
+    for field in (
+        "captured_at",
+        "controller_utc",
+        "target_utc",
+        "wazuh_utc",
+        "sensor_utc",
+        "attacker_utc",
+    ):
+        payload["clock_preflight"][field] = captured.isoformat()
+    draft.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(CollectionError, match="clock evidence is stale"):
+        _start_run(
+            draft,
+            config,
+            tmp_path,
+            now=captured + timedelta(seconds=121),
+        )
 
 
 def append_jsonl(path: Path, payloads: list[dict]) -> None:
@@ -54,6 +137,14 @@ def source_config(tmp_path: Path) -> Path:
         ),
         encoding="utf-8",
     )
+    catalog = tmp_path / "catalog.yaml"
+    catalog.write_text(
+        yaml.safe_dump(
+            {"version": "scenario-catalog-v1", "lab_only": True, "scenarios": []},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
     config = tmp_path / "sources.yaml"
     config.write_text(
         yaml.safe_dump(
@@ -63,6 +154,7 @@ def source_config(tmp_path: Path) -> Path:
                 "windows_agent_name": "WIN11-TARGET",
                 "suricata_agent_name": "NET-SENSOR",
                 "taxonomy_path": str(taxonomy),
+                "scenario_catalog_path": str(catalog),
             },
             sort_keys=False,
         ),
@@ -79,11 +171,10 @@ def write_draft(
     label: str,
     attribution: dict,
     quality_gates: dict | None = None,
+    sync_catalog: bool = True,
 ) -> Path:
     draft = tmp_path / f"{run_id}.yaml"
-    draft.write_text(
-        yaml.safe_dump(
-            {
+    payload = {
                 "scenario_id": f"SCENARIO-{family}-{label}",
                 "run_id": run_id,
                 "family": family,
@@ -107,8 +198,7 @@ def write_draft(
                     "maximum_skew_seconds": 2.0,
                 },
                 "attribution": attribution,
-                "quality_gates": quality_gates
-                or {
+                "quality_gates": quality_gates or {
                     "min_account_failures": 0,
                     "min_account_successes": 0,
                     "min_process_events": 0,
@@ -116,12 +206,56 @@ def write_draft(
                     "min_dns_events": 0,
                     "min_suricata_events": 0,
                 },
-            },
-            sort_keys=False,
-        ),
-        encoding="utf-8",
-    )
+            }
+    draft.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    catalog_path = tmp_path / "catalog.yaml"
+    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+    if sync_catalog:
+        scenario = {
+                "scenario_id": payload["scenario_id"],
+                "family": family,
+                "label": label,
+                "expected_behavior": payload["expected_behavior"],
+                "attribution": attribution,
+                "quality_gates": payload["quality_gates"],
+                "preconditions": ["test fixture"],
+                "execution_steps": ["test fixture"],
+                "expected_observables": payload["expected_observables"],
+                "cleanup_steps": ["test fixture"],
+            }
+        catalog["scenarios"] = [
+            item
+            for item in catalog["scenarios"]
+            if item["scenario_id"] != payload["scenario_id"]
+        ]
+        catalog["scenarios"].append(scenario)
+        catalog_path.write_text(
+            yaml.safe_dump(catalog, sort_keys=False), encoding="utf-8"
+        )
     return draft
+
+
+def start_run(
+    draft_path: Path,
+    source_config_path: Path,
+    project_root: Path,
+    *,
+    now: datetime | None = None,
+) -> dict:
+    started = now or datetime.now(UTC)
+    payload = yaml.safe_load(draft_path.read_text(encoding="utf-8"))
+    clock = payload["clock_preflight"]
+    for field in (
+        "captured_at",
+        "controller_utc",
+        "target_utc",
+        "wazuh_utc",
+        "sensor_utc",
+        "attacker_utc",
+    ):
+        clock[field] = started.isoformat()
+    draft_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    return _start_run(draft_path, source_config_path, project_root, now=started)
 
 
 def windows_event(
@@ -1249,6 +1383,7 @@ def test_start_rejects_draft_identity_that_disagrees_with_catalog(tmp_path: Path
         family="account",
         label="malicious",
         attribution={"account_names": ["labuser"]},
+        sync_catalog=False,
     )
 
     with pytest.raises(CollectionError, match="does not match scenario catalog"):

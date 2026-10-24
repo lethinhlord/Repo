@@ -189,7 +189,7 @@ class SourceConfig(BaseModel):
     windows_agent_name: str = Field(min_length=1)
     suricata_agent_name: str = Field(min_length=1)
     taxonomy_path: str
-    scenario_catalog_path: str | None = None
+    scenario_catalog_path: str = Field(min_length=1)
 
 
 class ScenarioDefinition(BaseModel):
@@ -246,7 +246,7 @@ def _parse_time(value: Any) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None or parsed.utcoffset() is None:
-        return parsed.replace(tzinfo=UTC)
+        return None
     return parsed.astimezone(UTC)
 
 
@@ -511,12 +511,18 @@ def start_run(
         raise CollectionError(f"Wazuh Archives source does not exist: {archive_path}")
     if not taxonomy_path.is_file():
         raise CollectionError(f"taxonomy does not exist: {taxonomy_path}")
-    catalog_path: Path | None = None
-    if source.scenario_catalog_path:
-        catalog_path = _resolve(project_root, source.scenario_catalog_path).resolve()
-        if not catalog_path.is_file():
-            raise CollectionError(f"scenario catalog does not exist: {catalog_path}")
-        _validate_draft_against_catalog(draft, catalog_path)
+    catalog_path = _resolve(project_root, source.scenario_catalog_path).resolve()
+    if not catalog_path.is_file():
+        raise CollectionError(f"scenario catalog does not exist: {catalog_path}")
+    _validate_draft_against_catalog(draft, catalog_path)
+
+    started_at = _utc(now)
+    clock_age = (started_at - _utc(draft.clock_preflight.captured_at)).total_seconds()
+    if clock_age < -1 or clock_age > draft.clock_preflight.maximum_capture_age_seconds:
+        raise CollectionError(
+            "clock evidence is stale or captured in the future at run start: "
+            f"age={clock_age:.3f}s"
+        )
 
     _assert_raw_dataset_layout(project_root)
 
@@ -525,13 +531,11 @@ def start_run(
     if evidence_dir.exists() or output_dir.exists():
         raise CollectionError(f"run_id already exists: {draft.run_id}")
 
-    started_at = _utc(now)
     draft_snapshot = draft.model_dump(mode="json")
     source_snapshot = source.model_dump(mode="json")
     source_snapshot["wazuh_archives_path"] = str(archive_path)
     source_snapshot["taxonomy_path"] = str(taxonomy_path)
-    if catalog_path is not None:
-        source_snapshot["scenario_catalog_path"] = str(catalog_path)
+    source_snapshot["scenario_catalog_path"] = str(catalog_path)
     state = {
         "version": "scenario-collection-v1",
         "status": "STARTED",
@@ -551,8 +555,7 @@ def start_run(
         "draft_sha256": state["draft_sha256"],
     }
     state["start_marker"] = start_marker
-    if catalog_path is not None:
-        state["scenario_catalog_sha256"] = _sha256(catalog_path)
+    state["scenario_catalog_sha256"] = _sha256(catalog_path)
     evidence_root = evidence_dir.parent
     _acquire_active_run(evidence_root, draft.run_id)
     try:
@@ -567,8 +570,7 @@ def start_run(
                 taxonomy_path,
                 staging_dir / "suspicious-process-taxonomy.yaml",
             )
-            if catalog_path is not None:
-                shutil.copyfile(catalog_path, staging_dir / "scenario-catalog.yaml")
+            shutil.copyfile(catalog_path, staging_dir / "scenario-catalog.yaml")
             _write_jsonl(staging_dir / "run_markers.jsonl", [start_marker])
             _write_json(staging_dir / ".collection_state.json", state)
             _append_log(staging_dir, f"RUN_STARTED run_id={draft.run_id}")
@@ -620,7 +622,18 @@ def _read_appended_jsonl(cursor: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _event_time(event: dict[str, Any]) -> datetime | None:
     system = (((event.get("data") or {}).get("win") or {}).get("system") or {})
-    return _parse_time(system.get("systemTime")) or _parse_time(event.get("timestamp"))
+    if system:
+        return _parse_time(system.get("systemTime"))
+    full_log = event.get("full_log")
+    if isinstance(full_log, str):
+        with suppress(json.JSONDecodeError):
+            payload = json.loads(full_log)
+            if isinstance(payload, dict) and payload.get("event_type"):
+                return _parse_time(payload.get("timestamp"))
+    data = event.get("data")
+    if isinstance(data, dict) and data.get("event_type"):
+        return _parse_time(data.get("timestamp"))
+    return _parse_time(event.get("timestamp"))
 
 
 def _windows_fields(event: dict[str, Any]) -> tuple[str, dict[str, Any], dict[str, Any]]:
@@ -674,11 +687,23 @@ def _is_interactive_logon(eventdata: dict[str, Any], attribution: Attribution) -
 
 
 def _matches_network(eventdata: dict[str, Any], attribution: Attribution) -> bool:
-    initiated = str(eventdata.get("initiated", "true")).casefold()
+    initiated = str(eventdata.get("initiated", "")).casefold()
     if initiated not in {"true", "1", "yes"}:
         return False
     process_names = _casefold_set(attribution.process_names)
     if process_names and _basename(eventdata.get("image")) not in process_names:
+        return False
+    source_ips = _casefold_set(attribution.source_ips)
+    source_ip = str(
+        eventdata.get("sourceIp") or eventdata.get("SourceIp") or ""
+    ).casefold()
+    with suppress(ValueError):
+        address = ipaddress.ip_address(source_ip)
+        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+            source_ip = str(address.ipv4_mapped)
+        else:
+            source_ip = str(address)
+    if source_ips and source_ip not in source_ips:
         return False
     destination_ips = _casefold_set(attribution.destination_ips)
     destination_ip = str(eventdata.get("destinationIp", "")).casefold()
