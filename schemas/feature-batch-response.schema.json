@@ -4,8 +4,8 @@
       "additionalProperties": false,
       "properties": {
         "feature_schema_version": {
-          "const": "features-v1",
-          "default": "features-v1",
+          "const": "features-v2",
+          "default": "features-v2",
           "title": "Feature Schema Version",
           "type": "string"
         },
@@ -45,6 +45,20 @@
           "title": "Structural Zero Features",
           "type": "array"
         },
+        "evidence_quality": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Evidence Quality",
+          "type": "number"
+        },
+        "evidence_quality_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Quality Reasons",
+          "type": "array"
+        },
         "incident": {
           "$ref": "#/$defs/IncidentRequest"
         }
@@ -55,6 +69,8 @@
         "quality_status",
         "missing_required_features",
         "structural_zero_features",
+        "evidence_quality",
+        "evidence_quality_reasons",
         "incident"
       ],
       "title": "FeaturePipelineResponse",
@@ -152,8 +168,8 @@
   "additionalProperties": false,
   "properties": {
     "feature_schema_version": {
-      "const": "features-v1",
-      "default": "features-v1",
+      "const": "features-v2",
+      "default": "features-v2",
       "title": "Feature Schema Version",
       "type": "string"
     },

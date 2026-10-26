@@ -25,15 +25,17 @@ def test_account_fixture_produces_versioned_deterministic_features() -> None:
     second = extract_wazuh_features(alert)
 
     assert first == second
-    assert first.feature_schema_version == "features-v1"
+    assert first.feature_schema_version == "features-v2"
     assert first.feature_order == list(FEATURE_ORDER)
-    assert first.incident.incident_id == "WAZUH-W1-0001"
+    assert first.incident.incident_id.startswith("INC-FV2-")
     assert first.incident.family_hint == "account"
     assert first.incident.asset_id == "linux-endpoint-01"
     assert first.incident.features["failed_login_count"] == 12.0
     assert first.incident.features["success_after_fail"] == 1.0
     assert first.incident.indicator == "203.0.113.66"
     assert first.incident.evidence_sources == ["wazuh"]
+    assert first.evidence_quality < 1.0
+    assert first.evidence_quality_reasons
     assert "source-log:auth.log" in first.incident.raw_refs
     assert (first.incident.end_time - first.incident.start_time).total_seconds() == 0
 
@@ -44,15 +46,13 @@ def test_c2_fixture_produces_only_observed_behavioral_features() -> None:
     result = extract_wazuh_features(alert)
 
     assert result.incident.family_hint == "c2"
-    assert result.incident.features == {
-        "failed_login_count": 0.0,
-        "success_after_fail": 0.0,
-        "suspicious_process": 1.0,
-        "periodicity_score": 0.87,
-        "suricata_alert_count": 2.0,
-        "outbound_connection_count": 15.0,
-        "destination_port_count": 1.0,
-    }
+    assert result.incident.features["suspicious_process"] == 1.0
+    assert result.incident.features["periodicity_score"] == 0.87
+    assert result.incident.features["suricata_alert_count"] == 2.0
+    assert result.incident.features["outbound_connection_count"] == 15.0
+    assert result.incident.features["destination_port_count"] == 1.0
+    assert result.quality_status == "PARTIAL"
+    assert result.evidence_quality < 1.0
     forbidden = {"label", "ground_truth", "asset_criticality", "ti_score"}
     assert forbidden.isdisjoint(result.incident.features)
 
@@ -65,11 +65,8 @@ def test_missing_optional_measurements_default_safely_without_failure() -> None:
     result = extract_wazuh_features(alert)
 
     assert all(value == 0.0 for value in result.incident.features.values())
-    assert set(result.missing_required_features) == {
-        "failed_login_count",
-        "success_after_fail",
-    }
-    assert set(result.structural_zero_features) == set(FEATURE_ORDER[2:])
+    assert set(result.missing_required_features) == set(FEATURE_ORDER[:8])
+    assert set(result.structural_zero_features) == set(FEATURE_ORDER[8:])
     assert result.quality_status == "PARTIAL"
 
 
@@ -85,7 +82,7 @@ def test_feature_pipeline_does_not_copy_fixture_normalized_incident() -> None:
 def test_feature_schema_and_implementation_have_identical_order() -> None:
     schema = json.loads((ROOT / "ml/feature_schema.json").read_text(encoding="utf-8"))
 
-    assert schema["version"] == "features-v1"
+    assert schema["version"] == "features-v2"
     assert schema["x-feature-order"] == list(FEATURE_ORDER)
     assert list(schema["properties"]) == list(FEATURE_ORDER)
 
@@ -109,7 +106,8 @@ def test_batch_pipeline_deduplicates_and_aggregates_within_window() -> None:
     assert batch.duplicate_alert_count == 1
     assert len(batch.incidents) == 1
     incident = batch.incidents[0].incident
-    assert incident.features["failed_login_count"] == 15.0
+    assert incident.features["failed_login_count"] == 12.0
+    assert batch.incidents[0].quality_status == "PARTIAL"
     assert (incident.end_time - incident.start_time).total_seconds() == 180
     assert incident.evidence_sources == ["wazuh"]
 
@@ -167,3 +165,139 @@ def test_feature_bounds_are_enforced(field: str, value: float) -> None:
 
     with pytest.raises(ValidationError):
         WazuhAlert.model_validate(payload)
+
+
+def test_raw_account_events_are_correlated_before_deriving_features() -> None:
+    def raw_alert(alert_id: str, timestamp: str, event_id: int) -> WazuhAlert:
+        return WazuhAlert.model_validate(
+            {
+                "id": alert_id,
+                "timestamp": timestamp,
+                "rule": {"id": "60100", "level": 7},
+                "agent": {"id": "001", "name": "WIN11-TARGET"},
+                "decoder": {"name": "windows_eventchannel"},
+                "data": {
+                    "win": {
+                        "system": {"eventID": str(event_id)},
+                        "eventdata": {
+                            "targetUserName": "labuser",
+                            "ipAddress": "10.40.0.10",
+                            "logonType": "3",
+                        },
+                    }
+                },
+                "location": "Security",
+            }
+        )
+
+    alerts = [
+        raw_alert("A-1", "2026-10-05T12:00:00Z", 4625),
+        raw_alert("A-2", "2026-10-05T12:00:10Z", 4625),
+        raw_alert("A-3", "2026-10-05T12:00:20Z", 4624),
+    ]
+
+    result = aggregate_wazuh_alerts(alerts).incidents[0]
+
+    assert result.quality_status == "COMPLETE"
+    assert result.evidence_quality == 1.0
+    assert result.incident.features["failed_login_count"] == 2.0
+    assert result.incident.features["successful_login_count"] == 1.0
+    assert result.incident.features["success_after_fail"] == 1.0
+    assert result.incident.features["unique_target_account_count"] == 1.0
+    assert result.incident.features["unique_source_count"] == 1.0
+    assert result.incident.features["remote_logon_ratio"] == 1.0
+
+
+def test_password_spray_accounts_from_one_source_share_behavior_window() -> None:
+    def failure(alert_id: str, timestamp: str, account: str) -> WazuhAlert:
+        return WazuhAlert.model_validate(
+            {
+                "id": alert_id,
+                "timestamp": timestamp,
+                "rule": {"id": "60122", "level": 10},
+                "agent": {"id": "001", "name": "WIN11-TARGET"},
+                "decoder": {"name": "windows_eventchannel"},
+                "data": {
+                    "win": {
+                        "system": {"eventID": "4625"},
+                        "eventdata": {
+                            "targetUserName": account,
+                            "ipAddress": "10.40.0.10",
+                            "logonType": "3",
+                        },
+                    }
+                },
+                "location": "Security",
+            }
+        )
+
+    batch = aggregate_wazuh_alerts(
+        [
+            failure("SPRAY-1", "2026-10-05T12:00:00Z", "alice"),
+            failure("SPRAY-2", "2026-10-05T12:00:10Z", "bob"),
+            failure("SPRAY-3", "2026-10-05T12:00:20Z", "carol"),
+        ]
+    )
+
+    assert len(batch.incidents) == 1
+    features = batch.incidents[0].incident.features
+    assert features["failed_login_count"] == 3.0
+    assert features["unique_target_account_count"] == 3.0
+    assert features["unique_source_count"] == 1.0
+
+
+def test_account_events_from_different_sources_remain_separate() -> None:
+    alerts = []
+    for index, source in enumerate(("10.40.0.10", "10.40.0.11"), start=1):
+        payload = {
+            "id": f"SOURCE-{index}",
+            "timestamp": f"2026-10-05T12:00:0{index}Z",
+            "rule": {"id": "60122", "level": 7},
+            "agent": {"id": "001", "name": "WIN11-TARGET"},
+            "decoder": {"name": "windows_eventchannel"},
+            "data": {
+                "win": {
+                    "system": {"eventID": "4625"},
+                    "eventdata": {
+                        "targetUserName": "labuser",
+                        "ipAddress": source,
+                        "logonType": "3",
+                    },
+                }
+            },
+            "location": "Security",
+        }
+        alerts.append(WazuhAlert.model_validate(payload))
+
+    assert len(aggregate_wazuh_alerts(alerts).incidents) == 2
+
+
+@pytest.mark.parametrize(
+    ("logon_type", "expected_ratio"),
+    [("2", 0.0), ("7", 0.0), ("11", 0.0), ("3", 1.0), ("10", 1.0)],
+)
+def test_windows_logon_type_is_classified_by_remote_semantics(
+    logon_type: str, expected_ratio: float
+) -> None:
+    payload = {
+        "id": f"LOGON-{logon_type}",
+        "timestamp": "2026-10-05T12:00:00Z",
+        "rule": {"id": "60122", "level": 7},
+        "agent": {"id": "001", "name": "WIN11-TARGET"},
+        "decoder": {"name": "windows_eventchannel"},
+        "data": {
+            "win": {
+                "system": {"eventID": "4624"},
+                "eventdata": {
+                    "targetUserName": "labuser",
+                    "ipAddress": "10.40.0.10",
+                    "logonType": logon_type,
+                },
+            }
+        },
+        "location": "Security",
+    }
+
+    result = extract_wazuh_features(WazuhAlert.model_validate(payload))
+
+    assert result.incident.features["remote_logon_ratio"] == expected_ratio

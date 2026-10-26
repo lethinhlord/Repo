@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "DATN AI SOAR API",
-    "summary": "Week 1 compatibility API plus Week 2 feature and context services",
-    "version": "2.0.0-week2"
+    "summary": "Week 1/2 compatibility services plus Week 3 trained-model inference",
+    "version": "3.1.0"
   },
   "paths": {
     "/health": {
@@ -80,6 +80,80 @@
         }
       }
     },
+    "/model/ready": {
+      "get": {
+        "summary": "Model Readiness",
+        "operationId": "model_readiness_model_ready_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelReadinessResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/model/metrics": {
+      "get": {
+        "summary": "Model Metrics",
+        "operationId": "model_metrics_model_metrics_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelMetricsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/model/feedback": {
+      "post": {
+        "summary": "Model Feedback",
+        "operationId": "model_feedback_model_feedback_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalystFeedbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalystFeedbackResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/features/wazuh": {
       "post": {
         "summary": "Features From Wazuh",
@@ -118,6 +192,44 @@
         }
       }
     },
+    "/ingress/wazuh/verify": {
+      "post": {
+        "summary": "Verify Wazuh Ingress",
+        "operationId": "verify_wazuh_ingress_ingress_wazuh_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignedWazuhIngestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignedWazuhIngestResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/features/wazuh/batch": {
       "post": {
         "summary": "Features From Wazuh Batch",
@@ -139,6 +251,44 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/FeatureBatchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/features/wazuh/stateful": {
+      "post": {
+        "summary": "Features From Wazuh Stateful",
+        "operationId": "features_from_wazuh_stateful_features_wazuh_stateful_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WazuhAlert"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeatureStateResponse"
                 }
               }
             }
@@ -273,6 +423,82 @@
         }
       }
     },
+    "/incidents/record": {
+      "post": {
+        "summary": "Record Incident",
+        "operationId": "record_incident_incidents_record_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IncidentRecordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentRecordResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/notifications/dispatch": {
+      "post": {
+        "summary": "Dispatch Notification",
+        "operationId": "dispatch_notification_notifications_dispatch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationDispatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationDispatchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/orchestrate/mock": {
       "post": {
         "summary": "Orchestrate Mock",
@@ -314,6 +540,110 @@
   },
   "components": {
     "schemas": {
+      "AnalystFeedbackRequest": {
+        "properties": {
+          "incident_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Incident Id"
+          },
+          "model_version": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Model Version"
+          },
+          "analyst_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Analyst Id"
+          },
+          "analyst_label": {
+            "type": "string",
+            "enum": [
+              "benign",
+              "malicious",
+              "uncertain"
+            ],
+            "title": "Analyst Label"
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "true_positive",
+              "false_positive",
+              "true_negative",
+              "false_negative",
+              "needs_investigation"
+            ],
+            "title": "Disposition"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4096
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "incident_id",
+          "model_version",
+          "analyst_id",
+          "analyst_label",
+          "disposition"
+        ],
+        "title": "AnalystFeedbackRequest"
+      },
+      "AnalystFeedbackResponse": {
+        "properties": {
+          "feedback_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Feedback Id"
+          },
+          "incident_id": {
+            "type": "string",
+            "title": "Incident Id"
+          },
+          "model_version": {
+            "type": "string",
+            "title": "Model Version"
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "created",
+              "duplicate"
+            ],
+            "title": "Disposition"
+          },
+          "recorded_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Recorded At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "feedback_id",
+          "incident_id",
+          "model_version",
+          "disposition",
+          "recorded_at"
+        ],
+        "title": "AnalystFeedbackResponse"
+      },
       "AssetContext": {
         "properties": {
           "asset_id": {
@@ -489,9 +819,9 @@
         "properties": {
           "feature_schema_version": {
             "type": "string",
-            "const": "features-v1",
+            "const": "features-v2",
             "title": "Feature Schema Version",
-            "default": "features-v1"
+            "default": "features-v2"
           },
           "input_alert_count": {
             "type": "integer",
@@ -531,9 +861,9 @@
         "properties": {
           "feature_schema_version": {
             "type": "string",
-            "const": "features-v1",
+            "const": "features-v2",
             "title": "Feature Schema Version",
-            "default": "features-v1"
+            "default": "features-v2"
           },
           "feature_order": {
             "items": {
@@ -571,6 +901,20 @@
             "type": "array",
             "title": "Structural Zero Features"
           },
+          "evidence_quality": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Evidence Quality"
+          },
+          "evidence_quality_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Evidence Quality Reasons"
+          },
           "incident": {
             "$ref": "#/components/schemas/IncidentRequest"
           }
@@ -583,9 +927,46 @@
           "quality_status",
           "missing_required_features",
           "structural_zero_features",
+          "evidence_quality",
+          "evidence_quality_reasons",
           "incident"
         ],
         "title": "FeaturePipelineResponse"
+      },
+      "FeatureStateResponse": {
+        "properties": {
+          "ingest_status": {
+            "type": "string",
+            "enum": [
+              "new",
+              "duplicate"
+            ],
+            "title": "Ingest Status"
+          },
+          "stored_event_count": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Stored Event Count"
+          },
+          "window_minutes": {
+            "type": "integer",
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Window Minutes"
+          },
+          "feature": {
+            "$ref": "#/components/schemas/FeaturePipelineResponse"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "ingest_status",
+          "stored_event_count",
+          "window_minutes",
+          "feature"
+        ],
+        "title": "FeatureStateResponse"
       },
       "HTTPValidationError": {
         "properties": {
@@ -614,28 +995,124 @@
             "title": "Service",
             "default": "datn-ai-soar-api"
           },
-          "mode": {
-            "type": "string",
-            "const": "mock",
-            "title": "Mode",
-            "default": "mock"
-          },
           "api_version": {
             "type": "string",
-            "const": "1.0.0",
+            "const": "3.1.0",
             "title": "Api Version",
-            "default": "1.0.0"
-          },
-          "model_version": {
-            "type": "string",
-            "const": "mock-v1",
-            "title": "Model Version",
-            "default": "mock-v1"
+            "default": "3.1.0"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "title": "HealthResponse"
+      },
+      "IncidentRecordRequest": {
+        "properties": {
+          "incident_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Incident Id"
+          },
+          "source_event_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Source Event Id"
+          },
+          "route": {
+            "type": "string",
+            "enum": [
+              "shadow",
+              "review"
+            ],
+            "title": "Route"
+          },
+          "review_required": {
+            "type": "boolean",
+            "title": "Review Required"
+          },
+          "notification": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Notification"
+          },
+          "decision": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Decision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "incident_id",
+          "source_event_id",
+          "route",
+          "review_required",
+          "notification",
+          "decision"
+        ],
+        "title": "IncidentRecordRequest"
+      },
+      "IncidentRecordResponse": {
+        "properties": {
+          "incident_id": {
+            "type": "string",
+            "title": "Incident Id"
+          },
+          "source_event_id": {
+            "type": "string",
+            "title": "Source Event Id"
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "created",
+              "updated",
+              "duplicate"
+            ],
+            "title": "Disposition"
+          },
+          "notification_status": {
+            "type": "string",
+            "enum": [
+              "QUEUED",
+              "ALREADY_QUEUED"
+            ],
+            "title": "Notification Status"
+          },
+          "route": {
+            "type": "string",
+            "enum": [
+              "shadow",
+              "review"
+            ],
+            "title": "Route"
+          },
+          "review_required": {
+            "type": "boolean",
+            "title": "Review Required"
+          },
+          "recorded_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Recorded At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "incident_id",
+          "source_event_id",
+          "disposition",
+          "notification_status",
+          "route",
+          "review_required",
+          "recorded_at"
+        ],
+        "title": "IncidentRecordResponse"
       },
       "IncidentRequest": {
         "properties": {
@@ -724,11 +1201,246 @@
         ],
         "title": "IncidentRequest"
       },
+      "ModelMetricsResponse": {
+        "properties": {
+          "monitoring_revision": {
+            "type": "string",
+            "const": "model-monitor-v2",
+            "title": "Monitoring Revision",
+            "default": "model-monitor-v2"
+          },
+          "model_version": {
+            "type": "string",
+            "title": "Model Version"
+          },
+          "monitoring_storage": {
+            "type": "string",
+            "enum": [
+              "memory",
+              "sqlite"
+            ],
+            "title": "Monitoring Storage"
+          },
+          "predictions_total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Predictions Total"
+          },
+          "predictions_by_family": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Predictions By Family"
+          },
+          "review_required_total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Review Required Total"
+          },
+          "ood_total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Ood Total"
+          },
+          "ood_by_family": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Ood By Family"
+          },
+          "ood_by_feature": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Ood By Feature"
+          },
+          "feedback_total": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Feedback Total",
+            "default": 0
+          },
+          "feedback_by_disposition": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Feedback By Disposition"
+          },
+          "false_positive_rate": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "False Positive Rate"
+          },
+          "false_negative_rate": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "False Negative Rate"
+          },
+          "monitoring_alerts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Monitoring Alerts"
+          },
+          "last_prediction_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Prediction At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "model_version",
+          "monitoring_storage",
+          "predictions_total",
+          "predictions_by_family",
+          "review_required_total",
+          "ood_total",
+          "ood_by_family",
+          "ood_by_feature",
+          "monitoring_alerts",
+          "last_prediction_at"
+        ],
+        "title": "ModelMetricsResponse"
+      },
+      "ModelReadinessResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "not_configured",
+              "invalid"
+            ],
+            "title": "Status"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "trained",
+              "mock",
+              "unconfigured"
+            ],
+            "title": "Mode"
+          },
+          "model_version": {
+            "type": "string",
+            "title": "Model Version"
+          },
+          "feature_schema_version": {
+            "type": "string",
+            "title": "Feature Schema Version"
+          },
+          "locked_test_status": {
+            "type": "string",
+            "title": "Locked Test Status"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status",
+          "mode",
+          "model_version",
+          "feature_schema_version",
+          "locked_test_status",
+          "detail"
+        ],
+        "title": "ModelReadinessResponse"
+      },
+      "NotificationDispatchRequest": {
+        "properties": {
+          "incident_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Incident Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "incident_id"
+        ],
+        "title": "NotificationDispatchRequest"
+      },
+      "NotificationDispatchResponse": {
+        "properties": {
+          "incident_id": {
+            "type": "string",
+            "title": "Incident Id"
+          },
+          "notification_status": {
+            "type": "string",
+            "enum": [
+              "SENT",
+              "ALREADY_SENT"
+            ],
+            "title": "Notification Status"
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "audit-log",
+              "webhook"
+            ],
+            "title": "Channel"
+          },
+          "delivered_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Delivered At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "incident_id",
+          "notification_status",
+          "channel",
+          "delivered_at"
+        ],
+        "title": "NotificationDispatchResponse"
+      },
       "PredictionResponse": {
         "properties": {
           "model_version": {
             "type": "string",
-            "const": "mock-v1",
+            "maxLength": 128,
+            "minLength": 1,
             "title": "Model Version",
             "default": "mock-v1"
           },
@@ -757,9 +1469,47 @@
           },
           "threshold_revision": {
             "type": "string",
-            "const": "mock-thr-v1",
+            "maxLength": 128,
+            "minLength": 1,
             "title": "Threshold Revision",
             "default": "mock-thr-v1"
+          },
+          "automation_eligible": {
+            "type": "boolean",
+            "title": "Automation Eligible",
+            "default": false
+          },
+          "review_required": {
+            "type": "boolean",
+            "title": "Review Required",
+            "default": true
+          },
+          "inference_mode": {
+            "type": "string",
+            "enum": [
+              "trained",
+              "mock"
+            ],
+            "title": "Inference Mode",
+            "default": "mock"
+          },
+          "ood_detected": {
+            "type": "boolean",
+            "title": "Ood Detected",
+            "default": false
+          },
+          "ood_features": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Ood Features"
+          },
+          "monitoring_revision": {
+            "type": "string",
+            "const": "model-monitor-v2",
+            "title": "Monitoring Revision",
+            "default": "model-monitor-v2"
           }
         },
         "additionalProperties": false,
@@ -789,15 +1539,15 @@
           },
           "api_version": {
             "type": "string",
-            "const": "2.0.0-week2",
+            "const": "3.1.0",
             "title": "Api Version",
-            "default": "2.0.0-week2"
+            "default": "3.1.0"
           },
           "feature_schema_version": {
             "type": "string",
-            "const": "features-v1",
+            "const": "features-v2",
             "title": "Feature Schema Version",
-            "default": "features-v1"
+            "default": "features-v2"
           },
           "asset_context_revision": {
             "type": "string",
@@ -807,9 +1557,9 @@
           },
           "risk_policy_revision": {
             "type": "string",
-            "const": "risk-week2-v1",
+            "const": "risk-week2-v2",
             "title": "Risk Policy Revision",
-            "default": "risk-week2-v1"
+            "default": "risk-week2-v2"
           },
           "ti_policy_revision": {
             "type": "string",
@@ -827,6 +1577,24 @@
             ],
             "title": "Ti Mode"
           },
+          "model_status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "not_configured",
+              "invalid"
+            ],
+            "title": "Model Status"
+          },
+          "inference_mode": {
+            "type": "string",
+            "enum": [
+              "trained",
+              "mock",
+              "unconfigured"
+            ],
+            "title": "Inference Mode"
+          },
           "strong_actions_enabled": {
             "type": "boolean",
             "const": false,
@@ -838,7 +1606,9 @@
         "type": "object",
         "required": [
           "status",
-          "ti_mode"
+          "ti_mode",
+          "model_status",
+          "inference_mode"
         ],
         "title": "ReadinessResponse"
       },
@@ -846,9 +1616,9 @@
         "properties": {
           "policy_revision": {
             "type": "string",
-            "const": "risk-week2-v1",
+            "const": "risk-week2-v2",
             "title": "Policy Revision",
-            "default": "risk-week2-v1"
+            "default": "risk-week2-v2"
           },
           "internal": {
             "type": "number",
@@ -889,6 +1659,13 @@
           "review_required": {
             "type": "boolean",
             "title": "Review Required"
+          },
+          "review_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Review Reasons"
           }
         },
         "additionalProperties": false,
@@ -899,7 +1676,8 @@
           "available_weight",
           "missing_signals",
           "contributions",
-          "review_required"
+          "review_required",
+          "review_reasons"
         ],
         "title": "RiskEvaluation"
       },
@@ -948,6 +1726,35 @@
             "maximum": 1.0,
             "minimum": 0.0,
             "title": "Severity Score"
+          },
+          "feature_quality": {
+            "type": "string",
+            "enum": [
+              "COMPLETE",
+              "PARTIAL"
+            ],
+            "title": "Feature Quality"
+          },
+          "model_automation_eligible": {
+            "type": "boolean",
+            "title": "Model Automation Eligible"
+          },
+          "model_review_required": {
+            "type": "boolean",
+            "title": "Model Review Required"
+          },
+          "threat_intelligence_status": {
+            "type": "string",
+            "enum": [
+              "MALICIOUS",
+              "BENIGN",
+              "UNKNOWN"
+            ],
+            "title": "Threat Intelligence Status"
+          },
+          "asset_review_required": {
+            "type": "boolean",
+            "title": "Asset Review Required"
           }
         },
         "additionalProperties": false,
@@ -955,7 +1762,12 @@
         "required": [
           "ai_probability",
           "observed_evidence",
-          "severity_score"
+          "severity_score",
+          "feature_quality",
+          "model_automation_eligible",
+          "model_review_required",
+          "threat_intelligence_status",
+          "asset_review_required"
         ],
         "title": "RiskEvaluationRequest"
       },
@@ -987,6 +1799,73 @@
           "display"
         ],
         "title": "RiskResult"
+      },
+      "SignedWazuhIngestRequest": {
+        "properties": {
+          "timestamp": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Timestamp"
+          },
+          "nonce": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9._-]+$",
+            "title": "Nonce"
+          },
+          "signature": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{64}$",
+            "title": "Signature"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Payload"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "timestamp",
+          "nonce",
+          "signature",
+          "payload"
+        ],
+        "title": "SignedWazuhIngestRequest"
+      },
+      "SignedWazuhIngestResponse": {
+        "properties": {
+          "verified": {
+            "type": "boolean",
+            "const": true,
+            "title": "Verified",
+            "default": true
+          },
+          "source_event_id": {
+            "type": "string",
+            "title": "Source Event Id"
+          },
+          "payload_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Payload Sha256"
+          },
+          "verified_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Verified At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_event_id",
+          "payload_sha256",
+          "verified_at"
+        ],
+        "title": "SignedWazuhIngestResponse"
       },
       "ThreatIntelligenceContext": {
         "properties": {
@@ -1279,6 +2158,18 @@
             "maxLength": 1024,
             "title": "Location",
             "default": "unknown-log"
+          },
+          "full_log": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Log"
           }
         },
         "type": "object",
@@ -1456,6 +2347,18 @@
               }
             ],
             "title": "Destination Port Count"
+          },
+          "win": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Win"
           }
         },
         "type": "object",

@@ -22,6 +22,16 @@ def main() -> int:
         type=Path,
         default=Path("config/scenario-catalog.yaml"),
     )
+    parser.add_argument(
+        "--source-config",
+        type=Path,
+        default=Path("config/collection-sources.yaml"),
+    )
+    parser.add_argument(
+        "--taxonomy",
+        type=Path,
+        default=Path("config/suspicious-process-taxonomy.yaml"),
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--require-target", action="store_true")
     args = parser.parse_args()
@@ -34,6 +44,8 @@ def main() -> int:
         minimum_scenarios=args.minimum_scenarios,
         maximum_scenario_share=args.maximum_scenario_share,
         scenario_catalog_path=args.scenario_catalog,
+        source_config_path=args.source_config,
+        taxonomy_path=args.taxonomy,
     )
     print(format_audit_report(report), end="")
     if args.output:

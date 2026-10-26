@@ -31,8 +31,12 @@ leakage and produce input accepted by the existing Week 3 grouped-split pipeline
 # Focused tests
 .venv-ml/bin/python -m pytest -q tests/test_scenario_collection.py tests/test_dataset_audit.py
 
-# Start/finalize/validate a run
+# Start, bind the action to frozen parameters, finalize and validate a run
 .venv-ml/bin/python -m scripts.scenario_session start --draft run-draft.yaml
+.venv-ml/bin/python -m scripts.export_run_parameters --run-id RUN_ID --format powershell
+.venv-ml/bin/python -m scripts.scenario_session begin-action --run-id RUN_ID
+# Execute exactly one catalog action here.
+.venv-ml/bin/python -m scripts.scenario_session complete-action --run-id RUN_ID
 .venv-ml/bin/python -m scripts.scenario_session finalize --run-id RUN_ID
 .venv-ml/bin/python -m scripts.scenario_session validate --run-id RUN_ID
 
@@ -50,12 +54,13 @@ leakage and produce input accepted by the existing Week 3 grouped-split pipeline
 ```text
 config/collection-sources.yaml          Source paths and agent identities
 config/suspicious-process-taxonomy.yaml Versioned process/command taxonomy
-config/scenario-catalog.yaml             Four safe scenarios per stratum
+config/scenario-catalog.yaml             Five safe scenarios per stratum
 config/sysmon-datn.xml                   Required Sysmon event families
 config/suricata-datn.rules               Deterministic lab-only signatures
 ml/scenario_collection.py               Collector and feature derivation
 ml/dataset_audit.py                      Dataset readiness validator
 scripts/create_run_draft.py              Validated draft generator
+scripts/export_run_parameters.py         Export collector-frozen run parameters
 scripts/scenario_session.py              Collector CLI
 scripts/audit_dataset.py                 Auditor CLI
 scripts/verify_collection_dataset.sh     One-command test/lint/readiness gate
@@ -98,14 +103,17 @@ def periodicity_score(timestamps: list[datetime]) -> float:
 
 ## Success Criteria
 
-1. Collector start writes immutable ground truth and source cursors before activity.
+1. Collector start writes immutable ground truth, source cursors and collection-contract
+   snapshots before activity; `start-contract.json` binds the normalized runtime source
+   and cursor to those snapshots, and a completed action receipt is mandatory.
 2. Finalize produces a strict `ScenarioManifest`, strict `IncidentRequest`, raw evidence,
    metadata and SHA-256 checksums atomically.
-3. C2 finalization fails without attributable Sysmon network telemetry and attributable
-   Suricata flow/application telemetry.
-4. Auditor reports counts and shortage for all four strata and exits non-zero until every
-   stratum has at least 10 valid independent runs.
-5. Auditor enforces at least three scenarios per stratum and no scenario above 40%.
+3. C2 finalization fails without a matching nonce, ProcessGuid, action count/timing,
+   attributable Sysmon telemetry and time-correlated Suricata application/flow telemetry.
+4. Auditor rejects mixed source, taxonomy, catalog or feature-schema contracts, reports
+   counts and shortage for all four strata, and exits non-zero until every stratum has at
+   least 10 valid independent runs.
+5. Auditor enforces all five catalog scenarios per stratum and no scenario above 30%.
 6. Output passes the existing `ml.build_dataset` contract and grouped split.
 7. The Vietnamese runbook contains complete installation, pilot, per-run, recovery,
    screenshot and Colab handoff procedures.

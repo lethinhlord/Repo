@@ -4,7 +4,9 @@ import argparse
 import json
 from pathlib import Path
 
-from ml.scenario_collection import CollectionError, create_run_draft
+import yaml
+
+from ml.scenario_collection import ClockPreflight, CollectionError, create_run_draft
 
 
 def main() -> int:
@@ -21,6 +23,8 @@ def main() -> int:
         default=Path("config/scenario-catalog.yaml"),
     )
     parser.add_argument("--execution-log", type=str)
+    parser.add_argument("--collection-seed", type=int)
+    parser.add_argument("--clock-preflight", type=Path, required=True)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
@@ -34,8 +38,12 @@ def main() -> int:
             output_path=output,
             host=args.host,
             execution_log_path=args.execution_log,
+            collection_seed=args.collection_seed,
+            clock_preflight=ClockPreflight.model_validate(
+                yaml.safe_load(args.clock_preflight.read_text(encoding="utf-8"))
+            ),
         )
-    except CollectionError as exc:
+    except (CollectionError, OSError, ValueError, yaml.YAMLError) as exc:
         print(json.dumps({"status": "ERROR", "detail": str(exc)}, indent=2))
         return 1
     print(json.dumps(payload, indent=2, sort_keys=True))

@@ -15,7 +15,11 @@
   Wazuh/Sysmon/Suricata evidence and SHA-256 integrity checks.
 - Dataset readiness auditor enforcing 10-run minimum, 12-run target, scenario diversity,
   grouped-run boundaries and mandatory C2 Suricata evidence.
-- Versioned 16-scenario catalog and complete Vietnamese collection runbook.
+- Versioned 20-scenario catalog (five per stratum) and complete Vietnamese collection runbook.
+- Durable per-model prediction/OOD counters, feature-level drift alerts and
+  analyst-feedback quality thresholds for post-deployment monitoring.
+- Timestamp-normalized OCI builds with bytecode-free dependency installation and a
+  two-build digest verification gate.
 
 ### Security
 

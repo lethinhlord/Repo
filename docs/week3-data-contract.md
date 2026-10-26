@@ -35,13 +35,36 @@ Example `scenario_manifest.json`:
   "host": "WIN11-01",
   "start_time": "2026-10-12T08:00:00+07:00",
   "end_time": "2026-10-12T08:05:00+07:00",
-  "expected_behavior": "Repeated failed logins followed by a successful login."
+  "expected_behavior": "Repeated failed logins followed by a successful login.",
+  "collection_seed": 123456,
+  "scenario_parameters": {"attempt_delay_seconds": 2.5},
+  "provenance_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "source_config_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "taxonomy_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "scenario_catalog_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "feature_schema_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "collection_contract_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
 }
 ```
+
+Các chuỗi zero chỉ minh họa kiểu dữ liệu. Collector thật tự tính hash từ snapshot
+`collection-sources`, taxonomy, catalog và feature schema; không tự điền hoặc sửa hash.
 
 `incidents.jsonl` contains one normalized `IncidentRequest` per line, either directly or
 under an `incident` key. The `family_hint` must match the manifest. Features must conform
 to [feature_schema.json](../ml/feature_schema.json).
+
+Each raw run has a matching `evidence/scenario-runs/<run_id>/` directory. The collector
+creates `start-contract.json` at `start`; it binds the normalized runtime source and
+archive cursor to the source config, taxonomy, scenario catalog, feature schema, frozen
+parameters and start time. `begin-action`, `complete-action`, `finalize`, `validate` and
+the dataset auditor all reject a state whose source or cursor differs from that contract.
+The completed `execution_receipt.json` must identify the same run/scenario, parameter
+digest and action window as the finalized manifest.
+
+The dataset auditor compares every run's source-config and taxonomy hashes, as well as
+its catalog and feature-schema hashes, with the canonical files in the checked-out
+collection commit. A dataset assembled from mixed collection contracts is not ready.
 
 ## Collection minimum
 

@@ -36,8 +36,9 @@
       "additionalProperties": false,
       "properties": {
         "model_version": {
-          "const": "mock-v1",
           "default": "mock-v1",
+          "maxLength": 128,
+          "minLength": 1,
           "title": "Model Version",
           "type": "string"
         },
@@ -65,9 +66,47 @@
           "type": "string"
         },
         "threshold_revision": {
-          "const": "mock-thr-v1",
           "default": "mock-thr-v1",
+          "maxLength": 128,
+          "minLength": 1,
           "title": "Threshold Revision",
+          "type": "string"
+        },
+        "automation_eligible": {
+          "default": false,
+          "title": "Automation Eligible",
+          "type": "boolean"
+        },
+        "review_required": {
+          "default": true,
+          "title": "Review Required",
+          "type": "boolean"
+        },
+        "inference_mode": {
+          "default": "mock",
+          "enum": [
+            "trained",
+            "mock"
+          ],
+          "title": "Inference Mode",
+          "type": "string"
+        },
+        "ood_detected": {
+          "default": false,
+          "title": "Ood Detected",
+          "type": "boolean"
+        },
+        "ood_features": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Ood Features",
+          "type": "array"
+        },
+        "monitoring_revision": {
+          "const": "model-monitor-v2",
+          "default": "model-monitor-v2",
+          "title": "Monitoring Revision",
           "type": "string"
         }
       },

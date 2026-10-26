@@ -1,0 +1,58 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "incident_id": {
+      "title": "Incident Id",
+      "type": "string"
+    },
+    "source_event_id": {
+      "title": "Source Event Id",
+      "type": "string"
+    },
+    "disposition": {
+      "enum": [
+        "created",
+        "updated",
+        "duplicate"
+      ],
+      "title": "Disposition",
+      "type": "string"
+    },
+    "notification_status": {
+      "enum": [
+        "QUEUED",
+        "ALREADY_QUEUED"
+      ],
+      "title": "Notification Status",
+      "type": "string"
+    },
+    "route": {
+      "enum": [
+        "shadow",
+        "review"
+      ],
+      "title": "Route",
+      "type": "string"
+    },
+    "review_required": {
+      "title": "Review Required",
+      "type": "boolean"
+    },
+    "recorded_at": {
+      "format": "date-time",
+      "title": "Recorded At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "incident_id",
+    "source_event_id",
+    "disposition",
+    "notification_status",
+    "route",
+    "review_required",
+    "recorded_at"
+  ],
+  "title": "IncidentRecordResponse",
+  "type": "object"
+}

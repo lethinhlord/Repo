@@ -13,6 +13,8 @@ data:
   require_collection_audit: true
   evidence_dir: evidence/scenario-runs
   scenario_catalog: config/scenario-catalog.yaml
+  source_config: config/collection-sources.yaml
+  taxonomy: config/suspicious-process-taxonomy.yaml
   audit_report: evidence/dataset-audit.json
   minimum_runs: 10
   target_runs: 12
@@ -25,6 +27,12 @@ split:
   number_of_folds: 5
 selection:
   minimum_precision: 0.90
+  inner_cv_folds: 3
+  calibration_method: sigmoid
+  calibration_bins: 10
+  maximum_brier: 0.20
+  maximum_ece: 0.15
+  maximum_threshold_delta: 0.25
   bootstrap_iterations: 300
   bootstrap_confidence: 0.95
   latency_repeats: 50

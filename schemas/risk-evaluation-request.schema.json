@@ -46,12 +46,46 @@
       "minimum": 0.0,
       "title": "Severity Score",
       "type": "number"
+    },
+    "feature_quality": {
+      "enum": [
+        "COMPLETE",
+        "PARTIAL"
+      ],
+      "title": "Feature Quality",
+      "type": "string"
+    },
+    "model_automation_eligible": {
+      "title": "Model Automation Eligible",
+      "type": "boolean"
+    },
+    "model_review_required": {
+      "title": "Model Review Required",
+      "type": "boolean"
+    },
+    "threat_intelligence_status": {
+      "enum": [
+        "MALICIOUS",
+        "BENIGN",
+        "UNKNOWN"
+      ],
+      "title": "Threat Intelligence Status",
+      "type": "string"
+    },
+    "asset_review_required": {
+      "title": "Asset Review Required",
+      "type": "boolean"
     }
   },
   "required": [
     "ai_probability",
     "observed_evidence",
-    "severity_score"
+    "severity_score",
+    "feature_quality",
+    "model_automation_eligible",
+    "model_review_required",
+    "threat_intelligence_status",
+    "asset_review_required"
   ],
   "title": "RiskEvaluationRequest",
   "type": "object"

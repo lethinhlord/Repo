@@ -1,0 +1,32 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "verified": {
+      "const": true,
+      "default": true,
+      "title": "Verified",
+      "type": "boolean"
+    },
+    "source_event_id": {
+      "title": "Source Event Id",
+      "type": "string"
+    },
+    "payload_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Payload Sha256",
+      "type": "string"
+    },
+    "verified_at": {
+      "format": "date-time",
+      "title": "Verified At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "source_event_id",
+    "payload_sha256",
+    "verified_at"
+  ],
+  "title": "SignedWazuhIngestResponse",
+  "type": "object"
+}

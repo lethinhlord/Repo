@@ -39,6 +39,14 @@ class ScenarioManifest(BaseModel):
     start_time: datetime
     end_time: datetime
     expected_behavior: str = Field(min_length=1)
+    collection_seed: int | None = Field(default=None, ge=0, le=2**32 - 1)
+    scenario_parameters: dict[str, int | float | str | bool] = Field(default_factory=dict)
+    provenance_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    source_config_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    taxonomy_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    scenario_catalog_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    feature_schema_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    collection_contract_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
     @field_validator("family")
     @classmethod

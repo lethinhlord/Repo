@@ -1,0 +1,35 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "timestamp": {
+      "exclusiveMinimum": 0,
+      "title": "Timestamp",
+      "type": "integer"
+    },
+    "nonce": {
+      "maxLength": 128,
+      "minLength": 16,
+      "pattern": "^[A-Za-z0-9._-]+$",
+      "title": "Nonce",
+      "type": "string"
+    },
+    "signature": {
+      "pattern": "^[0-9a-fA-F]{64}$",
+      "title": "Signature",
+      "type": "string"
+    },
+    "payload": {
+      "additionalProperties": true,
+      "title": "Payload",
+      "type": "object"
+    }
+  },
+  "required": [
+    "timestamp",
+    "nonce",
+    "signature",
+    "payload"
+  ],
+  "title": "SignedWazuhIngestRequest",
+  "type": "object"
+}

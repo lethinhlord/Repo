@@ -27,6 +27,8 @@ def test_training_config_preserves_60_20_20_grouped_split() -> None:
     assert config["data"]["group_key"] == "scenario_id"
     assert config["data"]["require_collection_audit"] is True
     assert config["data"]["scenario_catalog"] == "config/scenario-catalog.yaml"
+    assert config["data"]["source_config"] == "config/collection-sources.yaml"
+    assert config["data"]["taxonomy"] == "config/suspicious-process-taxonomy.yaml"
     assert config["split"] == {
         "train_folds": [0, 1, 2],
         "validation_folds": [3],
@@ -38,6 +40,10 @@ def test_training_config_preserves_60_20_20_grouped_split() -> None:
         "random_forest",
         "xgboost",
     }
+    assert config["selection"]["inner_cv_folds"] == 3
+    assert config["selection"]["calibration_method"] == "sigmoid"
+    assert config["selection"]["maximum_brier"] == 0.20
+    assert config["selection"]["maximum_ece"] == 0.15
 
 
 def test_smoke_training_uses_the_same_scenario_group_boundary() -> None:

@@ -7,7 +7,7 @@ with the P1 acceptance items in the implementation plan.
 |---|---|---|
 | ML repository foundation | Git repository at `D:\Repo`, pinned runtime and atomic commits | PASS |
 | FastAPI skeleton | `/health`, `/predict`, `/orchestrate/mock`, OpenAPI and JSON Schemas | PASS |
-| n8n foundation | n8n 2.41.7 container with persistent storage and imported published workflow | PASS |
+| n8n foundation | n8n 2.44.6 container with persistent storage and imported published workflow | PASS |
 | Risk schema | Strict input/output models, Risk v1 policy, boundary tests | PASS |
 | Mock inference | Deterministic `mock-v1` response with versioned threshold | PASS |
 | Mock Threat Intelligence | Deterministic `mock-ti-v1` malicious/clean/unknown results | PASS |

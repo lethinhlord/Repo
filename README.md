@@ -11,7 +11,8 @@ Regression, Random Forest and XGBoost, selects thresholds on validation data, an
 packages trained inference artifacts without opening the locked test.
 
 Start ML work with `docs/week3-model-training-runbook.md` and
-`docs/week3-data-contract.md`. The Colab entry point is
+`docs/week3-data-contract.md`. Production monitoring, feedback, retraining and
+rollback are defined in `docs/model-operations-runbook.md`. The Colab entry point is
 `notebooks/week3_train_colab.ipynb`; it intentionally accepts only TRAIN,
 VALIDATION and the dataset manifest. The frozen Week 1 request/response rules are
 in `docs/interface-contract-v1.md`; machine-readable Week 1 and Week 2 schemas
@@ -26,10 +27,24 @@ capture one independent run, validate its evidence, then audit all four strata:
   --run-id UNIQUE_RUN_ID --operator OPERATOR
 .venv-ml/bin/python -m scripts.scenario_session start \
   --draft run-drafts/UNIQUE_RUN_ID.yaml
+mkdir -p evidence/operator-parameter-exports
+.venv-ml/bin/python -m scripts.export_run_parameters \
+  --project-root . --run-id UNIQUE_RUN_ID --format bash \
+  > evidence/operator-parameter-exports/UNIQUE_RUN_ID.env
+.venv-ml/bin/python -m scripts.scenario_session begin-action \
+  --run-id UNIQUE_RUN_ID
+# Execute exactly one catalog action with the frozen parameters, then stop it.
+.venv-ml/bin/python -m scripts.scenario_session complete-action \
+  --run-id UNIQUE_RUN_ID
 .venv-ml/bin/python -m scripts.scenario_session finalize --run-id UNIQUE_RUN_ID
 .venv-ml/bin/python -m scripts.scenario_session validate --run-id UNIQUE_RUN_ID
 .venv-ml/bin/python -m scripts.audit_dataset --minimum-runs 10 --target-runs 12
 ```
+
+Do not skip or reorder the export, `begin-action` and `complete-action` steps. The
+collector rejects samples whose receipt, frozen parameters, action count or timing
+contract does not match the selected catalog scenario. Follow the full runbook for
+clock evidence, VM-specific execution and cleanup commands.
 
 For the complete test, lint and readiness gate, run
 `./scripts/verify_collection_dataset.sh`; set `REQUIRE_TARGET=1` to require all 12 runs
