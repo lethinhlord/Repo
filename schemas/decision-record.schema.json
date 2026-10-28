@@ -35,6 +35,13 @@
     "PredictionResponse": {
       "additionalProperties": false,
       "properties": {
+        "review_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Review Reasons",
+          "type": "array"
+        },
         "model_version": {
           "default": "mock-v1",
           "maxLength": 128,

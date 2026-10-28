@@ -165,7 +165,21 @@ class ModelRuntime:
         package_eligible = bool(
             self.thresholds["families"][family]["automation_eligible"]
         )
-        automation_eligible = package_eligible and not ood_features
+        reasons = list(incident.review_reasons)
+        history_mask = (
+            "source_history_known" if family == "account" else "destination_history_known"
+        )
+        if incident.context_status != "AVAILABLE" or not incident.context_revision:
+            reasons.append(f"context:{incident.context_status.lower()}")
+        if incident.features.get(history_mask) != 1.0:
+            reasons.append("context:history_not_known")
+        if incident.observation_quality != "COMPLETE":
+            reasons.append("telemetry:partial")
+        if ood_features:
+            reasons.append("model:out_of_distribution")
+        if not package_eligible:
+            reasons.append("model:automation_ineligible")
+        automation_eligible = not reasons
         result = PredictionResponse(
             model_version=self.metadata["model_version"],
             predicted_class="malicious" if probability >= threshold else "benign",
@@ -177,6 +191,7 @@ class ModelRuntime:
             inference_mode="trained",
             ood_detected=bool(ood_features),
             ood_features=ood_features,
+            review_reasons=sorted(set(reasons)),
         )
         self.monitoring.record_prediction(
             model_version=self.metadata["model_version"],

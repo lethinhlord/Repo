@@ -30,11 +30,11 @@ def parser() -> argparse.ArgumentParser:
     for name in ("begin-action", "complete-action", "finalize", "validate", "status"):
         command = subcommands.add_parser(name)
         command.add_argument("--run-id", required=True)
-        if name == "begin-action":
+        if name in {"begin-action", "finalize"}:
             command.add_argument(
                 "--wait-for-window",
                 action="store_true",
-                help="wait for a UTC 5-minute bucket that fits the frozen action schedule",
+                help="wait for a clean action bucket, or for capture bucket closure plus grace",
             )
 
     abort = subcommands.add_parser("abort")
@@ -59,7 +59,9 @@ def main() -> int:
         elif args.command == "complete-action":
             payload = complete_action(args.run_id, root)
         elif args.command == "finalize":
-            payload = finalize_run(args.run_id, root)
+            if args.wait_for_window:
+                logging.basicConfig(level=logging.INFO, format="%(message)s")
+            payload = finalize_run(args.run_id, root, wait_for_window=args.wait_for_window)
         elif args.command == "validate":
             payload = validate_run(args.run_id, root)
         elif args.command == "status":

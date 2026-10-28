@@ -205,3 +205,30 @@ def build_baseline(
             asset_id=asset, destination=destination, port=port, process_images=sorted(images),
         ) for (asset, destination, port), images in sorted(destinations.items())],
     )
+
+
+def context_from_events(
+    snapshot: BaselineSnapshot | None, events: list[dict], *, at: datetime, asset_id: str,
+) -> ContextAssessment:
+    """Apply identical history semantics to already-attributed offline/online rows."""
+    accounts = []
+    network = []
+    for event in events:
+        event_id, _, fields = windows_fields(event)
+        timestamp = event_time(event)
+        if timestamp is None:
+            continue
+        if event_id in {"4624", "4625"} and is_interactive_logon(fields):
+            accounts.append(AccountObservation(
+                timestamp, account_user(fields), account_source(fields),
+                str(fields.get("logonType", fields.get("LogonType", ""))), event_id == "4624",
+            ))
+        elif event_id == "3" and network_is_outbound(fields):
+            network.append(NetworkObservation(
+                timestamp, normalize_ip(fields.get("destinationIp")),
+                int(fields["destinationPort"]),
+            ))
+        elif event_id == "22" and fields.get("queryName"):
+            query = str(fields["queryName"]).strip(".").casefold()
+            network.append(NetworkObservation(timestamp, query, 53, query))
+    return assess_context(snapshot, at=at, asset_id=asset_id, accounts=accounts, network=network)

@@ -233,7 +233,8 @@ def test_data_only_eve_is_preserved_at_wazuh_boundary_and_correlated() -> None:
         }
     )
     result = aggregate_wazuh_alerts([process, network, eve]).incidents[0]
-    assert result.quality_status == "COMPLETE"
+    assert result.quality_status == "PARTIAL"
+    assert result.incident.context_status == "MISSING"
     assert result.incident.features["suricata_alert_count"] == 1.0
     assert result.incident.end_time.second == 1
 
@@ -284,7 +285,8 @@ def test_dns_requires_process_and_client_correlated_eve(monkeypatch) -> None:
     }
     eve = WazuhAlert.model_validate({**envelope, "full_log": json.dumps(payload)})
     result = aggregate_wazuh_alerts([process, query, eve]).incidents[0]
-    assert result.quality_status == "COMPLETE"
+    assert result.quality_status == "PARTIAL"
+    assert result.incident.context_status == "MISSING"
     assert result.incident.features["dns_query_count"] == 1.0
     assert result.incident.features["suspicious_process"] == 1.0
 
@@ -411,6 +413,9 @@ def test_offline_and_online_derive_the_same_c2_vector_for_same_raw_window(
     source = SourceConfig.model_validate(
         yaml.safe_load((ROOT / "config/collection-sources.yaml").read_text(encoding="utf-8"))
     )
+    # This component fixture deliberately has no final-flow counter record.
+    # Full collection requires it; both feature results must remain PARTIAL here.
+    source = source.model_copy(update={"require_flow_counters": False})
     taxonomy = yaml.safe_load((ROOT / "config/suspicious-process-taxonomy.yaml").read_text())
     alerts = [process, network, eve]
     if eve_second == 16:
@@ -424,7 +429,8 @@ def test_offline_and_online_derive_the_same_c2_vector_for_same_raw_window(
         [alert.model_dump(mode="json") for alert in alerts], draft, source, taxonomy
     )[0]
     online = aggregate_wazuh_alerts(alerts).incidents[0]
-    assert online.quality_status == "COMPLETE"
+    assert online.quality_status == "PARTIAL"
+    assert online.incident.context_status == "MISSING"
     assert online.incident.features == offline
 
 
@@ -439,9 +445,9 @@ def test_account_fixture_produces_versioned_deterministic_features() -> None:
     second = extract_wazuh_features(alert)
 
     assert first == second
-    assert first.feature_schema_version == "features-v2"
+    assert first.feature_schema_version == "features-v3"
     assert first.feature_order == list(FEATURE_ORDER)
-    assert first.incident.incident_id.startswith("INC-FV2-")
+    assert first.incident.incident_id.startswith("INC-FV3-")
     assert first.incident.family_hint == "account"
     assert first.incident.asset_id == "linux-endpoint-01"
     assert first.incident.features["failed_login_count"] == 12.0
@@ -479,8 +485,8 @@ def test_missing_optional_measurements_default_safely_without_failure() -> None:
     result = extract_wazuh_features(alert)
 
     assert all(value == 0.0 for value in result.incident.features.values())
-    assert set(result.missing_required_features) == set(FEATURE_ORDER[:8])
-    assert set(result.structural_zero_features) == set(FEATURE_ORDER[8:])
+    assert set(result.missing_required_features) == set(FEATURE_ORDER[:10])
+    assert set(result.structural_zero_features) == set(FEATURE_ORDER[10:])
     assert result.quality_status == "PARTIAL"
 
 
@@ -496,7 +502,7 @@ def test_feature_pipeline_does_not_copy_fixture_normalized_incident() -> None:
 def test_feature_schema_and_implementation_have_identical_order() -> None:
     schema = json.loads((ROOT / "ml/feature_schema.json").read_text(encoding="utf-8"))
 
-    assert schema["version"] == "features-v2"
+    assert schema["version"] == "features-v3"
     assert schema["x-feature-order"] == list(FEATURE_ORDER)
     assert list(schema["properties"]) == list(FEATURE_ORDER)
 
@@ -612,8 +618,10 @@ def test_raw_account_events_are_correlated_before_deriving_features() -> None:
 
     result = aggregate_wazuh_alerts(alerts).incidents[0]
 
-    assert result.quality_status == "COMPLETE"
-    assert result.evidence_quality == 1.0
+    assert result.quality_status == "PARTIAL"
+    assert result.incident.context_status == "MISSING"
+    assert result.evidence_quality == 0.96
+    assert "new_source_for_user" in result.missing_required_features
     assert result.incident.features["failed_login_count"] == 2.0
     assert result.incident.features["successful_login_count"] == 1.0
     assert result.incident.features["success_after_fail"] == 1.0

@@ -2,9 +2,10 @@
 
 Ngày lập: 28/10/2026. Repo đối chiếu: `D:\Repo`.
 Baseline được rà soát: `ee7f4f6a56c355ff855802671db4d9aabc5412fe`.
-Trạng thái: **phương án triển khai và nghiệm thu; chưa phải bản sửa đã hoàn tất**.
-Task list: `tasks/todo.md` trong cùng thư mục tài liệu này. Không ghi đè kế hoạch cũ
-trong `D:\Repo\tasks`, không thay `Kiên.txt` hoặc commit baseline trong lượt tổng hợp.
+Trạng thái: **đang triển khai trên nhánh `fix/handoff-context-v3`; chưa freeze để thu chính thức**.
+Task list: `tasks/todo.md` trong cùng thư mục này. Kế hoạch tổng hợp gốc được giữ ở
+`outputs/handoff-remediation-plan-20261028` ngoài repo. Chỉ đồng bộ `Kiên.txt` và baseline
+bàn giao sau khi contract, catalog, runner, tài liệu và kiểm thử đã thống nhất.
 
 ## 1. Kết quả cần đạt
 

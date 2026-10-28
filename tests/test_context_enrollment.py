@@ -154,3 +154,29 @@ def test_raw_scenario_labels_and_approval_metadata_are_never_snapshot_fields() -
     assert "malicious" not in serialized
     assert "BENIGN-LABEL-ORACLE" not in serialized
     assert "authorized" not in serialized
+
+
+def test_enrollment_cli_preserves_the_bytes_it_actually_hashed(tmp_path, monkeypatch) -> None:
+    import hashlib
+    import json
+    import sys
+
+    from scripts import enroll_context_baseline as command
+    event = _logon()
+    raw = (json.dumps(event) + '\n').encode()
+    capture = tmp_path/'enrollment.jsonl'
+    capture.write_bytes(raw)
+    output = tmp_path/'context-baseline.json'
+    original = command.build_baseline
+
+    def concurrent_source_change(*args, **kwargs):
+        snapshot = original(*args, **kwargs)
+        capture.write_text('source changed while enrollment was running', encoding='utf-8')
+        return snapshot
+
+    monkeypatch.setattr(command, 'build_baseline', concurrent_source_change)
+    monkeypatch.setattr(sys, 'argv', ['enroll', '--capture', str(capture),
+        '--output', str(output), '--revision', 'unit-enrollment', '--approved-enrollment'])
+    assert command.main() == 0
+    saved = tmp_path/'context-captures'/f'{hashlib.sha256(raw).hexdigest()}.jsonl'
+    assert saved.read_bytes() == raw

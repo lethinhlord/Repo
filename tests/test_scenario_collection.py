@@ -498,6 +498,8 @@ def test_account_run_creates_strict_manifest_incident_and_checksums(tmp_path: Pa
     manifest = json.loads((run_dir / "scenario_manifest.json").read_text(encoding="utf-8"))
     assert result["status"] == "FINALIZED"
     assert set(manifest) == {
+        "purpose",
+        "cohort_id",
         "scenario_id",
         "run_id",
         "family",
@@ -753,6 +755,10 @@ def test_c2_run_requires_correlated_sysmon_and_suricata_and_calculates_features(
         "dns_query_count": 0.0,
         "dns_unique_query_ratio": 0.0,
         "flow_total_bytes_log1p": 0.0,
+        "source_history_known": 0.0,
+        "new_source_for_user": 0.0,
+        "destination_history_known": 0.0,
+        "new_destination": 0.0,
     }
     assert incident["evidence_sources"] == ["wazuh-archives", "suricata-eve"]
 

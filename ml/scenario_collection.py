@@ -18,7 +18,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from api.app.contracts import IncidentRequest
+from api.app.contracts import IncidentRequest, WazuhAlert
 from ml.behavior_features import (
     AccountObservation,
     NetworkObservation,
@@ -27,12 +27,14 @@ from ml.behavior_features import (
     interval_features,
 )
 from ml.collection_windows import bucket_used, reserve_bucket
+from ml.context import context_from_events, load_baseline
 from ml.dataset import (
     DatasetRecord,
     ScenarioManifest,
     load_feature_schema,
     validate_feature_contract,
 )
+from ml.feature_pipeline import aggregate_wazuh_alerts
 from ml.telemetry import (
     account_source as _account_source,
 )
@@ -46,6 +48,7 @@ from ml.telemetry import (
     event_time as _event_time,
 )
 from ml.telemetry import (
+    flow_counter_issues,
     is_interactive_logon,
     linked_flow,
     network_is_outbound,
@@ -199,6 +202,8 @@ class RunDraft(BaseModel):
     run_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
     family: Literal["account", "c2"]
     label: Literal["benign", "malicious"]
+    purpose: Literal["trainable", "challenge", "pilot"] = "trainable"
+    cohort_id: str | None = Field(default=None, min_length=1, max_length=128)
     host: str = Field(min_length=1, max_length=128)
     expected_behavior: str = Field(min_length=1)
     operator: str = Field(min_length=1, max_length=128)
@@ -238,6 +243,11 @@ class SourceConfig(BaseModel):
     correlation_window_seconds: float = Field(default=10.0, gt=0, le=30)
     taxonomy_path: str
     scenario_catalog_path: str = Field(min_length=1)
+    context_baseline_path: str | None = None
+    require_clean_bucket: bool = False
+    require_flow_counters: bool = False
+    require_online_parity: bool = False
+    late_arrival_grace_seconds: int = Field(default=60, ge=0, le=600)
 
 
 class ScenarioDefinition(BaseModel):
@@ -246,6 +256,8 @@ class ScenarioDefinition(BaseModel):
     scenario_id: str = Field(min_length=1, max_length=128)
     family: Literal["account", "c2"]
     label: Literal["benign", "malicious"]
+    purpose: Literal["trainable", "challenge", "pilot"] = "trainable"
+    cohort_id: str | None = Field(default=None, min_length=1, max_length=128)
     expected_behavior: str = Field(min_length=1)
     attribution: Attribution
     quality_gates: QualityGates
@@ -305,6 +317,10 @@ def _normalized_source(source: SourceConfig, project_root: Path) -> dict[str, An
     payload["scenario_catalog_path"] = str(
         _resolve(project_root, source.scenario_catalog_path).resolve()
     )
+    if source.context_baseline_path:
+        payload["context_baseline_path"] = str(
+            _resolve(project_root, source.context_baseline_path).resolve()
+        )
     return payload
 
 
@@ -337,6 +353,8 @@ def _validate_draft_against_catalog(draft: RunDraft, catalog_path: Path) -> None
     }
     if actual != expected:
         raise CollectionError(f"draft does not match scenario catalog: {draft.scenario_id}")
+    if draft.purpose not in {scenario.purpose, "pilot"} or draft.cohort_id != scenario.cohort_id:
+        raise CollectionError("draft purpose/cohort does not match the frozen scenario catalog")
 
 
 def _atomic_text(path: Path, text: str) -> None:
@@ -365,6 +383,7 @@ def create_run_draft(
     execution_log_path: str | None = None,
     collection_seed: int | None = None,
     clock_preflight: ClockPreflight,
+    purpose: Literal["trainable", "challenge", "pilot"] | None = None,
 ) -> dict[str, str]:
     if output_path.exists():
         raise CollectionError(f"draft output already exists: {output_path}")
@@ -431,6 +450,8 @@ def create_run_draft(
             run_id=run_id,
             family=scenario.family,
             label=scenario.label,
+            purpose=purpose or scenario.purpose,
+            cohort_id=scenario.cohort_id,
             host=host,
             expected_behavior=scenario.expected_behavior,
             operator=operator,
@@ -444,6 +465,7 @@ def create_run_draft(
         )
     except ValueError as exc:
         raise CollectionError(f"invalid run draft values: {exc}") from exc
+    _validate_draft_against_catalog(draft, catalog_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     _atomic_text(
         output_path,
@@ -598,8 +620,27 @@ def start_run(
         schema_path = Path(__file__).with_name("feature_schema.json")
     if not schema_path.is_file():
         raise CollectionError(f"feature schema does not exist: {schema_path}")
+    context_path = (
+        _resolve(project_root, source.context_baseline_path)
+        if source.context_baseline_path else None
+    )
+    baseline = load_baseline(context_path)
+    context_capture = None
+    if context_path:
+        if baseline is None:
+            raise CollectionError("context baseline is required; enroll a separate capture first")
+        context_capture = context_path.parent / "context-captures" / (
+            baseline.source_capture_sha256 + ".jsonl"
+        )
+        if (
+            not context_capture.is_file()
+            or _sha256(context_capture) != baseline.source_capture_sha256
+        ):
+            raise CollectionError("context enrollment capture is missing or its hash differs")
 
     started_at = _utc(now)
+    if baseline and not baseline.captured_at <= started_at < baseline.valid_until:
+        raise CollectionError("context baseline is stale or unavailable at collection start")
     clock_age = (started_at - _utc(draft.clock_preflight.captured_at)).total_seconds()
     if clock_age < -1 or clock_age > draft.clock_preflight.maximum_capture_age_seconds:
         raise CollectionError(
@@ -619,6 +660,8 @@ def start_run(
         "scenario_id": draft.scenario_id,
         "family": draft.family,
         "label": draft.label,
+        "purpose": draft.purpose,
+        "cohort_id": draft.cohort_id,
         "scenario_parameters": draft.scenario_parameters,
     }
     frozen_parameters_sha256 = _payload_sha256(frozen_parameters)
@@ -640,6 +683,8 @@ def start_run(
         "frozen_parameters_sha256": frozen_parameters_sha256,
         "execution_receipt": None,
         "origin_project_root": str(project_root),
+        "context_baseline_sha256": _sha256(context_path) if context_path else None,
+        "context_capture_sha256": baseline.source_capture_sha256 if baseline else None,
     }
     state["scenario_catalog_sha256"] = _sha256(catalog_path)
     state["collection_contract_sha256"] = _payload_sha256(
@@ -654,6 +699,8 @@ def start_run(
         "version": "collection-start-contract-v2",
         "origin_project_root": str(project_root),
         "source_document": source.model_dump(mode="json"),
+        "context_baseline_sha256": state["context_baseline_sha256"],
+        "context_capture_sha256": state["context_capture_sha256"],
         "run_id": draft.run_id,
         "started_at": state["started_at"],
         "draft_sha256": state["draft_sha256"],
@@ -694,6 +741,9 @@ def start_run(
             )
             shutil.copyfile(catalog_path, staging_dir / "scenario-catalog.yaml")
             shutil.copyfile(schema_path, staging_dir / "feature-schema.json")
+            if context_path and context_capture:
+                shutil.copyfile(context_path, staging_dir / "context-baseline.json")
+                shutil.copyfile(context_capture, staging_dir / "context-capture.jsonl")
             _write_jsonl(staging_dir / "run_markers.jsonl", [start_marker])
             _write_json(staging_dir / ".collection_state.json", state)
             _append_log(staging_dir, f"RUN_STARTED run_id={draft.run_id}")
@@ -709,7 +759,9 @@ def start_run(
     }
 
 
-def _read_appended_jsonl(cursor: dict[str, Any]) -> list[dict[str, Any]]:
+def _read_appended_jsonl(
+    cursor: dict[str, Any], capture_path: Path | None = None,
+) -> list[dict[str, Any]]:
     path = Path(cursor["path"])
     stat = path.stat()
     if (
@@ -746,6 +798,8 @@ def _read_appended_jsonl(cursor: dict[str, Any]) -> list[dict[str, Any]]:
         events.append(event)
     if not events:
         raise CollectionError("no complete JSON events were appended during the run")
+    if capture_path:
+        capture_path.write_bytes(payload)
     return events
 
 
@@ -1090,6 +1144,11 @@ def _derive_c2(
                 signature_ids.add(int((payload.get("alert") or {}).get("signature_id")))
     if not suricata:
         raise CollectionError("no attributable Suricata EVE evidence was collected")
+    if source.require_flow_counters:
+        start, end = _aggregation_window(min(item.timestamp for item in network_observations))
+        flow_issues = flow_counter_issues(suricata, window_start=start, window_end=end)
+        if flow_issues:
+            raise CollectionError("incomplete flow evidence: " + ",".join(flow_issues))
 
     gates = draft.quality_gates
     observed_counts = {
@@ -1183,6 +1242,63 @@ def _read_evidence_rows(path: Path, *, required: bool = True) -> list[dict[str, 
     return rows
 
 
+def _verify_full_capture_parity(
+    captured: list[dict[str, Any]], incident: IncidentRequest, source: SourceConfig,
+    evidence_dir: Path,
+) -> None:
+    """Replay the full asset bucket without label, scenario or nonce filtering."""
+    start, end = _aggregation_window(incident.start_time)
+    alerts = []
+    for row in captured:
+        at = _event_time(row)
+        agent = row.get("agent")
+        if not isinstance(agent, dict) or agent.get("name") not in {
+            source.windows_agent_name, source.suricata_agent_name,
+        }:
+            continue
+        if at is None:
+            raise CollectionError("full-capture parity requires original event timestamps")
+        if not start <= at < end:
+            continue
+        envelope = dict(row)
+        canonical = json.dumps(row, sort_keys=True, separators=(",", ":"))
+        envelope.setdefault("id", "archive-" + hashlib.sha256(canonical.encode()).hexdigest())
+        envelope.setdefault("timestamp", _iso(at))
+        envelope.setdefault("rule", {"id": "archive-raw", "level": 0})
+        try:
+            alert = WazuhAlert.model_validate(envelope)
+        except ValueError as exc:
+            raise CollectionError(f"full-capture parity envelope is invalid: {exc}") from exc
+        alerts.append(alert)
+    if not alerts:
+        raise CollectionError("full-capture parity has no replayable records")
+    batch = aggregate_wazuh_alerts(
+        alerts, baseline=load_baseline(evidence_dir / "context-baseline.json"),
+        source_config=source.model_dump(mode="json"),
+        taxonomy=_load_taxonomy(evidence_dir / "suspicious-process-taxonomy.yaml"),
+        use_runtime_baseline=False,
+    )
+    candidates = [
+        item.incident for item in batch.incidents
+        if item.incident.asset_id.casefold() == incident.asset_id.casefold()
+        and item.incident.family_hint == incident.family_hint
+    ]
+    if len(candidates) != 1:
+        raise CollectionError("full-capture parity requires exactly one attributable online group")
+    online = candidates[0]
+    if (
+        online.features != incident.features
+        or online.context_status != incident.context_status
+        or online.context_revision != incident.context_revision
+        or online.observation_quality != incident.observation_quality
+    ):
+        changed = sorted(
+            key for key in online.features.keys() | incident.features.keys()
+            if online.features.get(key) != incident.features.get(key)
+        )
+        raise CollectionError(f"full-capture parity failed; feature differences={changed}")
+
+
 def verify_feature_provenance(
     evidence_dir: Path,
     manifest: ScenarioManifest,
@@ -1226,6 +1342,27 @@ def verify_feature_provenance(
             source,
             _load_taxonomy(evidence_dir / "suspicious-process-taxonomy.yaml"),
         )
+    baseline = load_baseline(evidence_dir / "context-baseline.json")
+    context = context_from_events(
+        baseline, windows, at=manifest.end_time, asset_id=manifest.host,
+    )
+    features.update(context.features)
+    if contract.get("version") == "collection-start-contract-v2" and (
+        incident.context_status != context.status
+        or incident.context_revision != context.revision
+        or incident.review_reasons != context.review_reasons
+    ):
+        raise CollectionError("context assessment does not reproduce the finalized incident")
+    capture_path = evidence_dir / "archive_capture.jsonl"
+    if capture_path.is_file():
+        captured = _read_evidence_rows(capture_path)
+        selected = {json.dumps(item, sort_keys=True) for item in events}
+        if not selected <= {json.dumps(item, sort_keys=True) for item in captured}:
+            raise CollectionError("selected evidence is not a subset of the original capture")
+        if source.require_online_parity:
+            _verify_full_capture_parity(captured, incident, source, evidence_dir)
+    elif source.require_online_parity:
+        raise CollectionError("full-capture parity evidence is missing")
     if features != incident.features:
         changed = sorted(
             name
@@ -1319,6 +1456,14 @@ def _verify_start_snapshot(
         taxonomy_snapshot_path: start_contract.get("taxonomy_sha256"),
         evidence_dir / "feature-schema.json": start_contract.get("feature_schema_sha256"),
     }
+    for name in ("context_baseline_sha256", "context_capture_sha256"):
+        if start_contract.get(name) != state.get(name):
+            raise CollectionError("runtime context differs from the immutable start contract")
+    if start_contract.get("context_baseline_sha256"):
+        protected[evidence_dir / "context-baseline.json"] = start_contract[
+            "context_baseline_sha256"
+        ]
+        protected[evidence_dir / "context-capture.jsonl"] = start_contract["context_capture_sha256"]
     if start_contract.get("scenario_catalog_sha256") is not None:
         protected[evidence_dir / "scenario-catalog.yaml"] = start_contract.get(
             "scenario_catalog_sha256"
@@ -1340,7 +1485,9 @@ def _verify_start_snapshot(
         ):
             raise CollectionError("portable source document differs from the start contract")
         normalized_source = start_contract["source"]
-        path_fields = {"wazuh_archives_path", "taxonomy_path", "scenario_catalog_path"}
+        path_fields = {
+            "wazuh_archives_path", "taxonomy_path", "scenario_catalog_path", "context_baseline_path"
+        }
         if any(
             normalized_source.get(name) != value
             for name, value in snapshot_source.model_dump(mode="json").items()
@@ -1501,6 +1648,14 @@ def begin_action(
             raise CollectionError(str(exc)) from exc
         if wait_for_window and action_started_at < guarded_start:
             ready_at = guarded_start
+        elif state["source"].get("require_clean_bucket") and bucket_start < (
+            _aggregation_window(collection_started_at)[1]
+        ):
+            if not wait_for_window:
+                raise CollectionError(
+                    "aggregation window contains pre-collection activity; wait for a clean bucket"
+                )
+            ready_at = _aggregation_window(collection_started_at)[1] + timedelta(seconds=guard)
         elif occupied:
             if not wait_for_window:
                 raise CollectionError("aggregation window already used; wait for a new bucket")
@@ -1598,6 +1753,7 @@ def finalize_run(
     project_root: Path,
     *,
     now: datetime | None = None,
+    wait_for_window: bool = False,
 ) -> dict[str, Any]:
     project_root = project_root.resolve()
     evidence_dir = project_root / "evidence/scenario-runs" / run_id
@@ -1662,7 +1818,24 @@ def finalize_run(
         raise CollectionError("execution receipt contains an invalid action window")
     _validate_action_window(receipt, draft)
 
-    events = _read_appended_jsonl(state["archive_cursor"])
+    if source.require_online_parity:
+        capture_deadline = _aggregation_window(started_at)[1] + timedelta(
+            seconds=source.late_arrival_grace_seconds,
+        )
+        if wait_for_window and now is None:
+            while finalized_at < capture_deadline:
+                _LOGGER.info("Waiting for full capture until %s", _iso(capture_deadline))
+                time.sleep(min(30.0, (capture_deadline - finalized_at).total_seconds()))
+                finalized_at = _utc(None)
+            if json.loads(state_path.read_text(encoding="utf-8")) != state:
+                raise CollectionError("run state changed while waiting for full capture")
+            _verify_start_snapshot(evidence_dir, state, project_root)
+        if finalized_at < capture_deadline:
+            raise CollectionError(
+                "full-capture parity requires a closed bucket plus grace; "
+                f"retry after {_iso(capture_deadline)}"
+            )
+    events = _read_appended_jsonl(state["archive_cursor"], evidence_dir / "archive_capture.jsonl")
     tolerance = timedelta(seconds=draft.clock_preflight.maximum_skew_seconds)
     window_start = started_at - tolerance
     window_end = ended_at + tolerance
@@ -1706,8 +1879,16 @@ def finalize_run(
         evidence_sources = ["wazuh-archives", "suricata-eve"]
 
     _validate_action_window(receipt, draft, events=scoped_archive_events)
+    baseline = load_baseline(evidence_dir / "context-baseline.json")
+    context = context_from_events(
+        baseline, windows_events, at=ended_at, asset_id=draft.host,
+    )
+    features.update(context.features)
     incident_id = f"INC-{hashlib.sha256(run_id.encode()).hexdigest()[:16].upper()}"
     incident = IncidentRequest(
+        context_status=context.status, context_revision=context.revision,
+        review_reasons=context.review_reasons,
+        observation_quality="COMPLETE" if context.status == "AVAILABLE" else "PARTIAL",
         incident_id=incident_id,
         asset_id=draft.host,
         start_time=started_at,
@@ -1719,11 +1900,15 @@ def finalize_run(
         raw_refs=[f"run:{run_id}", "evidence:wazuh_archives.jsonl"],
         indicator=indicator,
     )
+    if source.require_online_parity:
+        _verify_full_capture_parity(events, incident, source, evidence_dir)
     manifest = ScenarioManifest(
         scenario_id=draft.scenario_id,
         run_id=draft.run_id,
         family=draft.family,
         label=draft.label,
+        purpose=draft.purpose,
+        cohort_id=draft.cohort_id,
         host=draft.host,
         start_time=started_at,
         end_time=ended_at,
@@ -1975,6 +2160,10 @@ def validate_run(run_id: str, project_root: Path) -> dict[str, Any]:
         raise CollectionError("manifest collection contract does not match run state")
     if (
         frozen_parameters.get("run_id") != manifest.run_id
+        or frozen_parameters.get("purpose", "trainable") != manifest.purpose
+        or frozen_parameters.get("cohort_id") != manifest.cohort_id
+        or draft.get("purpose", "trainable") != manifest.purpose
+        or draft.get("cohort_id") != manifest.cohort_id
         or frozen_parameters.get("scenario_id") != manifest.scenario_id
         or frozen_parameters.get("family") != manifest.family
         or frozen_parameters.get("label") != manifest.label

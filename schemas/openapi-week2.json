@@ -3,7 +3,7 @@
   "info": {
     "title": "DATN AI SOAR API",
     "summary": "Week 1/2 compatibility services plus Week 3 trained-model inference",
-    "version": "3.1.0"
+    "version": "4.0.0"
   },
   "paths": {
     "/health": {
@@ -277,6 +277,44 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/WazuhAlert"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeatureStateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/features/wazuh/finalize-window": {
+      "post": {
+        "summary": "Finalize Feature Window",
+        "operationId": "finalize_feature_window_features_wazuh_finalize_window_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeatureWindowFinalizeRequest"
               }
             }
           },
@@ -883,9 +921,9 @@
         "properties": {
           "feature_schema_version": {
             "type": "string",
-            "const": "features-v2",
+            "const": "features-v3",
             "title": "Feature Schema Version",
-            "default": "features-v2"
+            "default": "features-v3"
           },
           "input_alert_count": {
             "type": "integer",
@@ -925,9 +963,9 @@
         "properties": {
           "feature_schema_version": {
             "type": "string",
-            "const": "features-v2",
+            "const": "features-v3",
             "title": "Feature Schema Version",
-            "default": "features-v2"
+            "default": "features-v3"
           },
           "feature_order": {
             "items": {
@@ -1032,6 +1070,29 @@
         ],
         "title": "FeatureStateResponse"
       },
+      "FeatureWindowFinalizeRequest": {
+        "properties": {
+          "alert_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Alert Id"
+          },
+          "window_minutes": {
+            "type": "integer",
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Window Minutes",
+            "default": 5
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "alert_id"
+        ],
+        "title": "FeatureWindowFinalizeRequest"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1061,9 +1122,9 @@
           },
           "api_version": {
             "type": "string",
-            "const": "3.1.0",
+            "const": "4.0.0",
             "title": "Api Version",
-            "default": "3.1.0"
+            "default": "4.0.0"
           }
         },
         "additionalProperties": false,
@@ -1198,6 +1259,51 @@
       },
       "IncidentRequest": {
         "properties": {
+          "feature_schema_version": {
+            "type": "string",
+            "const": "features-v3",
+            "title": "Feature Schema Version",
+            "default": "features-v3"
+          },
+          "context_status": {
+            "type": "string",
+            "enum": [
+              "AVAILABLE",
+              "MISSING",
+              "STALE",
+              "FUTURE",
+              "UNKNOWN"
+            ],
+            "title": "Context Status",
+            "default": "MISSING"
+          },
+          "context_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Revision"
+          },
+          "review_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Review Reasons"
+          },
+          "observation_quality": {
+            "type": "string",
+            "enum": [
+              "COMPLETE",
+              "PARTIAL"
+            ],
+            "title": "Observation Quality",
+            "default": "PARTIAL"
+          },
           "incident_id": {
             "type": "string",
             "maxLength": 128,
@@ -1562,6 +1668,13 @@
       },
       "PredictionResponse": {
         "properties": {
+          "review_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Review Reasons"
+          },
           "model_version": {
             "type": "string",
             "maxLength": 128,
@@ -1664,15 +1777,15 @@
           },
           "api_version": {
             "type": "string",
-            "const": "3.1.0",
+            "const": "4.0.0",
             "title": "Api Version",
-            "default": "3.1.0"
+            "default": "4.0.0"
           },
           "feature_schema_version": {
             "type": "string",
-            "const": "features-v2",
+            "const": "features-v3",
             "title": "Feature Schema Version",
-            "default": "features-v2"
+            "default": "features-v3"
           },
           "asset_context_revision": {
             "type": "string",

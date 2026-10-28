@@ -1,0 +1,23 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "alert_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Alert Id",
+      "type": "string"
+    },
+    "window_minutes": {
+      "default": 5,
+      "maximum": 5,
+      "minimum": 1,
+      "title": "Window Minutes",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "alert_id"
+  ],
+  "title": "FeatureWindowFinalizeRequest",
+  "type": "object"
+}

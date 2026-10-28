@@ -21,6 +21,7 @@ import pytest
 import yaml
 
 from api.app.contracts import WazuhAlert
+from ml.context import BaselineSnapshot, load_baseline
 from ml.feature_pipeline import aggregate_wazuh_alerts
 from ml.scenario_collection import (
     CollectionError,
@@ -38,6 +39,32 @@ ROOT = Path(__file__).resolve().parents[1]
 EVE_FIXTURE = ROOT / "fixtures/collection-audit-suricata8-eve.jsonl"
 
 
+def test_full_capture_background_cannot_be_hidden_by_scenario_nonce(
+    tmp_path: Path, acceptance: ModuleType, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive, sources, catalog = acceptance._prepare_collection_root(tmp_path)
+    scenario = next(x for x in catalog.scenarios if x.scenario_id == 'C2-BENIGN-SINGLE-DOWNLOAD')
+    original = acceptance._c2_events
+
+    def with_background(*args, **kwargs):
+        rows, ended = original(*args, **kwargs)
+        extra = copy.deepcopy([x for x in rows if x.get('data', {}).get('win')])
+        for index, item in enumerate(extra):
+            item['id'] = f'unrelated-background-{index}'
+            fields = item['data']['win']['eventdata']
+            fields['processGuid'] = '{BACKGROUND-PROCESS}'
+            if 'commandLine' in fields:
+                fields['commandLine'] = 'curl.exe https://ordinary-service.local/status'
+            if 'destinationIp' in fields:
+                fields['destinationIp'] = '10.40.0.99'
+        return rows + extra, ended
+
+    monkeypatch.setattr(acceptance, '_c2_events', with_background)
+    with pytest.raises(CollectionError, match='full.capture|parity'):
+        acceptance._collect_run(tmp_path, archive, sources, scenario, sequence=0, repeat=0)
+    assert list((tmp_path/'evidence/scenario-runs').glob('*/archive_capture.jsonl'))
+
+
 @pytest.fixture
 def acceptance() -> ModuleType:
     # A fresh module keeps monkeypatched fixture clocks/events isolated per test.
@@ -49,7 +76,9 @@ def acceptance() -> ModuleType:
     return module
 
 
-def online_features(rows: list[dict[str, Any]]) -> dict[str, float]:
+def online_features(
+    rows: list[dict[str, Any]], baseline: BaselineSnapshot | None = None,
+) -> dict[str, float]:
     alerts = []
     for index, row in enumerate(rows):
         envelope = copy.deepcopy(row)
@@ -59,7 +88,7 @@ def online_features(rows: list[dict[str, Any]]) -> dict[str, float]:
             location="handoff-test-telemetry",
         )
         alerts.append(WazuhAlert.model_validate(envelope))
-    batch = aggregate_wazuh_alerts(alerts)
+    batch = aggregate_wazuh_alerts(alerts, baseline=baseline)
     assert len(batch.incidents) == 1
     return batch.incidents[0].incident.features
 
@@ -156,7 +185,7 @@ def test_equivalent_ip_forms_produce_identical_offline_and_online_features(
     evidence_path = tmp_path / "evidence/scenario-runs" / run_id / "wazuh_archives.jsonl"
     rows = [json.loads(line) for line in evidence_path.read_text().splitlines()]
     offline = incident["features"]
-    online = online_features(rows)
+    online = online_features(rows, load_baseline(tmp_path / "evidence/context-baseline.json"))
 
     assert validate_run(run_id, tmp_path)["status"] == "VALID"
     assert offline["outbound_connection_count"] == online["outbound_connection_count"] == 4

@@ -19,6 +19,7 @@ from api.app.contracts import (
     FeatureBatchResponse,
     FeaturePipelineResponse,
     FeatureStateResponse,
+    FeatureWindowFinalizeRequest,
     HealthResponse,
     IncidentRecordRequest,
     IncidentRecordResponse,
@@ -58,7 +59,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="DATN AI SOAR API",
     summary="Week 1/2 compatibility services plus Week 3 trained-model inference",
-    version="3.1.0",
+    version="4.0.0",
 )
 
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "config"
@@ -174,7 +175,7 @@ def model_readiness() -> ModelReadinessResponse:
             status="not_configured",
             mode="mock" if _allow_mock_inference() else "unconfigured",
             model_version="mock-v1",
-            feature_schema_version="features-v2",
+            feature_schema_version="features-v3",
             locked_test_status="UNOPENED",
             detail=(
                 "MODEL_PACKAGE_DIR is not configured; explicit lab mock inference is active."
@@ -189,7 +190,7 @@ def model_readiness() -> ModelReadinessResponse:
             status="invalid",
             mode="unconfigured",
             model_version="unavailable",
-            feature_schema_version="features-v2",
+            feature_schema_version="features-v3",
             locked_test_status="UNKNOWN",
             detail=str(exc),
         )
@@ -278,6 +279,20 @@ def features_from_wazuh_stateful(alert: WazuhAlert) -> FeatureStateResponse:
     try:
         retention_seconds = int(os.getenv("FEATURE_STATE_RETENTION_SECONDS", "86400"))
         return load_feature_state_store(path, retention_seconds).ingest(alert)
+    except FeatureStateConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=f"feature state unavailable: {exc}") from exc
+
+
+@app.post("/features/wazuh/finalize-window", response_model=FeatureStateResponse)
+def finalize_feature_window(request: FeatureWindowFinalizeRequest) -> FeatureStateResponse:
+    path = os.getenv("FEATURE_STATE_DB", "/tmp/datn-feature-state.sqlite3").strip()
+    try:
+        retention_seconds = int(os.getenv("FEATURE_STATE_RETENTION_SECONDS", "86400"))
+        return load_feature_state_store(path, retention_seconds).finalize_window(
+            request.alert_id, window_minutes=request.window_minutes,
+        )
     except FeatureStateConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (OSError, sqlite3.Error, ValueError) as exc:

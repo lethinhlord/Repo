@@ -1,10 +1,14 @@
 import json
+import sys
 from pathlib import Path
 
-from api.app.contracts import DecisionRecord, IncidentRequest
-from api.app.main import app
-
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from api.app.contracts import DecisionRecord, IncidentRequest  # noqa: E402
+from api.app.main import app  # noqa: E402
+
 SCHEMA_DIR = ROOT / "schemas"
 
 
@@ -13,6 +17,7 @@ def write_json(name: str, value: dict) -> None:
     (SCHEMA_DIR / name).write_text(
         json.dumps(value, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
+        newline="\n",
     )
 
 

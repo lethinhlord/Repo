@@ -25,6 +25,19 @@ function Get-DatnSmbRuleAssessment {
     }
     return [pscustomobject]@{Status=$status; Reason=$reason}
   }
+  if (-not $Program -or -not $Service) {
+    return [pscustomobject]@{Status=$status; Reason=$reason}
+  }
+  if ($Service -notin @('Any','LanmanServer')) {
+    return [pscustomobject]@{Status='NOT_SMB'; Reason='Service filter excludes the SMB server'}
+  }
+  $application = $Program.Trim('"').Trim()
+  if ($application -notin @('Any','System')) {
+    if ($application -match '\\[^\\*?]+\.exe$') {
+      return [pscustomobject]@{Status='NOT_SMB'; Reason='Application filter excludes the SMB server'}
+    }
+    return [pscustomobject]@{Status=$status; Reason=$reason}
+  }
   $has445 = $false
   $unknownPort = $false
   foreach ($entry in $LocalPort) {
@@ -43,20 +56,6 @@ function Get-DatnSmbRuleAssessment {
   }
   if (-not $has445) {
     return [pscustomobject]@{Status='NOT_SMB'; Reason='Port filter excludes TCP 445'}
-  }
-  if (-not $Program -or -not $Service) {
-    return [pscustomobject]@{Status=$status; Reason=$reason}
-  }
-  $application = $Program.Trim('"').Trim()
-  if ($application -notin @('Any','System')) {
-    if ($application -match '\\[^\\*?]+\.exe$' -and
-        $application -notmatch '\\svchost\.exe$') {
-      return [pscustomobject]@{Status='NOT_SMB'; Reason='Application filter excludes the SMB server'}
-    }
-    return [pscustomobject]@{Status=$status; Reason=$reason}
-  }
-  if ($Service -notin @('Any','LanmanServer')) {
-    return [pscustomobject]@{Status=$status; Reason=$reason}
   }
   $allowed = [System.Net.IPAddress]::Parse($AllowedSource)
   $broad = $false
@@ -107,6 +106,9 @@ function Invoke-DatnWindowsFirewallInspection {
   $rows = @(Get-NetFirewallRule -PolicyStore ActiveStore -Enabled True `
     -Direction Inbound -Action Allow | ForEach-Object {
       $rule = $_
+      $ruleProfiles = @(([string]$rule.Profile -split ',') | ForEach-Object { $_.Trim() })
+      if ('Any' -notin $ruleProfiles -and
+          -not @($profiles | Where-Object { $_ -in $ruleProfiles }).Count) { return }
       $port = $rule | Get-NetFirewallPortFilter
       $address = $rule | Get-NetFirewallAddressFilter
       $application = $rule | Get-NetFirewallApplicationFilter

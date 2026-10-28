@@ -1,6 +1,11 @@
 # QUY TRÌNH CHUẨN THU THẬP DỮ LIỆU TRAIN TRÊN LAB 4 VM
 
-Phiên bản: 2.2 — hoàn tất ngày 28/10/2026
+Trạng thái 28/10/2026: **đang chuyển sang features-v3/context; chưa bàn giao đợt thu mới**.
+Bản vận hành 2.2 phía dưới chưa bao gồm toàn bộ enrollment, cohort/challenge và bước
+đóng cửa sổ mới. Không dùng nó để bắt đầu thu chính thức trên nhánh đang triển khai.
+Theo dõi các điều kiện còn lại trong `tasks/todo.md` và `docs/context-v3-implementation.md`.
+
+Phiên bản nền: 2.2, đang được đối chiếu lại.
 Phạm vi: dữ liệu `account-benign`, `account-malicious`, `c2-benign`,
 `c2-malicious` cho nhánh `feature/week3-model-training`.
 

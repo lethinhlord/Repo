@@ -36,11 +36,14 @@ def account_features(failed: float, success_after_fail: float) -> dict[str, floa
         "remote_logon_ratio": 1.0,
         "failure_window_seconds": failed,
         "attempt_rate_per_minute": failed + success_after_fail,
+        "source_history_known": 1.0,
+        "new_source_for_user": 0.0,
     }
 
 
 def c2_features(value: float) -> dict[str, float]:
-    return {name: value for name in C2_FEATURES}
+    return {**{name: value for name in C2_FEATURES},
+            "destination_history_known": 1.0, "new_destination": 0.0}
 
 
 def create_package(
@@ -67,7 +70,7 @@ def create_package(
     )
     metadata = {
         "model_version": model_version,
-        "feature_schema_version": "features-v2",
+        "feature_schema_version": "features-v3",
         "locked_test_status": "UNOPENED",
         "locked_test_sha256": hashlib.sha256(b"").hexdigest(),
     }
@@ -151,6 +154,8 @@ def test_runtime_preserves_feature_order_and_package_versions(tmp_path: Path) ->
     freeze(package)
     runtime = ModelRuntime(package)
     incident = IncidentRequest(
+        context_status="AVAILABLE", context_revision="unit-independent-enrollment",
+        observation_quality="COMPLETE",
         incident_id="INC-1",
         asset_id="HOST-1",
         start_time="2026-10-11T00:00:00Z",
@@ -168,6 +173,22 @@ def test_runtime_preserves_feature_order_and_package_versions(tmp_path: Path) ->
     assert result.threshold_revision == "test-threshold-v1"
     assert result.automation_eligible is True
     assert result.review_required is False
+
+
+def test_missing_context_cannot_be_overridden_by_high_model_probability(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    create_package(package)
+    freeze(package)
+    incident = IncidentRequest(
+        incident_id="MISSING-CONTEXT", asset_id="HOST-1", family_hint="account",
+        start_time="2026-10-11T00:00:00Z", end_time="2026-10-11T00:01:00Z",
+        features=account_features(20, 1), evidence_sources=["unit-fixture"], base_severity=12,
+    )
+    result = ModelRuntime(package).predict(incident)
+    assert result.predicted_class == "malicious"
+    assert result.review_required is True
+    assert result.automation_eligible is False
+    assert any(reason.startswith("context:") for reason in result.review_reasons)
 
 
 def test_runtime_rejects_a_signed_package_missing_a_required_family(tmp_path: Path) -> None:

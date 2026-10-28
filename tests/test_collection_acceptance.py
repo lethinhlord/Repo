@@ -12,6 +12,7 @@ from typing import Any
 
 import yaml
 
+from ml.context import build_baseline
 from ml.dataset_audit import STRATA, audit_dataset
 from ml.scenario_collection import (
     ClockPreflight,
@@ -108,6 +109,41 @@ def _prepare_collection_root(tmp_path: Path) -> tuple[Path, Path, ScenarioCatalo
     catalog = ScenarioCatalog.model_validate(
         yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
     )
+    # Separate synthetic enrollment, completed before every labeled test run.
+    # It proves context contracts only and is never real training evidence.
+    observed_at = COLLECTION_BASE - timedelta(days=1)
+    enrollment = []
+    users = {name for row in catalog.scenarios for name in row.attribution.account_names}
+    for user in sorted(users):
+        for source in ("local-console", "-", "10.40.0.10"):
+            enrollment.append(_windows_event("ENROLLMENT", observed_at, 4624, {
+                "targetUserName": user, "logonType": "3", "ipAddress": source,
+            }, len(enrollment)))
+    for row in catalog.scenarios:
+        for destination in row.attribution.destination_ips:
+            for port in row.attribution.destination_ports:
+                enrollment.append(_windows_event("ENROLLMENT", observed_at, 3, {
+                    "image":"curl.exe", "initiated":"true", "sourceIp":"10.20.0.10",
+                    "destinationIp":destination, "destinationPort":str(port),
+                },len(enrollment)))
+        for domain in row.attribution.dns_suffixes:
+            enrollment.append(_windows_event("ENROLLMENT", observed_at, 22, {
+                "image":"powershell.exe", "queryName":domain,
+            },len(enrollment)))
+    captured = "".join(_json_line(row) for row in enrollment).encode()
+    digest = hashlib.sha256(captured).hexdigest()
+    baseline = build_baseline(
+        enrollment, revision="SYNTHETIC-ACCEPTANCE-ENROLLMENT", captured_at=observed_at,
+        valid_until=COLLECTION_BASE + timedelta(days=7), source_capture_sha256=digest,
+    )
+    for destination in baseline.destinations:
+        if destination.port == 53:
+            destination.match = "dns_suffix"
+    context_path = tmp_path/"evidence/context-baseline.json"
+    capture_dir = context_path.parent/"context-captures"
+    capture_dir.mkdir(parents=True)
+    (capture_dir/f"{digest}.jsonl").write_bytes(captured)
+    context_path.write_text(baseline.model_dump_json(indent=2),encoding="utf-8")
     return archive_path, source_path, catalog
 
 
@@ -233,6 +269,13 @@ def _c2_events(
                     },
                 )
             )
+            events.append(_suricata_event(event_at + timedelta(seconds=60), {
+                "event_type":"flow", "src_ip":"10.20.0.10", "dest_ip":"10.40.0.10",
+                "dest_port":53, "flow_id":f"{run_id}-{number}",
+                "flow":{"start":event_at.isoformat(),
+                        "end":(event_at + timedelta(milliseconds=10)).isoformat(),
+                        "bytes_toserver":40,"bytes_toclient":60},
+            }))
             if number < len(gaps):
                 event_at += timedelta(seconds=gaps[number])
         return events, event_at
@@ -297,6 +340,13 @@ def _c2_events(
                     },
                 )
             )
+        events.append(_suricata_event(event_at + timedelta(seconds=60), {
+            "event_type":"flow", "src_ip":"10.20.0.10", "dest_ip":"10.40.0.10",
+            "dest_port":port, "flow_id":f"{run_id}-{number}",
+            "flow":{"start":event_at.isoformat(),
+                    "end":(event_at + timedelta(milliseconds=10)).isoformat(),
+                    "bytes_toserver":40,"bytes_toclient":60},
+        }))
         if number < len(gaps):
             event_at += timedelta(seconds=gaps[number])
     return events, event_at
@@ -312,7 +362,8 @@ def _collect_run(
     repeat: int,
 ) -> str:
     run_id = f"ACCEPT-{scenario.scenario_id}-R{repeat + 1}"
-    collection_started_at = COLLECTION_BASE + sequence * RUN_SPACING
+    action_started_at = COLLECTION_BASE + sequence * RUN_SPACING + timedelta(seconds=5)
+    collection_started_at = COLLECTION_BASE + sequence * RUN_SPACING - timedelta(seconds=10)
     draft_path = root / "run-drafts" / f"{run_id}.yaml"
     create_run_draft(
         root / "config/scenario-catalog.yaml",
@@ -327,7 +378,6 @@ def _collect_run(
         yaml.safe_load(draft_path.read_text(encoding="utf-8"))
     )
     started = start_run(draft_path, source_path, root, now=collection_started_at)
-    action_started_at = collection_started_at + timedelta(seconds=5)
     receipt = begin_action(run_id, root, now=action_started_at)
     first_event_at = action_started_at + timedelta(
         seconds=float(draft.scenario_parameters["pre_action_delay_seconds"])
@@ -346,7 +396,9 @@ def _collect_run(
     assert action_ended_at - action_started_at < timedelta(minutes=5)
     complete_action(run_id, root, now=action_ended_at)
     metadata = finalize_run(
-        run_id, root, now=action_ended_at + timedelta(seconds=90)
+        run_id, root, now=datetime.fromtimestamp(
+            (int(action_started_at.timestamp()) // 300 + 1) * 300, UTC,
+        ) + timedelta(seconds=60)
     )
     validation = validate_run(run_id, root)
 

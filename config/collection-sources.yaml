@@ -6,3 +6,8 @@ correlation_window_seconds: 10.0
 suricata_agent_name: NET-SENSOR
 taxonomy_path: config/suspicious-process-taxonomy.yaml
 scenario_catalog_path: config/scenario-catalog.yaml
+context_baseline_path: evidence/context-baseline.json
+require_clean_bucket: true
+require_flow_counters: true
+require_online_parity: true
+late_arrival_grace_seconds: 60

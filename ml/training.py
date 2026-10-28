@@ -55,7 +55,7 @@ def verify_training_partitions(
         raise ValueError("dataset manifest and feature schema must be mappings")
     if (
         manifest.get("manifest_version") != "dataset-manifest-v2"
-        or manifest.get("group_key") != "scenario_id"
+        or manifest.get("group_key") not in {"scenario_id", "cohort_id"}
         or manifest.get("locked_test_status") != "UNOPENED"
         or manifest.get("feature_schema_version") != schema.get("version")
         or manifest.get("feature_schema_sha256") != hashlib.sha256(schema_bytes).hexdigest()
@@ -109,6 +109,8 @@ def verify_training_partitions(
                 record.family not in schema["x-family-features"]
                 or type(record.label) is not int
                 or record.label not in {0, 1}
+                or record.purpose != "trainable"
+                or (manifest["group_key"] == "cohort_id" and not record.cohort_id)
                 or any(not math.isfinite(float(value)) for value in record.features.values())
                 for record in records
             ):
@@ -136,6 +138,14 @@ def leakage_audit(
     train_incidents = {row["incident_id"] for row in train_rows}
     validation_incidents = {row["incident_id"] for row in validation_rows}
     checks = {
+        "cohort_overlap": sorted(
+            {row['cohort_id'] for row in train_rows if row.get('cohort_id')}
+            & {row['cohort_id'] for row in validation_rows if row.get('cohort_id')}
+        ),
+        "non_training_purpose": sorted({
+            row['run_id'] for row in train_rows + validation_rows
+            if row.get('purpose', 'trainable') != 'trainable'
+        }),
         "run_overlap": sorted(train_runs & validation_runs),
         "scenario_overlap": sorted(train_scenarios & validation_scenarios),
         "incident_overlap": sorted(train_incidents & validation_incidents),
@@ -212,7 +222,7 @@ def _matrix(rows: list[dict[str, Any]], family: str, feature_order: list[str]):
     subset = [row for row in rows if row["family"] == family]
     x = np.asarray([[row["features"][name] for name in feature_order] for row in subset])
     y = np.asarray([row["label"] for row in subset], dtype=int)
-    groups = np.asarray([row["scenario_id"] for row in subset])
+    groups = np.asarray([row.get("cohort_id") or row["scenario_id"] for row in subset])
     if len(np.unique(y)) != 2:
         raise ValueError(f"{family} partition must contain benign and malicious records")
     return x, y, groups

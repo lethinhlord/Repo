@@ -1,5 +1,9 @@
 # Week 3 ML data contract
 
+Implementation status (28 October 2026): features-v3 is being integrated. Collection
+must wait for the catalog/cohort and four-VM acceptance gates in `tasks/todo.md`.
+This specification does not certify the existing datasets or a trained model.
+
 ## Scope
 
 The model learns only from observed behavioral telemetry. Threat-intelligence output,
@@ -19,10 +23,11 @@ data/raw/
 ```
 
 `run_id` is the atomic collection boundary: every real execution gets a new run ID and
-cannot contain mixed families, labels or scenarios. `scenario_id` is the partition
-boundary: all repeated executions of the same scenario stay in exactly one of TRAIN,
-VALIDATION or LOCKED TEST. This prevents the model from validating on a near-identical
-scenario template it already saw during training.
+cannot contain mixed families, labels or scenarios. `cohort_id` identifies a shared
+behavior template or matched counterexample, including templates with both labels.
+All runs in one cohort must stay in one partition. The builder supports this mode;
+the baseline catalog/config still require migration before the collection freeze.
+Legacy `scenario_id` splitting remains for smoke/backward compatibility only.
 
 Example `scenario_manifest.json`:
 
@@ -32,7 +37,9 @@ Example `scenario_manifest.json`:
   "run_id": "ACC-BRUTE-FORCE-01-RUN-001",
   "family": "account",
   "label": "malicious",
-  "host": "WIN11-01",
+  "purpose": "trainable",
+  "cohort_id": "ACCOUNT-MATCHED-PROFILE-01",
+  "host": "WIN11-TARGET",
   "start_time": "2026-10-12T08:00:00+07:00",
   "end_time": "2026-10-12T08:05:00+07:00",
   "expected_behavior": "Repeated failed logins followed by a successful login.",
@@ -62,6 +69,19 @@ the dataset auditor all reject a state whose source or cursor differs from that 
 The completed `execution_receipt.json` must identify the same run/scenario, parameter
 digest and action window as the finalized manifest.
 
+Purpose is declared before the run: `trainable`, `challenge`, or `pilot`. It is bound
+to catalog, draft and frozen parameters and cannot be reassigned after seeing model
+outputs. Discovery defaults to trainable. The builder exports `challenge.jsonl` with
+its own commitment and count; neither challenge nor pilot count toward training quota.
+The trainer rejects non-trainable rows in train/validation.
+
+Features-v3 adds four as-of context fields with explicit known-history masks. Context
+comes from a separate approved enrollment capture, not from scenario labels. The
+baseline, original capture and their hashes are frozen at START. Missing, stale,
+future or unknown history requires REVIEW. Collector and online replay must agree
+on the complete feature vector and observation quality. See
+[context implementation contract](context-v3-implementation.md).
+
 The dataset auditor compares every run's source-config and taxonomy hashes, as well as
 its catalog and feature-schema hashes, with the canonical files in the checked-out
 collection commit. A dataset assembled from mixed collection contracts is not ready.
@@ -69,7 +89,7 @@ collection commit. A dataset assembled from mixed collection contracts is not re
 ## Collection minimum
 
 The grouped splitter has a technical floor of five groups, but this project does not
-declare the dataset ready until it has at least ten independent valid runs for each of
+declare the collection quota met until it has at least ten independent valid runs for each of
 the four strata. Twelve is the preferred target:
 
 | Family | Label | Ready | Preferred target |
@@ -85,6 +105,10 @@ Vary collection times while preserving each scenario's declared behavior. Do not
 duplicate rows to satisfy the minimum. Enforce this policy with
 `scripts/audit_dataset.py` before building partitions.
 
+Meeting 10–12 runs per stratum does not establish model quality or sufficient
+statistical uncertainty. The number of independent validation cohorts, challenge
+coverage and measured REVIEW rate remain separate acceptance gates.
+
 ## Split and locked-test policy
 
 `python -m ml.build_dataset` applies deterministic stratified grouped folds with seed 42:
@@ -93,8 +117,8 @@ duplicate rows to satisfy the minimum. Enforce this policy with
 - fold 3: VALIDATION (20%);
 - fold 4: LOCKED TEST (20%).
 
-The split is grouped by `scenario_id`, never by event or individual run. Every run still
-remains atomic within its assigned scenario partition. Training reads only TRAIN and
+The revised split uses `cohort_id`, never an event or individual run. Every run still
+remains atomic within its assigned cohort partition. Training reads only TRAIN and
 VALIDATION. The locked test remains unopened until Week 6 and can only be evaluated
 after a package is frozen with `python -m ml.freeze_model`.
 
@@ -103,7 +127,9 @@ after a package is frozen with `python -m ml.freeze_model`.
 - Ground truth is authored before the run and stored only in the manifest.
 - No Wazuh rule ID, Wazuh severity, TI result, asset criticality, or Risk score is a model
   feature.
-- The same incident ID, run ID and scenario ID may occur in only one partition.
+- The same incident ID, run ID, scenario ID and shared cohort may occur in only one partition.
 - Preprocessing is inside each estimator pipeline and fitted on TRAIN only.
-- Threshold and model selection use VALIDATION only.
+- Model choice and calibration use grouped CV inside TRAIN; VALIDATION selects the
+  decision threshold and assesses calibration/stability. Neither step may fit on
+  challenge or the locked test.
 - LOCKED TEST never participates in model or threshold selection.

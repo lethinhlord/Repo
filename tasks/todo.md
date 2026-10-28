@@ -35,7 +35,7 @@ thêm trước khi thực hiện; không gom thay đổi lớn để né checkpo
   - Kiểm: restore probe GREEN và test đường dẫn không an toàn/contract sai revision.
   - Phụ thuộc: P01. File: collector, test restore mới, fixture contract (≤3).
 
-- [ ] **P05 — H06: dùng chung correlation và hợp nhất flow counter.**
+- [x] **P05 — H06: dùng chung correlation và hợp nhất flow counter.**
   - Đạt khi: HTTP 654/DNS 202 đúng; dedup theo flow và chống ID tái dùng; DNS response
     và final flow được liên kết khi flow record không chứa dns rrname.
   - Kiểm: PCAP/EVE thật, duplicate, đảo thứ tự, restart và counter bất nhất.
@@ -84,7 +84,7 @@ thêm trước khi thực hiện; không gom thay đổi lớn để né checkpo
 
 ## Chặng C — Feature/context và kịch bản đối chứng
 
-- [ ] **P10 — Baseline/context độc lập và hợp đồng as-of.**
+- [x] **P10 — Baseline/context độc lập và hợp đồng as-of.**
   - Đạt khi: nguồn/revision/hash/TTL được ghi; dữ liệu trước sự kiện; chưa biết giữ là
     UNKNOWN, không suy từ label hoặc dữ liệu tương lai.
   - Kiểm: missing/stale/context đổi, chưa enroll user/host, context chỉnh sửa và cutoff.
@@ -201,5 +201,29 @@ thêm trước khi thực hiện; không gom thay đổi lớn để né checkpo
 
 - Hồi quy toàn repo: 347 test đạt; JUnit ngoài repo `outputs/handoff-implementation-20261028/foundation-full-suite.xml`.
 - P01/P02/P04/P09 đã có bằng chứng hồi quy. P03/P05/P07/P08 đã sửa phần cốt lõi và có test, tiếp tục kiểm các điều kiện còn lại; P06 chưa đóng.
-- Context primitive có 31 test đạt riêng; chưa tích hợp vào feature/API/trainer.
+- Context primitive/enrollment đã tích hợp vào feature/API/runtime; không lấy baseline từ dataset cũ.
 - Bốn địa chỉ SSH đã biết không phản hồi; không có nghiệm thu VM thật ở checkpoint này.
+
+## Nhật ký 28/10 — context, raw replay và cohort
+
+- Snapshot tích hợp đã qua 426 test toàn repo, không lỗi/skip; JUnit `context-parity-cohort-full.xml`.
+- Đóng window được triển khai tiếp sau snapshot đó: năm test closure/late flow/API đạt
+  (`window-close-late-flow.xml`); trạng thái cuối qua **431/431 test**, 0 lỗi/skip, Ruff
+  và `git diff --check` đạt. JUnit `checkpoint-v3-final-full.xml`, SHA-256
+  `1e86cadf3940541f82328f1cfaa29cbf7a1d0c802e554cd3131c0d92f107a5d4`.
+- P05 có test EVE audit HTTP=654/DNS=202; 13 test quality/counter bổ sung kiểm duplicate,
+  thứ tự, reused ID, counter reset, cross-window, malformed flow và late original time.
+- P10 có baseline/capture hash bất biến, cutoff/TTL, UNKNOWN mask, context update và
+  race nguồn thay đổi trong enrollment. Thiếu context không thể vượt gate bằng probability cao.
+- Full-capture parity đã chặn nhiễu nền không có nonce; source production bắt buộc
+  bucket sạch, closed bucket + 60s grace và final flow. Finalize hỗ trợ `--wait-for-window`.
+- Ingest online luôn tạm thời/REVIEW. API finalize-window tạo/cache kết quả cuối sau
+  watermark; late input gây conflict. Workflow n8n chưa nối bước close: P15 còn mở.
+- Purpose/cohort đóng băng trong catalog/draft/parameters; auditor kiểm, discovery lọc,
+  challenge xuất riêng; mixed-label cohort split và inner-CV/leakage gate có test.
+  P16 chưa đóng vì catalog/cohort production, manifest/Colab và challenge thực còn phải đồng bộ.
+- Auditor bổ sung gate bucket trùng và context COMPLETE cho trainable production.
+- P03/P06 có phần mềm và hồi quy mới nhưng tiếp tục kiểm đủ điều kiện trong checklist.
+- Catalog/taxonomy G01–G07, Windows hiệu lực mạng, runtime context mount, n8n E2E,
+  metric REVIEW/challenge, Colab và bản Kiên.txt chưa hoàn tất. Không ghi chúng là đã sửa xong.
+- Chưa freeze baseline/tag mới, chưa merge và không dùng lại bất kỳ dataset đã thu cũ nào.

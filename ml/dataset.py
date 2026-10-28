@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -25,6 +25,8 @@ FORBIDDEN_FEATURE_NAMES = {
     "scenario_label",
     "threat_intelligence",
     "ti_score",
+    "purpose",
+    "cohort_id",
 }
 
 
@@ -35,6 +37,8 @@ class ScenarioManifest(BaseModel):
     run_id: str = Field(min_length=1, max_length=128)
     family: str
     label: str
+    purpose: Literal["trainable", "challenge", "pilot"] = "trainable"
+    cohort_id: str | None = Field(default=None, min_length=1, max_length=128)
     host: str = Field(min_length=1, max_length=128)
     start_time: datetime
     end_time: datetime
@@ -89,6 +93,8 @@ class DatasetRecord:
     label: int
     features: dict[str, float]
     source_file: str
+    purpose: str = "trainable"
+    cohort_id: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -99,6 +105,8 @@ class DatasetRecord:
             "label": self.label,
             "features": self.features,
             "source_file": self.source_file,
+            "purpose": self.purpose,
+            "cohort_id": self.cohort_id,
         }
 
 
@@ -118,7 +126,12 @@ def load_feature_schema(path: Path) -> dict[str, Any]:
     return schema
 
 
-def discover_records(raw_dir: Path, manifest_name: str, records_name: str) -> list[DatasetRecord]:
+def discover_records(
+    raw_dir: Path, manifest_name: str, records_name: str,
+    *, include_purposes: tuple[str, ...] = ("trainable",),
+) -> list[DatasetRecord]:
+    if not include_purposes or set(include_purposes) - {"trainable", "challenge", "pilot"}:
+        raise DatasetError("include_purposes must select trainable, challenge or pilot")
     records: list[DatasetRecord] = []
     if not raw_dir.exists():
         raise DatasetError(f"raw dataset directory does not exist: {raw_dir}")
@@ -194,12 +207,15 @@ def discover_records(raw_dir: Path, manifest_name: str, records_name: str) -> li
                     label=int(manifest.label == "malicious"),
                     features=numeric_features,
                     source_file=record_path.as_posix(),
+                    purpose=manifest.purpose,
+                    cohort_id=manifest.cohort_id,
                 )
             )
             run_count += 1
         if run_count == 0:
             raise DatasetError(f"no incident records found for run {manifest.run_id}")
-    return records
+    # Parse every manifest/record before filtering so excluded corrupt runs cannot hide.
+    return [record for record in records if record.purpose in include_purposes]
 
 
 def assign_grouped_folds(
@@ -209,20 +225,28 @@ def assign_grouped_folds(
     random_seed: int,
     group_key: str = "run_id",
 ) -> dict[str, int]:
-    if group_key not in {"run_id", "scenario_id"}:
-        raise DatasetError("group_key must be run_id or scenario_id")
+    if group_key not in {"run_id", "scenario_id", "cohort_id"}:
+        raise DatasetError("group_key must be run_id, scenario_id or cohort_id")
+    if number_of_folds < 2:
+        raise DatasetError("number_of_folds must be at least two")
+    if any(record.purpose != "trainable" for record in records):
+        raise DatasetError("only trainable records may be assigned training folds")
 
     run_rows: dict[str, DatasetRecord] = {}
     for record in records:
         existing = run_rows.setdefault(record.run_id, record)
-        if (existing.family, existing.label, existing.scenario_id) != (
+        if (existing.family, existing.label, existing.scenario_id, existing.cohort_id) != (
             record.family,
             record.label,
             record.scenario_id,
+            record.cohort_id,
         ):
             raise DatasetError(
                 f"run {record.run_id} contains mixed family, labels or scenarios"
             )
+
+    if group_key == "cohort_id":
+        return _assign_cohort_folds(run_rows, number_of_folds, random_seed)
 
     group_rows: dict[str, DatasetRecord] = {}
     for record in run_rows.values():
@@ -279,6 +303,58 @@ def assign_grouped_folds(
         run_id: fold_by_group[record.run_id]
         for run_id, record in run_rows.items()
     }
+
+
+def _assign_cohort_folds(
+    run_rows: dict[str, DatasetRecord], number_of_folds: int, random_seed: int,
+) -> dict[str, int]:
+    """Place matched behavior groups together even when they contain both labels.
+
+    Balance by the strata represented in each cohort, rather than treating a
+    mixed-label cohort as its first/last row's label. Refuse an unsupported
+    collection design instead of silently returning an empty-label partition.
+    """
+    members: dict[str, set[tuple[str, int]]] = {}
+    for row in run_rows.values():
+        if not row.cohort_id or not row.cohort_id.strip():
+            raise DatasetError("cohort_id split requires an explicit cohort for every run")
+        members.setdefault(row.cohort_id, set()).add((row.family, row.label))
+    strata = {stratum for values in members.values() for stratum in values}
+    sparse = {
+        stratum: sum(stratum in values for values in members.values())
+        for stratum in strata
+        if sum(stratum in values for values in members.values()) < number_of_folds
+    }
+    if not strata or sparse:
+        raise DatasetError(
+            f"cohort split requires {number_of_folds} independent cohorts per stratum; {sparse}"
+        )
+    by_pattern: dict[tuple[tuple[str, int], ...], list[str]] = {}
+    for group, values in members.items():
+        by_pattern.setdefault(tuple(sorted(values)), []).append(group)
+    fold_by_group: dict[str, int] = {}
+    loads = [0] * number_of_folds
+    for pattern, groups in sorted(by_pattern.items()):
+        digest = hashlib.sha256(f"{random_seed}:{pattern}".encode()).digest()
+        rng = random.Random(int.from_bytes(digest[:8], "big"))
+        ordered = sorted(groups)
+        rng.shuffle(ordered)
+        offset = min(range(number_of_folds), key=lambda fold: (loads[fold], fold))
+        for index, group in enumerate(ordered):
+            fold = (index + offset) % number_of_folds
+            fold_by_group[group] = fold
+            loads[fold] += 1
+    for fold in range(number_of_folds):
+        present = {
+            value for group, values in members.items() if fold_by_group[group] == fold
+            for value in values
+        }
+        if present != strata:
+            raise DatasetError(
+                "cohort design cannot provide every family/label in every fold; "
+                "collect balanced matched cohorts before building"
+            )
+    return {run_id: fold_by_group[row.cohort_id] for run_id, row in run_rows.items()}
 
 
 def dataset_hash(records: Iterable[DatasetRecord]) -> str:

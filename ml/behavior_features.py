@@ -5,7 +5,7 @@ import statistics
 from dataclasses import dataclass
 from datetime import datetime
 
-FEATURE_SCHEMA_VERSION = "features-v2"
+FEATURE_SCHEMA_VERSION = "features-v3"
 
 ACCOUNT_FEATURES = (
     "failed_login_count",
@@ -16,6 +16,8 @@ ACCOUNT_FEATURES = (
     "remote_logon_ratio",
     "failure_window_seconds",
     "attempt_rate_per_minute",
+    "source_history_known",
+    "new_source_for_user",
 )
 
 C2_FEATURES = (
@@ -31,6 +33,8 @@ C2_FEATURES = (
     "dns_query_count",
     "dns_unique_query_ratio",
     "flow_total_bytes_log1p",
+    "destination_history_known",
+    "new_destination",
 )
 
 FEATURE_ORDER = (*ACCOUNT_FEATURES, *C2_FEATURES)

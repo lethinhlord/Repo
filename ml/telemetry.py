@@ -288,3 +288,41 @@ def linked_flow(
         and (at - end).total_seconds() <= tolerance
         for reference, at in references
     )
+
+
+def flow_counter_issues(
+    payloads: list[dict[str, Any]], *, window_start: datetime, window_end: datetime,
+) -> list[str]:
+    keys = {flow_connection_key(item) for item in payloads}
+    keys.discard(None)
+    if not keys:
+        return ["flow:missing_final_counters"]
+    reasons = set()
+    for key in keys:
+        related = [item for item in payloads if flow_connection_key(item) == key]
+        final = [item for item in related if item.get("event_type") == "flow"]
+        if not final:
+            reasons.add("flow:missing_final_counters")
+            continue
+        related_flows = [
+            item["flow"] for item in related if isinstance(item.get("flow"), dict)
+        ]
+        final_flows = [
+            item["flow"] if isinstance(item.get("flow"), dict) else {} for item in final
+        ]
+        starts = {parse_time(flow.get("start")) for flow in final_flows}
+        if len(starts) != 1:
+            reasons.add("flow:ambiguous_reused_id")
+        for flow in final_flows:
+            start, end = parse_time(flow.get("start")), parse_time(flow.get("end"))
+            if start is None or end is None or not window_start <= start <= end < window_end:
+                reasons.add("flow:cross_window_or_invalid_interval")
+            for field in ("bytes_toserver", "bytes_toclient"):
+                value = flow.get(field)
+                if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                    reasons.add("flow:invalid_counter")
+                elif any(
+                    isinstance(row.get(field), int) and row[field] > value for row in related_flows
+                ):
+                    reasons.add("flow:counter_reset_or_conflict")
+    return sorted(reasons)

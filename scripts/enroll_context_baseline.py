@@ -4,7 +4,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import shutil
+import os
+import tempfile
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -45,7 +47,19 @@ def main() -> int:
         ):
             raise ValueError("existing context capture does not match its digest")
         if not capture_path.exists():
-            shutil.copyfile(args.capture, capture_path)
+            # Publish the bytes already validated and hashed, never re-read the live input.
+            with tempfile.NamedTemporaryFile(dir=capture_path.parent, delete=False) as handle:
+                temporary = Path(handle.name)
+                handle.write(raw)
+                handle.flush()
+                os.fsync(handle.fileno())
+            try:
+                with suppress(FileExistsError):
+                    os.link(temporary, capture_path)
+            finally:
+                temporary.unlink()
+        if hashlib.sha256(capture_path.read_bytes()).hexdigest() != digest:
+            raise ValueError("published enrollment capture does not match the validated bytes")
         # Exclusive output creation prevents concurrent operators replacing a snapshot.
         with args.output.open("x", encoding="utf-8", newline="\n") as handle:
             handle.write(snapshot.model_dump_json(indent=2) + "\n")
