@@ -12,6 +12,7 @@ from ml.scenario_collection import (
     Attribution,
     CollectionError,
     SourceConfig,
+    _derive_c2,
     _event_time,
     _is_interactive_logon,
     _matches_network,
@@ -29,6 +30,27 @@ from ml.scenario_collection import start_run as _start_run
 
 TEST_NONCE = "testnonce001"
 TEST_PROCESS_GUID = "{11111111-1111-1111-1111-111111111111}"
+
+
+def test_dns_rejects_missing_process_identity_even_with_matching_nonce(tmp_path: Path) -> None:
+    from ml.scenario_collection import RunDraft
+
+    config_path = source_config(tmp_path)
+    draft_path = write_draft(
+        tmp_path, run_id="C2-DNS-MISSING-PROCESS", family="c2", label="malicious",
+        attribution={"process_names": ["powershell.exe"], "dns_suffixes": ["beacon.datn.test"]},
+        quality_gates={"min_dns_events": 1, "min_suricata_events": 1},
+    )
+    draft = RunDraft.model_validate(yaml.safe_load(draft_path.read_text(encoding="utf-8")))
+    source = SourceConfig.model_validate(yaml.safe_load(config_path.read_text(encoding="utf-8")))
+    at = datetime(2026, 10, 27, tzinfo=UTC)
+    events = [
+        windows_event(22, at, {"image": "powershell.exe", "queryName": "beacon.datn.test"}),
+        suricata_event(at, {"event_type": "dns", "dns": {"rrname": "beacon.datn.test"}}),
+    ]
+
+    with pytest.raises(CollectionError, match="process"):
+        _derive_c2(events, draft, source, {"revision": "test", "rules": []})
 
 
 def test_declared_remote_logon_type_is_accepted_without_accepting_service_noise() -> None:
@@ -823,7 +845,8 @@ def test_c2_finalize_enforces_frozen_action_count_and_timing(tmp_path: Path) -> 
     draft_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
     started = datetime(2026, 10, 16, 2, 45, tzinfo=UTC)
     start_run(draft_path, config, tmp_path, now=started)
-    events = []
+    events = [windows_event(1, started + timedelta(seconds=2),
+        {"image": "curl.exe", "commandLine": "/beacon"})]
     for offset in (5, 30):
         events.extend(
             [
@@ -872,6 +895,8 @@ def test_c2_finalize_fails_closed_without_suricata_evidence(tmp_path: Path) -> N
     append_jsonl(
         tmp_path / "archives.json",
         [
+            windows_event(1, started + timedelta(seconds=2),
+                {"image": "curl.exe", "commandLine": "curl.exe"}),
             windows_event(
                 3,
                 started + timedelta(seconds=5),
@@ -1226,6 +1251,10 @@ def test_dns_c2_finalize_accepts_suricata8_request_response_and_alert(
         tmp_path / "archives.json",
         [
             windows_event(
+                1, started + timedelta(seconds=1),
+                {"image": "powershell.exe", "commandLine": f"Resolve-DnsName {query}"},
+            ),
+            windows_event(
                 22,
                 started + timedelta(seconds=1),
                 {
@@ -1404,6 +1433,8 @@ def test_c2_finalize_rejects_run_below_declared_network_count(tmp_path: Path) ->
     append_jsonl(
         tmp_path / "archives.json",
         [
+            windows_event(1, started + timedelta(seconds=2),
+                {"image": "curl.exe", "commandLine": "/beacon"}),
             windows_event(
                 3,
                 started + timedelta(seconds=5),

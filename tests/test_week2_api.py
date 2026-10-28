@@ -153,7 +153,9 @@ def test_model_feedback_is_traceable_and_idempotent(monkeypatch, tmp_path: Path)
         "route": "review",
         "review_required": True,
         "notification": "manual review required",
-        "decision": {"prediction": {"model_version": "week3-test-v1"}},
+        "decision": {"prediction": {
+            "model_version": "week3-test-v1", "predicted_class": "malicious"
+        }},
     }
     assert client.post("/incidents/record", json=incident).status_code == 200
     payload = {

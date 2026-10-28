@@ -125,14 +125,14 @@ def grouped_bootstrap_intervals(
     confidence: float,
     random_seed: int,
 ) -> dict[str, dict[str, float | None]]:
-    unique_groups = np.unique(groups)
-    if len(unique_groups) < 2:
-        raise ValueError("bootstrap uncertainty requires at least two independent groups")
-    rng = np.random.default_rng(random_seed)
     samples: dict[str, list[float]] = {
         name: []
         for name in ("precision", "recall", "f1", "pr_auc", "fpr", "brier", "ece")
     }
+    if grouped_uncertainty_status(labels, groups)["status"] != "ESTIMATED":
+        return {name: {"low": None, "high": None} for name in samples}
+    unique_groups = np.unique(groups)
+    rng = np.random.default_rng(random_seed)
     for _ in range(iterations):
         selected_groups = rng.choice(unique_groups, size=len(unique_groups), replace=True)
         selected_indices = np.concatenate(
@@ -159,6 +159,24 @@ def grouped_bootstrap_intervals(
                 "high": float(np.quantile(values, 1.0 - alpha)),
             }
     return intervals
+
+
+def grouped_uncertainty_status(labels: np.ndarray, groups: np.ndarray) -> dict[str, Any]:
+    """Do not turn repeated runs of two templates into false precision."""
+    minimum = 3
+    counts = {
+        str(label): int(len(np.unique(groups[labels == label]))) for label in (0, 1)
+    }
+    enough = all(count >= minimum for count in counts.values())
+    return {
+        "status": "ESTIMATED" if enough else "INSUFFICIENT_INDEPENDENT_GROUPS",
+        "minimum_groups_per_label": minimum,
+        "observed_groups_per_label": counts,
+        "reason": (
+            "group_bootstrap" if enough
+            else "at least three independent validation scenarios per label are required"
+        ),
+    }
 
 
 def measure_latency_ms(

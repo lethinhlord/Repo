@@ -26,6 +26,7 @@ def test_feedback_summary_raises_quality_alert_after_minimum_adjudications(
                     "prediction": {
                         "model_version": "test-model-v1",
                         "family": "account",
+                        "predicted_class": "malicious",
                     }
                 },
             )

@@ -3,10 +3,12 @@
 ## Outcome
 
 This pipeline benchmarks Logistic Regression, Random Forest, and XGBoost independently
-for `account` and `c2`. It selects on VALIDATION using PR-AUC, F1, FPR, and latency;
-chooses a threshold that targets at least 0.90 precision; writes uncertainty intervals
-using grouped bootstrap; and produces a versioned inference package. Accuracy is not a
-selection metric.
+for `account` and `c2`. It selects candidates on grouped inner cross-validation of TRAIN,
+then reports independent VALIDATION diagnostics and selects the final threshold there.
+The precision target is at least 0.90. Grouped bootstrap uncertainty is estimated only
+with at least three independent validation scenarios per label; otherwise intervals
+are null, `uncertainty.status` is `INSUFFICIENT_INDEPENDENT_GROUPS`, and the package is
+ineligible for automation. Accuracy is not a selection metric.
 
 The committed smoke generator exists only to prove that the software path works. Its
 metrics must never be presented as model quality.
@@ -77,6 +79,13 @@ printf '%s\n' 'LOCKED TEST runs (IDs only):' && cat ml/splits/test.txt
 Do not inspect `data/processed/locked_test.jsonl`. The manifest must show
 `locked_test_status: UNOPENED`, zero overlap by construction, and a stable SHA-256 hash.
 
+Rebuild partitions using the current builder before the first training run after this
+upgrade. `dataset-manifest-v2` binds each partition's SHA-256 and row count, the active
+feature schema, collection-contract hash, builder commit and training configuration.
+The trainer verifies TRAIN and VALIDATION against these bindings before fitting; it
+does not open the locked-test file. Older manifests or edited partition files are
+rejected. Correct the source/build process and rebuild; do not edit hashes by hand.
+
 ## 5. Train and select candidates
 
 ### Option A: Google Colab (recommended when local resources are limited)
@@ -128,9 +137,16 @@ ml/model-package/
 └── leakage_audit.json
 ```
 
-Accept the package only if leakage audit passes, both families contain both classes,
-confidence intervals are reported, and the selected thresholds meet the intended safety
-target. `automation_eligible=false` means the system must remain ASSISTED/SHADOW.
+For software and SHADOW evaluation, require a passed leakage audit, verified input
+provenance, both families and classes, and an explicit uncertainty status. The normal
+40–48-run schedule has only one validation scenario per label after a 3/1/1 scenario
+split; it is a pilot dataset, so null confidence intervals and
+`insufficient_validation_groups` are expected. Repeating the same templates does not
+add independent scenarios. Do not rename runs to bypass this gate. Additional varied
+scenarios and a predeclared split are needed before claiming statistical readiness.
+Automation eligibility additionally requires estimated confidence intervals and all
+threshold, calibration and stability gates. `automation_eligible=false` means the
+system must remain ASSISTED/SHADOW.
 Only load a package produced locally by this trusted pipeline: `joblib` artifacts must
 never be accepted from an untrusted source.
 

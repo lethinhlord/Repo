@@ -26,6 +26,12 @@
       "title": "Notification Status",
       "type": "string"
     },
+    "notification_revision": {
+      "default": 1,
+      "minimum": 1,
+      "title": "Notification Revision",
+      "type": "integer"
+    },
     "route": {
       "enum": [
         "shadow",

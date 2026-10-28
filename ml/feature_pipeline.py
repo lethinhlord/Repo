@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from contextlib import suppress
-from datetime import timedelta
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path, PurePath
 from typing import Any
@@ -27,59 +27,67 @@ from ml.behavior_features import (
     derive_c2_features,
     empty_feature_vector,
 )
+from ml.telemetry import (
+    account_source,
+    account_user,
+    basename,
+    event_time,
+    is_interactive_logon,
+    network_is_outbound,
+    normalize_ip,
+    process_guid,
+    suricata_correlates,
+    suricata_payload,
+    taxonomy_match,
+    windows_fields,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 @lru_cache(maxsize=1)
+def _collection_config() -> dict[str, Any]:
+    return yaml.safe_load((ROOT / "config/collection-sources.yaml").read_text(encoding="utf-8"))
+
+
 def _collection_sources() -> tuple[str, str]:
-    document = yaml.safe_load(
-        (ROOT / "config/collection-sources.yaml").read_text(encoding="utf-8")
-    )
+    document = _collection_config()
     return str(document["windows_agent_name"]), str(document["suricata_agent_name"])
 
 
 @lru_cache(maxsize=1)
 def _process_taxonomy() -> dict[str, Any]:
     return yaml.safe_load(
-        (ROOT / "config/process-risk-taxonomy.yaml").read_text(encoding="utf-8")
+        (ROOT / str(_collection_config()["taxonomy_path"])).read_text(encoding="utf-8")
     )
 
 
-def _basename(value: Any) -> str:
-    return str(value or "").replace("/", "\\").rsplit("\\", 1)[-1].casefold()
-
-
 def _is_suspicious_process(eventdata: dict[str, Any]) -> bool:
-    image = _basename(eventdata.get("image"))
-    command = str(eventdata.get("commandLine", "")).casefold()
-    for rule in _process_taxonomy().get("rules", []):
-        suffix = _basename(rule.get("image_suffix"))
-        terms = [str(item).casefold() for item in rule.get("command_contains_any", [])]
-        if suffix and image != suffix:
-            continue
-        if terms and not any(term in command for term in terms):
-            continue
-        if suffix or terms:
-            return True
-    return False
+    return taxonomy_match(eventdata, _process_taxonomy())
 
 
 def _windows_fields(alert: WazuhAlert) -> tuple[str, dict[str, Any]]:
-    win = alert.data.win if isinstance(alert.data.win, dict) else {}
-    system = win.get("system") if isinstance(win.get("system"), dict) else {}
-    eventdata = win.get("eventdata") if isinstance(win.get("eventdata"), dict) else {}
-    return str(system.get("eventID", "")), eventdata
+    event_id, _, eventdata = windows_fields(alert.model_dump(mode="json"))
+    return event_id, eventdata
 
 
 def _suricata_payload(alert: WazuhAlert) -> dict[str, Any] | None:
-    if not alert.full_log:
-        return None
-    try:
-        payload = json.loads(alert.full_log)
-    except json.JSONDecodeError:
-        return None
-    return payload if isinstance(payload, dict) else None
+    return suricata_payload(alert.model_dump(mode="json"))
+
+
+def alert_event_time(alert: WazuhAlert) -> datetime:
+    timestamp = event_time(alert.model_dump(mode="json"))
+    if timestamp is None:
+        raise ValueError(f"raw event {alert.id} has no valid original event timestamp")
+    return timestamp
+
+
+def window_start(alert: WazuhAlert, *, window_minutes: int = 5) -> datetime:
+    if not 1 <= window_minutes <= 5:
+        raise ValueError("window_minutes must be between 1 and 5")
+    seconds = window_minutes * 60
+    bucket = int(alert_event_time(alert).timestamp()) // seconds
+    return datetime.fromtimestamp(bucket * seconds, UTC)
 
 
 def _family(alert: WazuhAlert) -> str:
@@ -101,8 +109,7 @@ def _family(alert: WazuhAlert) -> str:
     ):
         return "c2"
     if decoder in {"sshd", "pam", "windows_eventchannel"} or any(
-        (value or 0) > 0
-        for value in (alert.data.failed_login_count, alert.data.success_after_fail)
+        (value or 0) > 0 for value in (alert.data.failed_login_count, alert.data.success_after_fail)
     ):
         return "account"
     return "unknown"
@@ -115,25 +122,12 @@ def _asset_id(alert: WazuhAlert) -> str:
 
 def _account_name(alert: WazuhAlert) -> str:
     _, eventdata = _windows_fields(alert)
-    return str(
-        eventdata.get("targetUserName")
-        or eventdata.get("TargetUserName")
-        or eventdata.get("dstuser")
-        or alert.data.dstuser
-        or "unknown-user"
-    ).strip().casefold()
+    return account_user(eventdata) or str(alert.data.dstuser or "unknown-user").strip().casefold()
 
 
 def _account_source(alert: WazuhAlert) -> str:
     _, eventdata = _windows_fields(alert)
-    return str(
-        eventdata.get("ipAddress")
-        or eventdata.get("IpAddress")
-        or eventdata.get("sourceIp")
-        or eventdata.get("workstationName")
-        or eventdata.get("WorkstationName")
-        or "local-console"
-    ).strip().casefold()
+    return account_source(eventdata)
 
 
 def _aggregation_key(alert: WazuhAlert) -> tuple[str, str, str]:
@@ -164,18 +158,24 @@ def _legacy_features(alert: WazuhAlert) -> tuple[dict[str, float], list[str]]:
     return features, missing
 
 
-def _derive_raw_group(alerts: list[WazuhAlert], family: str) -> tuple[
-    dict[str, float], list[str], list[str], str | None
-]:
+def _derive_raw_group(
+    alerts: list[WazuhAlert], family: str
+) -> tuple[dict[str, float], list[str], list[str], str | None, list[WazuhAlert]]:
     if family == "account":
         observations: list[AccountObservation] = []
+        attributed = []
         for alert in alerts:
             event_id, eventdata = _windows_fields(alert)
-            if event_id not in {"4624", "4625"}:
+            if (
+                event_id not in {"4624", "4625"}
+                or not account_user(eventdata)
+                or not is_interactive_logon(eventdata)
+            ):
                 continue
+            attributed.append(alert)
             observations.append(
                 AccountObservation(
-                    timestamp=alert.timestamp,
+                    timestamp=alert_event_time(alert),
                     account=_account_name(alert),
                     source=_account_source(alert),
                     logon_type=str(
@@ -186,10 +186,14 @@ def _derive_raw_group(alerts: list[WazuhAlert], family: str) -> tuple[
             )
         if not observations:
             features, missing = _legacy_features(alerts[0])
-            return features, missing, list(C2_FEATURES), alerts[0].data.srcip
+            return features, missing, list(C2_FEATURES), alerts[0].data.srcip, []
         features = derive_account_features(observations)
-        return features, [], list(C2_FEATURES), next(
-            (item.source for item in observations if item.source != "local-console"), None
+        return (
+            features,
+            [],
+            list(C2_FEATURES),
+            next((item.source for item in observations if item.source != "local-console"), None),
+            attributed,
         )
 
     if family == "c2":
@@ -197,48 +201,115 @@ def _derive_raw_group(alerts: list[WazuhAlert], family: str) -> tuple[
         suricata: list[SuricataObservation] = []
         suspicious = False
         indicator: str | None = None
-        saw_process = False
+        attributed: list[WazuhAlert] = []
+        processes: dict[str, tuple[dict[str, Any], datetime, WazuhAlert]] = {}
+        windows_agent, sensor_agent = _collection_sources()
+        configured_sources = {
+            normalize_ip(value) for value in _collection_config().get("windows_source_ips", [])
+        }
         for alert in alerts:
+            if alert.agent.name != windows_agent:
+                continue
             event_id, eventdata = _windows_fields(alert)
-            if event_id == "1":
-                saw_process = True
-                suspicious = suspicious or _is_suspicious_process(eventdata)
-            elif event_id == "3":
-                destination = str(eventdata.get("destinationIp", "")).strip()
-                port = None
-                with suppress(TypeError, ValueError):
-                    port = int(eventdata.get("destinationPort"))
-                network.append(NetworkObservation(alert.timestamp, destination, port))
-                indicator = indicator or destination or None
-                suspicious = suspicious or _is_suspicious_process(eventdata)
-            elif event_id == "22":
-                query = str(eventdata.get("queryName", "")).strip(".")
-                network.append(NetworkObservation(alert.timestamp, query, 53, query))
-                indicator = indicator or query or None
-                suspicious = suspicious or _is_suspicious_process(eventdata)
+            guid = process_guid(eventdata)
+            if event_id == "1" and guid and basename(eventdata.get("image")):
+                processes[guid] = (eventdata, alert_event_time(alert), alert)
 
+        observed_sources: set[str] = set()
+        used_processes: set[str] = set()
+        for alert in alerts:
+            if alert.agent.name != windows_agent:
+                continue
+            event_id, eventdata = _windows_fields(alert)
+            if event_id not in {"3", "22"}:
+                continue
+            guid = process_guid(eventdata)
+            if guid not in processes:
+                continue
+            process, created_at, _ = processes[guid]
+            timestamp = alert_event_time(alert)
+            if timestamp < created_at or basename(eventdata.get("image")) != basename(
+                process.get("image")
+            ):
+                continue
+            if event_id == "3":
+                source = normalize_ip(eventdata.get("sourceIp"))
+                if not network_is_outbound(eventdata) or (
+                    configured_sources and source not in configured_sources
+                ):
+                    continue
+                destination = normalize_ip(eventdata.get("destinationIp"))
+                try:
+                    port = int(eventdata.get("destinationPort"))
+                except (TypeError, ValueError):
+                    continue
+                if not destination or not 0 < port <= 65535:
+                    continue
+                network.append(NetworkObservation(timestamp, destination, port))
+                observed_sources.add(source)
+                indicator = indicator or destination
+            else:
+                query = str(eventdata.get("queryName", "")).strip(".").casefold()
+                if not query:
+                    continue
+                network.append(NetworkObservation(timestamp, query, 53, query))
+                indicator = indicator or query
+            used_processes.add(guid)
+            attributed.append(alert)
+        for guid in sorted(used_processes):
+            process, _, alert = processes[guid]
+            attributed.append(alert)
+            suspicious = suspicious or _is_suspicious_process(process)
+
+        sources = configured_sources or observed_sources
+        seen_eve: set[str] = set()
+        for alert in alerts:
+            if alert.agent.name != sensor_agent:
+                continue
             payload = _suricata_payload(alert)
-            if payload is not None:
-                flow = payload.get("flow") if isinstance(payload.get("flow"), dict) else {}
-                total_bytes = 0
-                for field in ("bytes_toserver", "bytes_toclient"):
-                    with suppress(TypeError, ValueError):
-                        total_bytes += max(0, int(flow.get(field, 0)))
-                severity = None
-                if payload.get("event_type") == "alert":
-                    with suppress(TypeError, ValueError):
-                        severity = int((payload.get("alert") or {}).get("severity"))
-                suricata.append(
-                    SuricataObservation(
-                        is_alert=payload.get("event_type") == "alert",
-                        severity=severity,
-                        total_bytes=total_bytes,
-                    )
+            if (
+                payload is None
+                or not sources
+                or not suricata_correlates(
+                    payload, alert_event_time(alert), network,
+                    float(_collection_config().get("correlation_window_seconds", 10.0)),
+                    source_ips=sources,
                 )
-        if not network and not suricata and not saw_process:
+            ):
+                continue
+            canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+            if canonical in seen_eve:
+                continue
+            seen_eve.add(canonical)
+            attributed.append(alert)
+            flow = payload.get("flow") if isinstance(payload.get("flow"), dict) else {}
+            total_bytes = 0
+            for field in ("bytes_toserver", "bytes_toclient"):
+                with suppress(TypeError, ValueError):
+                    total_bytes += max(0, int(flow.get(field, 0)))
+            severity = None
+            if payload.get("event_type") == "alert":
+                with suppress(TypeError, ValueError):
+                    severity = int((payload.get("alert") or {}).get("severity"))
+            suricata.append(
+                SuricataObservation(
+                    is_alert=payload.get("event_type") == "alert",
+                    severity=severity,
+                    total_bytes=total_bytes,
+                )
+            )
+        has_raw = any(
+            _windows_fields(alert)[0] in {"1", "3", "22"} or _suricata_payload(alert) is not None
+            for alert in alerts
+        )
+        if not has_raw:
             features, missing = _legacy_features(alerts[0])
-            return features, missing, list(ACCOUNT_FEATURES), (
-                alerts[0].data.destination_ip or alerts[0].data.destination_domain
+            return (
+                features,
+                missing,
+                list(ACCOUNT_FEATURES),
+                (alerts[0].data.destination_ip or alerts[0].data.destination_domain),
+                [],
             )
         features = derive_c2_features(network, suricata, suspicious_process=suspicious)
         missing = []
@@ -258,17 +329,21 @@ def _derive_raw_group(alerts: list[WazuhAlert], family: str) -> tuple[
                     "flow_total_bytes_log1p",
                 ]
             )
-        return features, sorted(set(missing)), list(ACCOUNT_FEATURES), indicator
+        if not used_processes:
+            missing.append("suspicious_process")
+        return features, sorted(set(missing)), list(ACCOUNT_FEATURES), indicator, attributed
 
     features, _ = _legacy_features(alerts[0])
-    return features, list(FEATURE_ORDER), [], None
+    return features, list(FEATURE_ORDER), [], None, []
 
 
-def _build_response(alerts: list[WazuhAlert]) -> FeaturePipelineResponse:
+def _build_response(
+    alerts: list[WazuhAlert], *, window_minutes: int = 5
+) -> FeaturePipelineResponse:
     first = alerts[0]
     family = _family(first)
-    features, missing, structural, indicator = _derive_raw_group(alerts, family)
-    ordered_alerts = sorted(alerts, key=lambda item: (item.timestamp, item.id))
+    features, missing, structural, indicator, attributed = _derive_raw_group(alerts, family)
+    ordered_alerts = sorted(alerts, key=lambda item: (alert_event_time(item), item.id))
     refs = [f"wazuh-alert:{alert.id}" for alert in ordered_alerts]
     location_names = [
         PurePath(alert.location.replace("\\", "/")).name.lower()
@@ -276,12 +351,16 @@ def _build_response(alerts: list[WazuhAlert]) -> FeaturePipelineResponse:
         if PurePath(alert.location.replace("\\", "/")).name
     ]
     refs.extend(f"source-log:{name}" for name in dict.fromkeys(location_names))
-    bucket = int(ordered_alerts[0].timestamp.timestamp()) // 300
-    digest = hashlib.sha256(
-        "|".join([*_aggregation_key(first), str(bucket)]).encode()
-    ).hexdigest()[:12].upper()
+    bucket = int(window_start(first, window_minutes=window_minutes).timestamp())
+    digest = (
+        hashlib.sha256(
+            "|".join([*_aggregation_key(first), str(window_minutes), str(bucket)]).encode()
+        )
+        .hexdigest()[:12]
+        .upper()
+    )
     sources = ["wazuh"]
-    if any(_suricata_payload(alert) is not None for alert in alerts):
+    if any(_suricata_payload(alert) is not None for alert in attributed):
         sources.append("suricata-eve")
     applicable = ACCOUNT_FEATURES if family == "account" else C2_FEATURES
     completeness = (
@@ -291,12 +370,12 @@ def _build_response(alerts: list[WazuhAlert]) -> FeaturePipelineResponse:
     )
     if family == "account":
         source_coverage = float("wazuh" in sources)
-        relevant_events = sum(_windows_fields(alert)[0] in {"4624", "4625"} for alert in alerts)
+        relevant_events = sum(_windows_fields(alert)[0] in {"4624", "4625"} for alert in attributed)
         correlation = min(relevant_events / 3.0, 1.0)
     elif family == "c2":
         source_coverage = len(set(sources) & {"wazuh", "suricata-eve"}) / 2.0
-        has_network = any(_windows_fields(alert)[0] in {"3", "22"} for alert in alerts)
-        has_suricata = any(_suricata_payload(alert) is not None for alert in alerts)
+        has_network = any(_windows_fields(alert)[0] in {"3", "22"} for alert in attributed)
+        has_suricata = any(_suricata_payload(alert) is not None for alert in attributed)
         correlation = (int(has_network) + int(has_suricata)) / 2.0
     else:
         source_coverage = 0.0
@@ -314,8 +393,8 @@ def _build_response(alerts: list[WazuhAlert]) -> FeaturePipelineResponse:
     incident = IncidentRequest(
         incident_id=f"INC-FV2-{digest}",
         asset_id=_asset_id(first),
-        start_time=ordered_alerts[0].timestamp,
-        end_time=ordered_alerts[-1].timestamp,
+        start_time=alert_event_time(ordered_alerts[0]),
+        end_time=alert_event_time(ordered_alerts[-1]),
         family_hint=family,
         features=features,
         evidence_sources=sources,
@@ -356,24 +435,16 @@ def aggregate_wazuh_alerts(
         if existing is not None and existing.model_dump() != alert.model_dump():
             raise ValueError(f"duplicate alert id has conflicting payload: {alert.id}")
         unique_by_id.setdefault(alert.id, alert)
-    ordered = sorted(unique_by_id.values(), key=lambda item: (item.timestamp, item.id))
-    groups: list[list[WazuhAlert]] = []
+    ordered = sorted(unique_by_id.values(), key=lambda item: (alert_event_time(item), item.id))
+    groups: dict[tuple[tuple[str, str, str], datetime], list[WazuhAlert]] = {}
     for alert in ordered:
-        match = None
-        for group in reversed(groups):
-            if (
-                _aggregation_key(group[0]) == _aggregation_key(alert)
-                and alert.timestamp - group[0].timestamp < timedelta(minutes=window_minutes)
-            ):
-                match = group
-                break
-        if match is None:
-            groups.append([alert])
-        else:
-            match.append(alert)
+        key = (_aggregation_key(alert), window_start(alert, window_minutes=window_minutes))
+        groups.setdefault(key, []).append(alert)
     return FeatureBatchResponse(
         input_alert_count=len(alerts),
         unique_alert_count=len(unique_by_id),
         duplicate_alert_count=len(alerts) - len(unique_by_id),
-        incidents=[_build_response(group) for group in groups],
+        incidents=[
+            _build_response(group, window_minutes=window_minutes) for group in groups.values()
+        ],
     )

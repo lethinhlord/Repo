@@ -81,6 +81,18 @@ class WazuhAlertData(ExternalModel):
     outbound_connection_count: float | None = Field(default=None, ge=0, le=1_000_000)
     destination_port_count: float | None = Field(default=None, ge=0, le=65_535)
     win: dict[str, object] | None = None
+    event_type: str | None = Field(default=None, max_length=32)
+    timestamp: str | None = Field(default=None, max_length=64)
+    src_ip: str | None = Field(default=None, max_length=64)
+    dest_ip: str | None = Field(default=None, max_length=64)
+    src_port: int | None = Field(default=None, ge=0, le=65535)
+    dest_port: int | None = Field(default=None, ge=0, le=65535)
+    flow_id: int | str | None = None
+    dns: dict[str, object] | None = None
+    http: dict[str, object] | None = None
+    tls: dict[str, object] | None = None
+    flow: dict[str, object] | None = None
+    alert: dict[str, object] | None = None
 
 
 class WazuhAlert(ExternalModel):
@@ -190,6 +202,7 @@ class ModelMetricsResponse(StrictModel):
 
 class AnalystFeedbackRequest(StrictModel):
     incident_id: str = Field(min_length=1, max_length=128)
+    source_event_id: str | None = Field(default=None, min_length=1, max_length=128)
     model_version: str = Field(min_length=1, max_length=128)
     analyst_id: str = Field(min_length=1, max_length=128)
     analyst_label: Literal["benign", "malicious", "uncertain"]
@@ -355,6 +368,7 @@ class RiskEvaluation(StrictModel):
 class IncidentRecordRequest(StrictModel):
     incident_id: str = Field(min_length=1, max_length=128)
     source_event_id: str = Field(min_length=1, max_length=128)
+    source_payload_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     route: Literal["shadow", "review"]
     review_required: bool
     notification: str = Field(min_length=1, max_length=4096)
@@ -375,6 +389,7 @@ class IncidentRecordResponse(StrictModel):
     source_event_id: str
     disposition: Literal["created", "updated", "duplicate"]
     notification_status: Literal["QUEUED", "ALREADY_QUEUED"]
+    notification_revision: int = Field(default=1, ge=1)
     route: Literal["shadow", "review"]
     review_required: bool
     recorded_at: datetime
@@ -382,13 +397,16 @@ class IncidentRecordResponse(StrictModel):
 
 class NotificationDispatchRequest(StrictModel):
     incident_id: str = Field(min_length=1, max_length=128)
+    notification_revision: int | None = Field(default=None, ge=1)
 
 
 class NotificationDispatchResponse(StrictModel):
     incident_id: str
-    notification_status: Literal["SENT", "ALREADY_SENT"]
-    channel: Literal["audit-log", "webhook"]
-    delivered_at: datetime
+    notification_revision: int = Field(default=1, ge=1)
+    notification_status: Literal["SENT", "ALREADY_SENT", "SUPERSEDED"]
+    channel: Literal["audit-log", "webhook"] | None = None
+    delivered_at: datetime | None = None
+    superseded_by_revision: int | None = Field(default=None, ge=1)
 
 
 class ReadinessResponse(StrictModel):

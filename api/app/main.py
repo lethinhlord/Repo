@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi import Path as ApiPath
 
 from api.app.asset_context import AssetContextRepository
@@ -325,6 +325,25 @@ def record_incident(request: IncidentRecordRequest) -> IncidentRecordResponse:
         raise HTTPException(status_code=503, detail=f"incident store unavailable: {exc}") from exc
 
 
+@app.get("/incidents/events/{source_event_id:path}", response_model=IncidentRecordResponse)
+def incident_event_outcome(
+    source_event_id: Annotated[str, ApiPath(min_length=1, max_length=128)],
+    payload_sha256: Annotated[str, Query(pattern=r"^[0-9a-f]{64}$")],
+) -> IncidentRecordResponse:
+    path = os.getenv("INCIDENT_DB", "/tmp/datn-incidents.sqlite3").strip()
+    try:
+        outcome = load_incident_store(path).get_event_outcome(
+            source_event_id, payload_sha256=payload_sha256
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, sqlite3.Error) as exc:
+        raise HTTPException(status_code=503, detail=f"incident store unavailable: {exc}") from exc
+    if outcome is None:
+        raise HTTPException(status_code=404, detail="verified event outcome was not found")
+    return outcome
+
+
 @app.post("/notifications/dispatch", response_model=NotificationDispatchResponse)
 def dispatch_notification(
     request: NotificationDispatchRequest,
@@ -339,13 +358,15 @@ def dispatch_notification(
             raise ValueError("notification timeout must be between 0 and 30 seconds")
         return load_incident_store(path).dispatch_notification(
             request.incident_id,
-            lambda incident_id, message: deliver_notification(
+            lambda incident_id, message, notification_key: deliver_notification(
                 incident_id,
                 message,
                 mode=mode,
                 webhook_url=webhook_url,
                 timeout_seconds=timeout_seconds,
+                notification_key=notification_key,
             ),
+            notification_revision=request.notification_revision,
             lease_seconds=lease_seconds,
         )
     except ValueError as exc:

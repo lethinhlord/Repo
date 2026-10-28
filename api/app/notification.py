@@ -29,6 +29,7 @@ def deliver_notification(
     mode: str,
     webhook_url: str | None,
     timeout_seconds: float,
+    notification_key: str | None = None,
 ) -> str:
     normalized = mode.strip().lower()
     if normalized == "log":
@@ -47,7 +48,7 @@ def deliver_notification(
         data=body,
         headers={
             "Content-Type": "application/json",
-            "Idempotency-Key": incident_id,
+            "Idempotency-Key": notification_key or incident_id,
         },
         method="POST",
     )

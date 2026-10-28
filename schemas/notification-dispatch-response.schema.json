@@ -5,33 +5,67 @@
       "title": "Incident Id",
       "type": "string"
     },
+    "notification_revision": {
+      "default": 1,
+      "minimum": 1,
+      "title": "Notification Revision",
+      "type": "integer"
+    },
     "notification_status": {
       "enum": [
         "SENT",
-        "ALREADY_SENT"
+        "ALREADY_SENT",
+        "SUPERSEDED"
       ],
       "title": "Notification Status",
       "type": "string"
     },
     "channel": {
-      "enum": [
-        "audit-log",
-        "webhook"
+      "anyOf": [
+        {
+          "enum": [
+            "audit-log",
+            "webhook"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
       ],
-      "title": "Channel",
-      "type": "string"
+      "default": null,
+      "title": "Channel"
     },
     "delivered_at": {
-      "format": "date-time",
-      "title": "Delivered At",
-      "type": "string"
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Delivered At"
+    },
+    "superseded_by_revision": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Superseded By Revision"
     }
   },
   "required": [
     "incident_id",
-    "notification_status",
-    "channel",
-    "delivered_at"
+    "notification_status"
   ],
   "title": "NotificationDispatchResponse",
   "type": "object"

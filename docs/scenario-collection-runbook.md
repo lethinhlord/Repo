@@ -1,6 +1,6 @@
 # QUY TRÌNH CHUẨN THU THẬP DỮ LIỆU TRAIN TRÊN LAB 4 VM
 
-Phiên bản: 2.1 — 24/10/2026
+Phiên bản: 2.2 — hoàn tất ngày 28/10/2026
 Phạm vi: dữ liệu `account-benign`, `account-malicious`, `c2-benign`,
 `c2-malicious` cho nhánh `feature/week3-model-training`.
 
@@ -636,6 +636,34 @@ $SocRepo = "$SocHome/datn-ai-soar"
 New-Item -ItemType Directory -Force C:\DATN | Out-Null
 scp "${SocUser}@192.168.58.147:${SocRepo}/config/sysmon-datn.xml" C:\DATN\
 scp "${SocUser}@192.168.58.147:${SocRepo}/config/wazuh-windows-localfile.xml" C:\DATN\
+scp "${SocUser}@192.168.58.147:${SocRepo}/scripts/run_dns_scenario.ps1" C:\DATN\
+$remoteDnsScriptHashLine = ssh "${SocUser}@192.168.58.147" `
+  "sha256sum '${SocRepo}/scripts/run_dns_scenario.ps1'"
+if ($LASTEXITCODE -ne 0 -or -not $remoteDnsScriptHashLine) {
+  throw 'Cannot hash run_dns_scenario.ps1 on SOC-AI'
+}
+$remoteDnsScriptHash = ($remoteDnsScriptHashLine -split '\s+')[0].ToLower()
+$localDnsScriptHash = (Get-FileHash C:\DATN\run_dns_scenario.ps1 `
+  -Algorithm SHA256).Hash.ToLower()
+if ($localDnsScriptHash -ne $remoteDnsScriptHash) {
+  throw 'run_dns_scenario.ps1 does not match the pinned repo copy'
+}
+$localDnsScriptHash | Set-Content C:\DATN\run_dns_scenario.ps1.sha256.txt -Encoding ascii
+$executionPolicies = Get-ExecutionPolicy -List
+$executionPolicies | Format-Table -AutoSize
+$enforcedPolicy = @($executionPolicies | Where-Object {
+  $_.Scope -in 'MachinePolicy','UserPolicy' -and
+  $_.ExecutionPolicy -in 'AllSigned','Restricted'
+})
+if ($enforcedPolicy.Count -gt 0) {
+  throw 'Group Policy requires an approved signed script or blocks scripts; resolve before collection'
+}
+$internetZone = Get-Item -LiteralPath C:\DATN\run_dns_scenario.ps1 `
+  -Stream Zone.Identifier -ErrorAction SilentlyContinue
+if ($internetZone) {
+  # Hash has just been verified against the pinned repository copy.
+  Unblock-File -LiteralPath C:\DATN\run_dns_scenario.ps1
+}
 Invoke-WebRequest https://download.sysinternals.com/files/Sysmon.zip `
   -OutFile C:\DATN\Sysmon.zip
 Get-FileHash C:\DATN\Sysmon.zip -Algorithm SHA256 |
@@ -654,6 +682,14 @@ Get-Service Sysmon64
 Config repo bật ProcessCreate (ID 1), NetworkConnect (ID 3) và DnsQuery (ID 22). Không
 dùng DNS Internet để test. Sau khi dịch vụ Kali ở mục 9 đã chạy, tạo traffic lab (chưa
 dùng làm dữ liệu train), sau đó xác nhận:
+
+Windows 11 có thể mặc định `Restricted`. Runner DNS bên dưới dùng
+`-ExecutionPolicy RemoteSigned` **chỉ cho child process**, không sửa policy lưu trong
+registry. File được copy và đối chiếu SHA-256 trước; chỉ gỡ `Zone.Identifier` của đúng
+file đã xác minh. Nếu Group Policy áp `AllSigned`, dùng bản ký bằng chứng thư được
+quản trị chấp thuận và chốt lại hash trước khi thu; không vượt Group Policy hoặc đổi
+policy toàn máy. Đối chiếu phạm vi và thứ tự ưu tiên tại
+[Microsoft about_Execution_Policies](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies?view=powershell-5.1).
 
 ```powershell
 Test-NetConnection 192.168.58.147 -Port 443
@@ -1459,14 +1495,25 @@ scp -i "$HOME/.ssh/id_ed25519_datn_clock" \
   "${KALI_USER}@192.168.58.132:/tmp/datn-current-run.env"
 ssh -i "$HOME/.ssh/id_ed25519_datn_clock" \
   "${KALI_USER}@192.168.58.132" chmod 600 /tmp/datn-current-run.env
-.venv-ml/bin/python -m scripts.scenario_session begin-action --run-id "$RUN_ID"
+.venv-ml/bin/python -m scripts.scenario_session begin-action \
+  --run-id "$RUN_ID" --wait-for-window
 ```
 
 Hai file export không chứa mật khẩu. Xóa `/tmp/datn-current-run.env` trên Kali khi cleanup.
-Trước `begin-action`, đã phải paste file `.ps1` vào PowerShell Windows hoặc source file
-`.env` ở đúng máy nhưng **chưa chạy hành động**. `begin-action` là lệnh cuối cùng ngay
-trước thao tác, tạo receipt bắt buộc và gắn hành động với SHA-256 của tham số đóng băng.
-Không chạy nó lần hai và không dùng file export của run khác.
+Trước `begin-action`, phải pre-stage cả hai console: console SOC-AI đã có lệnh trên; console
+Windows/Kali đã load file `.ps1`/`.env`, block dùng chung và lệnh scenario ngắn nhưng
+**chưa chạy hành động**. Không copy file, paste block dài, sửa lệnh hoặc chờ prompt mới sau
+khi receipt được tạo. `--wait-for-window` kiểm tra budget của schedule đóng băng gồm
+pre-delay, toàn bộ interval và 10 giây cho thao tác/cleanup. Nó không bắt đầu trước đầu
+bucket cộng `clock_preflight.maximum_skew_seconds`; nếu phần còn lại của bucket không đủ, nó chỉ
+sleep từng nhịp tối đa 30 giây và chưa tạo receipt. Nếu budget không thể vừa trong bất kỳ
+bucket đã guard nào, lệnh fail ngay; không chờ vô hạn. Nếu bỏ `--wait-for-window`,
+`begin-action` từ chối ngay khi cửa sổ hiện tại không đủ. Thông báo chờ đi ra stderr;
+receipt JSON cuối cùng đi ra stdout. Khi receipt `status=STARTED` trả về, đọc
+`action_started_at` và `action_deadline`, rồi chạy ngay lệnh đã pre-stage ở console thao tác.
+`action_deadline` là cuối bucket UTC trừ clock-skew guard. `begin-action` tạo receipt bắt
+buộc, gắn hành động với SHA-256 của tham số đóng băng; không chạy lần hai và không dùng
+file export của run khác.
 
 `pre_action_delay_seconds`, dải jitter và cách sinh nonce giống nhau giữa benign và
 malicious. Không thay tham số theo cảm tính, không sử dụng giá trị của run trước và không
@@ -1474,14 +1521,20 @@ thay kích thước hai payload cố định; SHA-256 của payload là cổng a
 
 ### Bước 4 — Đóng receipt rồi chờ pipeline chuyển log
 
-Ngay khi hoạt động kết thúc, đóng receipt rồi chờ 90 giây; không tạo traffic khác tới
-destination của kịch bản:
+Ngay khi hoạt động và cleanup kết thúc, phải chạy `complete-action` **trước**
+`action_deadline`, rồi chờ 90 giây; không tạo traffic khác tới destination của kịch bản:
 
 ```bash
 set -euo pipefail
 .venv-ml/bin/python -m scripts.scenario_session complete-action --run-id "$RUN_ID"
 sleep 90
 ```
+
+Nếu quá deadline hoặc `complete-action` từ chối vì đã ra ngoài aggregation window, chạy
+`abort`, cleanup và tạo run ID mới. Không sửa `action_deadline`, timestamp hoặc receipt để
+hợp thức hóa run. `finalize` cũng từ chối nếu timestamp nguồn thô của bất kỳ record đã chọn
+nằm ngoài đúng bucket UTC ghi trong receipt; clock-skew tolerance không cho phép kéo record
+từ bucket liền kề vào run.
 
 Kiểm tra nhanh Archives có byte mới, không sửa file:
 
@@ -1580,15 +1633,37 @@ policy lab chưa lockout và mở khóa các tài khoản dùng riêng cho lab:
 
 ```powershell
 net accounts
-'datn_benign','datn_attack','datn_spray01','datn_spray02','datn_spray03' | `
-  ForEach-Object { Unlock-LocalUser -Name $_ -ErrorAction SilentlyContinue }
-Get-CimInstance Win32_UserAccount -Filter "LocalAccount=True" | Where-Object {
-  $_.Name -in 'datn_benign','datn_attack','datn_spray01','datn_spray02','datn_spray03'
-} | Select-Object Name,Disabled,Lockout
+$labAccountNames = @(
+  'datn_benign','datn_attack','datn_spray01','datn_spray02','datn_spray03'
+)
+$labAccountNames | ForEach-Object {
+  $name = $_
+  $user = [ADSI]("WinNT://{0}/{1},user" -f $env:COMPUTERNAME, $name)
+  $user.IsAccountLocked = $false
+  $user.SetInfo()
+}
+$labAccounts = @(
+  Get-CimInstance Win32_UserAccount -Filter "LocalAccount=True" | Where-Object {
+    $_.Name -in $labAccountNames
+  }
+)
+$labAccounts | Select-Object Name,Disabled,Lockout
+if ($labAccounts.Count -ne $labAccountNames.Count) {
+  throw 'One or more DATN lab accounts do not exist on WIN11-TARGET'
+}
+$invalidAccounts = @(
+  $labAccounts | Where-Object { $_.Disabled -or $_.Lockout }
+)
+if ($invalidAccounts) {
+  $invalidAccounts | Select-Object Name,Disabled,Lockout
+  throw 'A DATN lab account is disabled or still locked'
+}
 ```
 
-Mọi dòng phải có `Disabled=False`, `Lockout=False`. Nếu khác, dừng và sửa trước `start`;
-không mở khóa giữa cửa sổ run vì sẽ tạo thêm event. Sau khi collector báo `STARTED`, trên
+Block dùng thuộc tính `IADsUser.IsAccountLocked` của WinNT ADSI để mở khóa, rồi dùng
+`Win32_UserAccount` qua CIM để xác nhận. Mọi dòng phải có `Disabled=False`,
+`Lockout=False`. Nếu khác, dừng và sửa trước `start`; không mở khóa giữa cửa sổ run vì
+sẽ tạo thêm event. Sau khi collector báo `STARTED`, trên
 SOC-AI chờ đúng pre-action delay rồi mới ra tín hiệu cho người thao tác Windows/Kali:
 
 ```bash
@@ -1686,11 +1761,47 @@ function Start-DatnScenario([string]$ExpectedScenario) {
     1000 * $DatnParameters.pre_action_delay_seconds))
   $script:DatnOperatorPid = $PID
 }
+function Start-DatnDnsScenario(
+  [string]$ExpectedScenario,
+  [ValidateSet('www.datn.test','beacon.datn.test')][string]$DomainSuffix
+) {
+  $dnsScript = 'C:\DATN\run_dns_scenario.ps1'
+  $powershellExe = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+  if (-not (Test-Path -LiteralPath $dnsScript -PathType Leaf)) {
+    throw "Missing pinned DNS runner: $dnsScript"
+  }
+  $expectedHash = (Get-Content -LiteralPath "$dnsScript.sha256.txt" -Raw).Trim()
+  if ($expectedHash -notmatch '^[0-9a-f]{64}$' -or
+      (Get-FileHash -LiteralPath $dnsScript -Algorithm SHA256).Hash.ToLower() -ne $expectedHash) {
+    throw 'DNS runner changed after installation; restore the pinned copy before collection'
+  }
+  Start-DatnScenario $ExpectedScenario
+  $arguments = @(
+    '-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','RemoteSigned','-File',$dnsScript,
+    '-RunNonce',[string]$DatnParameters.run_nonce,
+    '-DomainSuffix',$DomainSuffix,
+    '-Count',[string]$DatnParameters.expected_action_count,
+    '-GapsCsv',[string]$DatnParameters.expected_intervals_seconds,
+    '-VariantIndex',[string]$DatnParameters.variant_index,
+    '-DnsServer','10.40.0.10'
+  )
+  $process = Start-Process -FilePath $powershellExe -ArgumentList $arguments `
+    -NoNewWindow -Wait -PassThru
+  if ($process.ExitCode -ne 0) {
+    throw "DNS runner failed with exit code $($process.ExitCode)"
+  }
+}
 ```
 
 Không sửa hàm để tạo timing theo nhãn. `run_nonce` và `variant_index` phải xuất hiện
 trong URL hoặc DNS name. Collector đối chiếu nonce, số hành động và khoảng nghỉ với
-contract đã đóng băng; tự gõ một giá trị khác sẽ làm run bị từ chối.
+contract đã đóng băng; tự gõ một giá trị khác sẽ làm run bị từ chối. Hai scenario DNS
+phải chạy `run_dns_scenario.ps1` trong đúng một child `powershell.exe`: Sysmon Event 1
+nhờ đó chứa nonce, domain, count và interval CSV trên command line, còn Event 22 mang
+cùng ProcessGuid. Không chạy `Resolve-DnsName` trực tiếp trong PowerShell operator.
+Giữ đúng policy `RemoteSigned` riêng cho child như block trên; không dùng policy Bypass
+hoặc Unrestricted và không chạy `Set-ExecutionPolicy`. Nếu policy chặn file đã pin thì
+abort run và xử lý trust/signing ngoài cửa sổ thu thập, không tiếp tục để lấy mẫu thiếu DNS.
 
 ### C2-BENIGN-HEALTH-POLL
 
@@ -1698,11 +1809,11 @@ contract đã đóng băng; tự gõ một giá trị khác sẽ làm run bị t
 $ErrorActionPreference = 'Stop'
 Start-DatnScenario 'C2-BENIGN-HEALTH-POLL'
 $gap = Get-DatnGap 30
-1..5 | ForEach-Object {
+1..8 | ForEach-Object {
   $uri = "http://10.40.0.10:8081/beacon?mode=health&run=$($DatnParameters.run_nonce)&v=$($DatnParameters.variant_index)&n=$_"
   curl.exe --fail --silent --show-error --output NUL $uri
   if ($LASTEXITCODE -ne 0) { throw 'health request failed' }
-  if ($_ -lt 5) { Start-Sleep -Seconds $gap }
+  if ($_ -lt 8) { Start-Sleep -Seconds $gap }
 }
 ```
 
@@ -1739,14 +1850,8 @@ for ($i=0; $i -lt 4; $i++) {
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-Start-DatnScenario 'C2-BENIGN-DNS'
-$gaps = @(7,19,11) | ForEach-Object { Get-DatnGap $_ }
-for ($i=0; $i -lt 4; $i++) {
-  $name = "$($DatnParameters.run_nonce)-b$($DatnParameters.variant_index)-{0:D2}.www.datn.test" -f ($i + 1)
-  $answer = Resolve-DnsName $name -Server 10.40.0.10 -Type A
-  if ('10.40.0.10' -notin $answer.IPAddress) { throw "Wrong DNS answer: $name" }
-  if ($i -lt 3) { Start-Sleep -Seconds $gaps[$i] }
-}
+Start-DatnDnsScenario -ExpectedScenario 'C2-BENIGN-DNS' `
+  -DomainSuffix 'www.datn.test'
 ```
 
 ### C2-BENIGN-API-BURST
@@ -1795,14 +1900,8 @@ for ($i=0; $i -lt 8; $i++) {
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-Start-DatnScenario 'C2-MALICIOUS-DNS-BEACON'
-$gap = Get-DatnGap 15
-1..8 | ForEach-Object {
-  $name = "$($DatnParameters.run_nonce)-r$($DatnParameters.variant_index)-{0:D2}.beacon.datn.test" -f $_
-  $answer = Resolve-DnsName $name -Server 10.40.0.10 -Type A
-  if ('10.40.0.10' -notin $answer.IPAddress) { throw "Wrong DNS answer: $name" }
-  if ($_ -lt 8) { Start-Sleep -Seconds $gap }
-}
+Start-DatnDnsScenario -ExpectedScenario 'C2-MALICIOUS-DNS-BEACON' `
+  -DomainSuffix 'beacon.datn.test'
 ```
 
 ### C2-MALICIOUS-STAGED-TRANSFER
@@ -1842,11 +1941,12 @@ Cleanup:
 
 ```powershell
 $children = Get-CimInstance Win32_Process | Where-Object {
-  $_.ParentProcessId -eq $DatnOperatorPid -and $_.Name -eq 'curl.exe'
+  $_.ParentProcessId -eq $DatnOperatorPid -and
+    $_.Name -in 'curl.exe','powershell.exe'
 }
 if ($children) {
   $children | Select-Object ProcessId,Name,CommandLine
-  throw 'A curl child from this scenario is still running; abort this run'
+  throw 'A child from this scenario is still running; abort this run'
 }
 Remove-Item $env:TEMP\payload-benign.txt -ErrorAction SilentlyContinue
 Remove-Item $env:TEMP\stage.bin -ErrorAction SilentlyContinue
@@ -2174,6 +2274,8 @@ và không trộn dữ liệu mở rộng vào dataset v1.
 - Microsoft Sysmon: https://learn.microsoft.com/sysinternals/downloads/sysmon
 - Microsoft OpenSSH Client/Server: https://learn.microsoft.com/windows-server/administration/openssh/openssh_install_firstuse
 - Microsoft audit GUID constants: https://learn.microsoft.com/windows/win32/secauthz/auditing-constants
+- Microsoft WinNT account unlock (`IADsUser.IsAccountLocked`): https://learn.microsoft.com/windows/win32/adsi/winnt-account-lockout
+- Microsoft `Win32_UserAccount`: https://learn.microsoft.com/windows/win32/cimwin32prov/win32-useraccount
 - Suricata EVE JSON: https://docs.suricata.io/en/latest/output/eve/eve-json-output.html
 - Suricata rule-files/default-rule-path: https://docs.suricata.io/en/latest/configuration/suricata-yaml.html
 - Atomic Red Team: https://www.atomicredteam.io/docs/invoke-atomicredteam
