@@ -65,6 +65,40 @@ def test_full_capture_background_cannot_be_hidden_by_scenario_nonce(
     assert list((tmp_path/'evidence/scenario-runs').glob('*/archive_capture.jsonl'))
 
 
+def test_start_freezes_the_context_bytes_it_validated_before_a_concurrent_publish(
+    tmp_path: Path, acceptance: ModuleType, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import hashlib
+
+    import ml.scenario_collection as collector
+    _, sources, catalog = acceptance._prepare_collection_root(tmp_path)
+    scenario = next(x for x in catalog.scenarios if x.family == 'account')
+    context_path = tmp_path/'evidence/context-baseline.json'
+    validated = context_path.read_bytes()
+    started = acceptance.COLLECTION_BASE
+    draft = tmp_path/'run-drafts/CONTEXT-PUBLISH-RACE.yaml'
+    create_run_draft(tmp_path/'config/scenario-catalog.yaml', scenario.scenario_id,
+        'CONTEXT-PUBLISH-RACE', 'unit-race', draft,
+        clock_preflight=acceptance._clock_preflight(started))
+    original = collector._normalized_source
+
+    def publish_after_validation(*args, **kwargs):
+        replacement = json.loads(validated)
+        replacement['revision'] = 'CONCURRENT-NEW-REVISION'
+        replacement['source_capture_sha256'] = 'b'*64
+        context_path.write_text(json.dumps(replacement), encoding='utf-8')
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(collector, '_normalized_source', publish_after_validation)
+    start_run(draft, sources, tmp_path, now=started)
+    evidence = tmp_path/'evidence/scenario-runs/CONTEXT-PUBLISH-RACE'
+    frozen = (evidence/'context-baseline.json').read_bytes()
+    assert frozen == validated
+    assert json.loads(frozen)['source_capture_sha256'] == hashlib.sha256(
+        (evidence/'context-capture.jsonl').read_bytes(),
+    ).hexdigest()
+
+
 @pytest.fixture
 def acceptance() -> ModuleType:
     # A fresh module keeps monkeypatched fixture clocks/events isolated per test.

@@ -27,7 +27,7 @@ from ml.behavior_features import (
     interval_features,
 )
 from ml.collection_windows import bucket_used, reserve_bucket
-from ml.context import context_from_events, load_baseline
+from ml.context import BaselineSnapshot, context_from_events, load_baseline
 from ml.dataset import (
     DatasetRecord,
     ScenarioManifest,
@@ -624,18 +624,25 @@ def start_run(
         _resolve(project_root, source.context_baseline_path)
         if source.context_baseline_path else None
     )
-    baseline = load_baseline(context_path)
-    context_capture = None
+    baseline = None
+    context_bytes = None
+    capture_bytes = None
     if context_path:
-        if baseline is None:
-            raise CollectionError("context baseline is required; enroll a separate capture first")
+        try:
+            context_bytes = context_path.read_bytes()
+            baseline = BaselineSnapshot.model_validate_json(context_bytes)
+        except (OSError, ValueError) as exc:
+            raise CollectionError(
+                f"context baseline is required and must be valid; enroll a separate capture: {exc}"
+            ) from exc
         context_capture = context_path.parent / "context-captures" / (
             baseline.source_capture_sha256 + ".jsonl"
         )
-        if (
-            not context_capture.is_file()
-            or _sha256(context_capture) != baseline.source_capture_sha256
-        ):
+        try:
+            capture_bytes = context_capture.read_bytes()
+        except OSError as exc:
+            raise CollectionError("context enrollment capture is missing") from exc
+        if hashlib.sha256(capture_bytes).hexdigest() != baseline.source_capture_sha256:
             raise CollectionError("context enrollment capture is missing or its hash differs")
 
     started_at = _utc(now)
@@ -683,7 +690,9 @@ def start_run(
         "frozen_parameters_sha256": frozen_parameters_sha256,
         "execution_receipt": None,
         "origin_project_root": str(project_root),
-        "context_baseline_sha256": _sha256(context_path) if context_path else None,
+        "context_baseline_sha256": (
+            hashlib.sha256(context_bytes).hexdigest() if context_bytes is not None else None
+        ),
         "context_capture_sha256": baseline.source_capture_sha256 if baseline else None,
     }
     state["scenario_catalog_sha256"] = _sha256(catalog_path)
@@ -741,9 +750,9 @@ def start_run(
             )
             shutil.copyfile(catalog_path, staging_dir / "scenario-catalog.yaml")
             shutil.copyfile(schema_path, staging_dir / "feature-schema.json")
-            if context_path and context_capture:
-                shutil.copyfile(context_path, staging_dir / "context-baseline.json")
-                shutil.copyfile(context_capture, staging_dir / "context-capture.jsonl")
+            if context_bytes is not None and capture_bytes is not None:
+                (staging_dir / "context-baseline.json").write_bytes(context_bytes)
+                (staging_dir / "context-capture.jsonl").write_bytes(capture_bytes)
             _write_jsonl(staging_dir / "run_markers.jsonl", [start_marker])
             _write_json(staging_dir / ".collection_state.json", state)
             _append_log(staging_dir, f"RUN_STARTED run_id={draft.run_id}")
@@ -1471,6 +1480,18 @@ def _verify_start_snapshot(
     for path, expected in protected.items():
         if not isinstance(expected, str) or not path.is_file() or _sha256(path) != expected:
             raise CollectionError(f"start snapshot changed after run start: {path.name}")
+    if start_contract.get("context_baseline_sha256"):
+        try:
+            frozen_baseline = load_baseline(evidence_dir / "context-baseline.json")
+        except (OSError, ValueError) as exc:
+            raise CollectionError("frozen context baseline is invalid") from exc
+        captured_start = _parse_time(start_contract.get("started_at"))
+        if (
+            frozen_baseline is None or captured_start is None
+            or frozen_baseline.source_capture_sha256 != start_contract.get("context_capture_sha256")
+            or not frozen_baseline.captured_at <= captured_start < frozen_baseline.valid_until
+        ):
+            raise CollectionError("frozen baseline/capture/as-of contract is inconsistent")
     try:
         snapshot_source = SourceConfig.model_validate(_read_yaml(source_snapshot_path))
     except ValueError as exc:
