@@ -28,7 +28,8 @@ def test_incident_store_creates_updates_and_queues_once(tmp_path: Path) -> None:
     assert created.disposition == "created"
     assert created.notification_status == "QUEUED"
     assert updated.disposition == "updated"
-    assert updated.notification_status == "ALREADY_QUEUED"
+    assert updated.notification_status == "QUEUED"
+    assert updated.notification_revision == 2
     assert duplicate.disposition == "duplicate"
     assert duplicate.notification_status == "ALREADY_QUEUED"
 
@@ -48,7 +49,7 @@ def test_stale_notification_lease_is_recovered_after_process_interruption(
     store.record(request("EVENT-1"))
     started = datetime(2026, 10, 23, 10, 0, tzinfo=UTC)
 
-    def interrupted_sender(_incident_id: str, _notification: str) -> str:
+    def interrupted_sender(_incident_id: str, _notification: str, _key: str) -> str:
         raise SystemExit("simulated process interruption")
 
     with pytest.raises(SystemExit, match="process interruption"):
@@ -62,14 +63,14 @@ def test_stale_notification_lease_is_recovered_after_process_interruption(
     with pytest.raises(ValueError, match="already in progress"):
         store.dispatch_notification(
             "INC-STABLE-1",
-            lambda _incident_id, _notification: "audit-log",
+            lambda _incident_id, _notification, _key: "audit-log",
             now=started + timedelta(seconds=59),
             lease_seconds=60,
         )
 
     calls: list[str] = []
 
-    def recovered_sender(incident_id: str, _notification: str) -> str:
+    def recovered_sender(incident_id: str, _notification: str, _key: str) -> str:
         calls.append(incident_id)
         return "webhook"
 

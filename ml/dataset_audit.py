@@ -19,9 +19,11 @@ from ml.dataset import (
 )
 from ml.scenario_collection import (
     ClockPreflight,
+    CollectionError,
     ScenarioCatalog,
     ScenarioDefinition,
     _parse_time,
+    verify_feature_provenance,
 )
 
 STRATA = ("account:benign", "account:malicious", "c2:benign", "c2:malicious")
@@ -39,6 +41,13 @@ def _payload_sha256(payload: Any) -> str:
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+
+
+def _read_mapping(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"{path.name} must contain a JSON object")
+    return payload
 
 
 def _issue(
@@ -104,6 +113,8 @@ def _load_incidents(path: Path) -> list[IncidentRequest]:
             continue
         try:
             payload = json.loads(line)
+            if not isinstance(payload, dict):
+                raise ValueError("incident must contain a JSON object")
             incidents.append(IncidentRequest.model_validate(payload.get("incident", payload)))
         except (json.JSONDecodeError, ValueError) as exc:
             raise ValueError(f"invalid incident line {line_number}: {exc}") from exc
@@ -210,16 +221,16 @@ def _audit_run(
         return manifest, incidents, errors + ["missing evidence directory"]
     state_path = evidence_dir / ".collection_state.json"
     try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        state = _read_mapping(state_path)
+    except (OSError, ValueError) as exc:
         errors.append(f"RUN_STATE_INVALID: invalid .collection_state.json: {exc}")
         state = {}
     if state.get("status") != "FINALIZED" or state.get("run_id") != manifest.run_id:
         errors.append("RUN_STATE_INVALID: collection state is not FINALIZED for this run")
     ground_truth_path = evidence_dir / "ground_truth.json"
     try:
-        ground_truth = json.loads(ground_truth_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        ground_truth = _read_mapping(ground_truth_path)
+    except (OSError, ValueError) as exc:
         errors.append(f"invalid ground_truth.json: {exc}")
         ground_truth = {}
     manifest_identity = {
@@ -274,8 +285,8 @@ def _audit_run(
         metadata: dict[str, Any] = {}
     else:
         try:
-            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+            metadata = _read_mapping(metadata_path)
+        except (OSError, ValueError) as exc:
             errors.append(f"invalid collection_metadata.json: {exc}")
             metadata = {}
     if metadata.get("status") != "FINALIZED":
@@ -288,8 +299,8 @@ def _audit_run(
         errors.append("collection metadata parameters do not match manifest")
     start_contract_path = evidence_dir / "start-contract.json"
     try:
-        start_contract = json.loads(start_contract_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        start_contract = _read_mapping(start_contract_path)
+    except (OSError, ValueError) as exc:
         errors.append(f"COLLECTION_CONTRACT_INVALID: invalid start contract: {exc}")
         start_contract = {}
     start_contract_sha256 = (
@@ -331,12 +342,10 @@ def _audit_run(
             "COLLECTION_CONTRACT_INVALID: start contract archive cursor/source mismatch"
         )
     try:
-        frozen_parameters = json.loads(
-            (evidence_dir / "execution-parameters.json").read_text(encoding="utf-8")
-        )
+        frozen_parameters = _read_mapping(evidence_dir / "execution-parameters.json")
         receipt_path = evidence_dir / "execution_receipt.json"
-        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        receipt = _read_mapping(receipt_path)
+    except (OSError, ValueError) as exc:
         errors.append(f"EXECUTION_RECEIPT_INVALID: {exc}")
         frozen_parameters = {}
         receipt = {}
@@ -409,7 +418,9 @@ def _audit_run(
             for line in marker_path.read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
-    except (OSError, json.JSONDecodeError) as exc:
+        if any(not isinstance(marker, dict) for marker in markers):
+            raise ValueError("run markers must be JSON objects")
+    except (OSError, ValueError) as exc:
         errors.append(f"RUN_MARKERS_INVALID: invalid run marker evidence: {exc}")
         markers = []
     if (
@@ -447,6 +458,11 @@ def _audit_run(
                 errors.append(
                     f"C2 incident {incident.incident_id} does not declare suricata-eve evidence"
                 )
+    for incident in incidents:
+        try:
+            verify_feature_provenance(evidence_dir, manifest, incident, state)
+        except (CollectionError, OSError, ValueError, TypeError) as exc:
+            errors.append(f"FEATURE_PROVENANCE_INVALID: {exc}")
     return manifest, incidents, errors
 
 
@@ -545,6 +561,7 @@ def audit_dataset(
                         "RUN_MARKERS_INVALID",
                         "COLLECTION_CONTRACT_INVALID",
                         "EXECUTION_RECEIPT_INVALID",
+                        "FEATURE_PROVENANCE_INVALID",
                     )
                 ):
                     code, message = message.split(":", 1)
@@ -561,8 +578,8 @@ def audit_dataset(
                 continue
             state_path = run_dir / ".collection_state.json"
             try:
-                state = json.loads(state_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+                state = _read_mapping(state_path)
+            except (OSError, ValueError):
                 state = {}
             status = state.get("status")
             if status == "ABORTED":
@@ -827,6 +844,12 @@ def audit_dataset(
         status = "READY"
     return {
         "audit_version": "dataset-audit-v2",
+        "collection_contract_sha256": _payload_sha256({
+            "source_config_sha256": source_config_sha256,
+            "taxonomy_sha256": taxonomy_sha256,
+            "scenario_catalog_sha256": catalog_sha256,
+            "feature_schema_sha256": schema_sha256,
+        }),
         "status": status,
         "minimum_policy": (
             f"{minimum_runs}..{target_runs} valid independent runs, exactly "

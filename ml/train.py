@@ -12,7 +12,8 @@ def main() -> None:
     args = parser.parse_args()
     metadata = train(args.config)
     print(f"Model package ready: {metadata['model_version']}")
-    print("Selection used validation only; locked test remains UNOPENED.")
+    print("Model selection used TRAIN grouped CV; threshold selection used VALIDATION.")
+    print("Locked test remains UNOPENED.")
 
 
 if __name__ == "__main__":

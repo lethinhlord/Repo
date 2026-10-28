@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import hashlib
-import ipaddress
 import json
+import logging
+import math
 import os
 import random
 import re
 import shutil
 import tempfile
+import time
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -30,6 +32,47 @@ from ml.dataset import (
     ScenarioManifest,
     load_feature_schema,
     validate_feature_contract,
+)
+from ml.telemetry import (
+    account_source as _account_source,
+)
+from ml.telemetry import (
+    account_user as _account_user,
+)
+from ml.telemetry import (
+    basename as _basename,
+)
+from ml.telemetry import (
+    event_time as _event_time,
+)
+from ml.telemetry import (
+    is_interactive_logon,
+    network_is_outbound,
+    normalize_ip,
+)
+from ml.telemetry import (
+    parse_time as _parse_time,
+)
+from ml.telemetry import (
+    process_guid as _process_guid,
+)
+from ml.telemetry import (
+    suricata_correlates as _suricata_correlates,
+)
+from ml.telemetry import (
+    suricata_dns_is_response as _suricata_dns_is_response,
+)
+from ml.telemetry import (
+    suricata_dns_names as _suricata_dns_names,
+)
+from ml.telemetry import (
+    suricata_payload as _suricata_payload,
+)
+from ml.telemetry import (
+    taxonomy_match as _taxonomy_match,
+)
+from ml.telemetry import (
+    windows_fields as _windows_fields,
 )
 
 
@@ -96,14 +139,10 @@ class ClockPreflight(BaseModel):
             raise ValueError("clock preflight timestamps must include a timezone")
         span = (max(values) - min(values)).total_seconds()
         if span > self.maximum_skew_seconds:
-            raise ValueError(
-                f"VM clock skew {span:.3f}s exceeds {self.maximum_skew_seconds:.3f}s"
-            )
+            raise ValueError(f"VM clock skew {span:.3f}s exceeds {self.maximum_skew_seconds:.3f}s")
         measurement_age = (self.captured_at - min(values)).total_seconds()
         if measurement_age < -1 or measurement_age > self.maximum_capture_age_seconds:
-            raise ValueError(
-                "clock preflight measurements are stale or captured in the future"
-            )
+            raise ValueError("clock preflight measurements are stale or captured in the future")
         return self
 
 
@@ -181,12 +220,8 @@ class RunDraft(BaseModel):
             raise ValueError("c2 run requires destination IP, port or DNS attribution")
         if self.family == "c2":
             nonce = self.scenario_parameters.get("run_nonce")
-            if not isinstance(nonce, str) or not re.fullmatch(
-                r"[A-Za-z0-9_-]{8,64}", nonce
-            ):
-                raise ValueError(
-                    "c2 run requires an 8-64 character scenario_parameters.run_nonce"
-                )
+            if not isinstance(nonce, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", nonce):
+                raise ValueError("c2 run requires an 8-64 character scenario_parameters.run_nonce")
         return self
 
 
@@ -197,6 +232,8 @@ class SourceConfig(BaseModel):
     wazuh_archives_path: str
     windows_agent_name: str = Field(min_length=1)
     suricata_agent_name: str = Field(min_length=1)
+    windows_source_ips: list[str] = Field(default_factory=list)
+    correlation_window_seconds: float = Field(default=10.0, gt=0, le=30)
     taxonomy_path: str
     scenario_catalog_path: str = Field(min_length=1)
 
@@ -242,23 +279,6 @@ def _iso(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
-def _parse_time(value: Any) -> datetime | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    normalized = value.strip()
-    if normalized.endswith("Z"):
-        normalized = normalized[:-1] + "+00:00"
-    if len(normalized) >= 5 and normalized[-5] in {"+", "-"} and normalized[-3] != ":":
-        normalized = normalized[:-2] + ":" + normalized[-2:]
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        return None
-    return parsed.astimezone(UTC)
-
-
 def _read_yaml(path: Path) -> dict[str, Any]:
     try:
         payload = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -279,9 +299,7 @@ def _normalized_source(source: SourceConfig, project_root: Path) -> dict[str, An
     payload["wazuh_archives_path"] = str(
         _resolve(project_root, source.wazuh_archives_path).resolve()
     )
-    payload["taxonomy_path"] = str(
-        _resolve(project_root, source.taxonomy_path).resolve()
-    )
+    payload["taxonomy_path"] = str(_resolve(project_root, source.taxonomy_path).resolve())
     payload["scenario_catalog_path"] = str(
         _resolve(project_root, source.scenario_catalog_path).resolve()
     )
@@ -371,7 +389,7 @@ def create_run_draft(
             parameters["attempt_delay_seconds"] = round(rng.uniform(1.0, 5.0), 3)
     else:
         base_intervals: dict[str, list[float]] = {
-            "C2-BENIGN-HEALTH-POLL": [30.0] * 4,
+            "C2-BENIGN-HEALTH-POLL": [30.0] * 7,
             "C2-BENIGN-SINGLE-DOWNLOAD": [],
             "C2-BENIGN-IRREGULAR-API": [10.0, 35.0, 20.0],
             "C2-BENIGN-DNS": [7.0, 19.0, 11.0],
@@ -402,8 +420,7 @@ def create_run_draft(
             "run_nonce": hashlib.sha256(f"{run_id}:{seed}".encode()).hexdigest()[:16],
             "expected_action_count": expected_action_count,
             "expected_intervals_seconds": ",".join(
-                str(round(value * factor, 3))
-                for value in base_intervals[scenario.scenario_id]
+                str(round(value * factor, 3)) for value in base_intervals[scenario.scenario_id]
             ),
         }
     try:
@@ -584,8 +601,7 @@ def start_run(
     clock_age = (started_at - _utc(draft.clock_preflight.captured_at)).total_seconds()
     if clock_age < -1 or clock_age > draft.clock_preflight.maximum_capture_age_seconds:
         raise CollectionError(
-            "clock evidence is stale or captured in the future at run start: "
-            f"age={clock_age:.3f}s"
+            f"clock evidence is stale or captured in the future at run start: age={clock_age:.3f}s"
         )
 
     _assert_raw_dataset_layout(project_root)
@@ -721,99 +737,34 @@ def _read_appended_jsonl(cursor: dict[str, Any]) -> list[dict[str, Any]]:
             raise CollectionError(f"invalid appended JSON line {line_number}: {exc}") from exc
         if not isinstance(event, dict):
             raise CollectionError(f"appended JSON line {line_number} is not an object")
+        _validate_raw_event_structure(event)
         events.append(event)
     if not events:
         raise CollectionError("no complete JSON events were appended during the run")
     return events
 
 
-def _event_time(event: dict[str, Any]) -> datetime | None:
-    system = (((event.get("data") or {}).get("win") or {}).get("system") or {})
-    if system:
-        return _parse_time(system.get("systemTime"))
-    full_log = event.get("full_log")
-    if isinstance(full_log, str):
-        with suppress(json.JSONDecodeError):
-            payload = json.loads(full_log)
-            if isinstance(payload, dict) and payload.get("event_type"):
-                return _parse_time(payload.get("timestamp"))
-    data = event.get("data")
-    if isinstance(data, dict) and data.get("event_type"):
-        return _parse_time(data.get("timestamp"))
-    return _parse_time(event.get("timestamp"))
-
-
-def _windows_fields(event: dict[str, Any]) -> tuple[str, dict[str, Any], dict[str, Any]]:
-    win = ((event.get("data") or {}).get("win") or {})
-    system = win.get("system") or {}
-    eventdata = win.get("eventdata") or {}
-    return str(system.get("eventID", "")), system, eventdata
-
-
 def _casefold_set(values: list[str]) -> set[str]:
     return {value.strip().casefold() for value in values if value.strip()}
 
 
-def _basename(value: Any) -> str:
-    return str(value or "").replace("/", "\\").rsplit("\\", 1)[-1].casefold()
-
-
-def _account_user(eventdata: dict[str, Any]) -> str:
-    for name in ("targetUserName", "TargetUserName", "dstuser", "subjectUserName"):
-        value = eventdata.get(name)
-        if value:
-            return str(value).strip().casefold()
-    return ""
-
-
-def _account_source(eventdata: dict[str, Any]) -> str:
-    raw = str(
-        eventdata.get("ipAddress")
-        or eventdata.get("IpAddress")
-        or eventdata.get("sourceIp")
-        or eventdata.get("workstationName")
-        or eventdata.get("WorkstationName")
-        or "local-console"
-    ).strip().casefold()
-    with suppress(ValueError):
-        address = ipaddress.ip_address(raw)
-        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
-            return str(address.ipv4_mapped)
-        return str(address)
-    return raw
-
-
 def _is_interactive_logon(eventdata: dict[str, Any], attribution: Attribution) -> bool:
     """Keep only the logon types declared by the controlled scenario."""
-    raw = eventdata.get("logonType", eventdata.get("LogonType"))
-    if raw in (None, ""):
-        return False
-    with suppress(TypeError, ValueError):
-        return int(str(raw).strip()) in set(attribution.logon_types)
-    return False
+    return is_interactive_logon(eventdata, attribution.logon_types)
 
 
 def _matches_network(eventdata: dict[str, Any], attribution: Attribution) -> bool:
-    initiated = str(eventdata.get("initiated", "")).casefold()
-    if initiated not in {"true", "1", "yes"}:
+    if not network_is_outbound(eventdata):
         return False
     process_names = _casefold_set(attribution.process_names)
     if process_names and _basename(eventdata.get("image")) not in process_names:
         return False
-    source_ips = _casefold_set(attribution.source_ips)
-    source_ip = str(
-        eventdata.get("sourceIp") or eventdata.get("SourceIp") or ""
-    ).casefold()
-    with suppress(ValueError):
-        address = ipaddress.ip_address(source_ip)
-        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
-            source_ip = str(address.ipv4_mapped)
-        else:
-            source_ip = str(address)
+    source_ips = {normalize_ip(value) for value in attribution.source_ips}
+    source_ip = normalize_ip(eventdata.get("sourceIp") or eventdata.get("SourceIp") or "")
     if source_ips and source_ip not in source_ips:
         return False
-    destination_ips = _casefold_set(attribution.destination_ips)
-    destination_ip = str(eventdata.get("destinationIp", "")).casefold()
+    destination_ips = {normalize_ip(value) for value in attribution.destination_ips}
+    destination_ip = normalize_ip(eventdata.get("destinationIp"))
     if destination_ips and destination_ip not in destination_ips:
         return False
     if attribution.destination_ports:
@@ -829,83 +780,24 @@ def _matches_network(eventdata: dict[str, Any], attribution: Attribution) -> boo
 def _matches_dns(eventdata: dict[str, Any], attribution: Attribution) -> bool:
     query = str(eventdata.get("queryName", "")).strip(".").casefold()
     suffixes = [value.strip(".").casefold() for value in attribution.dns_suffixes]
-    suffix_matches = any(
-        query == suffix or query.endswith(f".{suffix}") for suffix in suffixes
-    )
+    suffix_matches = any(query == suffix or query.endswith(f".{suffix}") for suffix in suffixes)
     if not suffixes or not suffix_matches:
         return False
     process_names = _casefold_set(attribution.process_names)
     return not process_names or _basename(eventdata.get("image")) in process_names
 
 
-def _suricata_payload(event: dict[str, Any]) -> dict[str, Any] | None:
-    full_log = event.get("full_log")
-    if isinstance(full_log, str):
-        try:
-            payload = json.loads(full_log)
-        except json.JSONDecodeError:
-            return None
-        return payload if isinstance(payload, dict) else None
-    data = event.get("data")
-    if isinstance(data, dict) and "event_type" in data:
-        return data
-    return None
-
-
-def _suricata_dns_names(dns: object) -> list[str]:
-    if not isinstance(dns, dict):
-        return []
-
-    raw_names: list[object] = [dns.get("rrname")]
-    for field in ("queries", "query"):
-        records = dns.get(field)
-        if isinstance(records, dict):
-            records = [records]
-        if isinstance(records, list):
-            raw_names.extend(
-                record.get("rrname")
-                for record in records
-                if isinstance(record, dict)
-            )
-
-    legacy_answer = dns.get("answer")
-    if isinstance(legacy_answer, dict):
-        raw_names.append(legacy_answer.get("rrname"))
-
-    normalized = [
-        name.strip().strip(".").casefold()
-        for name in raw_names
-        if isinstance(name, str) and name.strip().strip(".")
-    ]
-    return list(dict.fromkeys(normalized))
-
-
-def _suricata_dns_is_response(dns: object) -> bool:
-    if not isinstance(dns, dict):
-        return False
-    message_type = str(dns.get("type", "")).casefold()
-    if message_type in {"answer", "response"}:
-        return True
-    legacy_answer = dns.get("answer")
-    return isinstance(legacy_answer, dict) and str(
-        legacy_answer.get("type", "")
-    ).casefold() in {"answer", "response"}
-
-
 def _matches_suricata(payload: dict[str, Any], attribution: Attribution) -> bool:
     event_type = payload.get("event_type")
     dns = payload.get("dns")
     dns_response = _suricata_dns_is_response(dns)
-    source_ips = _casefold_set(attribution.source_ips)
+    source_ips = {normalize_ip(value) for value in attribution.source_ips}
     source_field = "dest_ip" if dns_response else "src_ip"
-    if source_ips and str(payload.get(source_field, "")).casefold() not in source_ips:
+    if source_ips and normalize_ip(payload.get(source_field)) not in source_ips:
         return False
-    destination_ips = _casefold_set(attribution.destination_ips)
+    destination_ips = {normalize_ip(value) for value in attribution.destination_ips}
     destination_field = "src_ip" if dns_response else "dest_ip"
-    if (
-        destination_ips
-        and str(payload.get(destination_field, "")).casefold() not in destination_ips
-    ):
+    if destination_ips and normalize_ip(payload.get(destination_field)) not in destination_ips:
         return False
     if attribution.destination_ports:
         port_field = "src_port" if dns_response else "dest_port"
@@ -920,9 +812,7 @@ def _matches_suricata(payload: dict[str, Any], attribution: Attribution) -> bool
             return False
         queries = _suricata_dns_names(dns)
         suffixes = [
-            value.strip(".").casefold()
-            for value in attribution.dns_suffixes
-            if value.strip(".")
+            value.strip(".").casefold() for value in attribution.dns_suffixes if value.strip(".")
         ]
         if not any(
             query == suffix or query.endswith(f".{suffix}")
@@ -941,29 +831,6 @@ def _load_taxonomy(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _taxonomy_match(eventdata: dict[str, Any], taxonomy: dict[str, Any]) -> bool:
-    image = _basename(eventdata.get("image"))
-    command = str(eventdata.get("commandLine", "")).casefold()
-    for rule in taxonomy["rules"]:
-        if not isinstance(rule, dict):
-            continue
-        suffix = str(rule.get("image_suffix", "")).casefold()
-        terms = [str(item).casefold() for item in rule.get("command_contains_any", [])]
-        if suffix and image != _basename(suffix):
-            continue
-        if terms and not any(term in command for term in terms):
-            continue
-        if suffix or terms:
-            return True
-    return False
-
-
-def _process_guid(eventdata: dict[str, Any]) -> str:
-    return str(
-        eventdata.get("processGuid") or eventdata.get("ProcessGuid") or ""
-    ).strip().casefold()
-
-
 def _suricata_has_nonce(payload: dict[str, Any], nonce: str) -> bool:
     expected = nonce.casefold()
     if any(expected in name for name in _suricata_dns_names(payload.get("dns"))):
@@ -976,35 +843,6 @@ def _suricata_has_nonce(payload: dict[str, Any], nonce: str) -> bool:
     return False
 
 
-def _suricata_correlates(
-    payload: dict[str, Any],
-    timestamp: datetime,
-    observations: list[NetworkObservation],
-    maximum_delta_seconds: float,
-) -> bool:
-    dns_names = set(_suricata_dns_names(payload.get("dns")))
-    payload_ip = str(payload.get("dest_ip", "")).strip().casefold()
-    payload_port: int | None = None
-    with suppress(TypeError, ValueError):
-        payload_port = int(payload.get("dest_port"))
-    for observation in observations:
-        if abs((timestamp - observation.timestamp).total_seconds()) > maximum_delta_seconds:
-            continue
-        if observation.dns_query is not None:
-            if observation.dns_query.strip(".").casefold() in dns_names:
-                return True
-            continue
-        if observation.destination.strip().casefold() != payload_ip:
-            continue
-        if (
-            observation.destination_port is None
-            or payload_port is None
-            or observation.destination_port == payload_port
-        ):
-            return True
-    return False
-
-
 def periodicity_score(timestamps: list[datetime]) -> float:
     return interval_features(timestamps)[0]
 
@@ -1013,7 +851,7 @@ def _derive_account(
     events: list[dict[str, Any]], draft: RunDraft, windows_agent: str
 ) -> tuple[dict[str, float], list[dict[str, Any]], str | None]:
     users = _casefold_set(draft.attribution.account_names)
-    sources = _casefold_set(draft.attribution.source_ips)
+    sources = {normalize_ip(value) for value in draft.attribution.source_ips}
     selected: list[dict[str, Any]] = []
     observations: list[AccountObservation] = []
     observed_accounts: set[str] = set()
@@ -1035,9 +873,7 @@ def _derive_account(
         selected.append(event)
         observed_accounts.add(_account_user(eventdata))
         account = _account_user(eventdata)
-        logon_type = str(
-            eventdata.get("logonType", eventdata.get("LogonType", "unknown"))
-        ).strip()
+        logon_type = str(eventdata.get("logonType", eventdata.get("LogonType", "unknown"))).strip()
         observations.append(
             AccountObservation(
                 timestamp=timestamp,
@@ -1055,8 +891,7 @@ def _derive_account(
     success_after_fail = bool(features["success_after_fail"])
     gates = draft.quality_gates
     if failures < gates.min_account_failures or (
-        gates.max_account_failures is not None
-        and failures > gates.max_account_failures
+        gates.max_account_failures is not None and failures > gates.max_account_failures
     ):
         raise CollectionError(
             "account failure count failed quality gate: "
@@ -1064,8 +899,7 @@ def _derive_account(
             f"[{gates.min_account_failures}, {gates.max_account_failures}]"
         )
     if successes < gates.min_account_successes or (
-        gates.max_account_successes is not None
-        and successes > gates.max_account_successes
+        gates.max_account_successes is not None and successes > gates.max_account_successes
     ):
         raise CollectionError(
             "account success count failed quality gate: "
@@ -1101,9 +935,7 @@ def _derive_c2(
     nonce = str(draft.scenario_parameters["run_nonce"]).casefold()
     attributed_process_guids: set[str] = set()
     process_names = _casefold_set(draft.attribution.process_names)
-    command_terms = [
-        term.casefold() for term in draft.attribution.command_contains_any
-    ]
+    command_terms = [term.casefold() for term in draft.attribution.command_contains_any]
     for event in events:
         if str((event.get("agent") or {}).get("name")) != source.windows_agent_name:
             continue
@@ -1123,6 +955,8 @@ def _derive_c2(
             attributed_process_guids.add(guid)
             suspicious = suspicious or _taxonomy_match(eventdata, taxonomy)
 
+    if not attributed_process_guids:
+        raise CollectionError("no attributable process creation proves this C2 execution")
     for event in events:
         if str((event.get("agent") or {}).get("name")) != source.windows_agent_name:
             continue
@@ -1131,7 +965,7 @@ def _derive_c2(
         if (
             event_id == "3"
             and _matches_network(eventdata, draft.attribution)
-            and (not attributed_process_guids or guid in attributed_process_guids)
+            and guid in attributed_process_guids
         ):
             timestamp = _event_time(event)
             if timestamp is None:
@@ -1148,9 +982,8 @@ def _derive_c2(
         elif (
             event_id == "22"
             and _matches_dns(eventdata, draft.attribution)
-            and nonce
-            in str(eventdata.get("queryName", "")).strip(".").casefold()
-            and (not attributed_process_guids or guid in attributed_process_guids)
+            and nonce in str(eventdata.get("queryName", "")).strip(".").casefold()
+            and guid in attributed_process_guids
         ):
             timestamp = _event_time(event)
             if timestamp is None:
@@ -1158,17 +991,13 @@ def _derive_c2(
             windows.append(event)
             dns_events += 1
             query = str(eventdata.get("queryName", "")).strip(".")
-            network_observations.append(
-                NetworkObservation(timestamp, query, 53, dns_query=query)
-            )
+            network_observations.append(NetworkObservation(timestamp, query, 53, dns_query=query))
             suspicious = suspicious or _taxonomy_match(eventdata, taxonomy)
     if not network_observations:
         raise CollectionError("no attributable Sysmon network or DNS telemetry was collected")
 
     expected_action_count = draft.scenario_parameters.get("expected_action_count")
-    expected_intervals_text = draft.scenario_parameters.get(
-        "expected_intervals_seconds"
-    )
+    expected_intervals_text = draft.scenario_parameters.get("expected_intervals_seconds")
     if isinstance(expected_action_count, int):
         action_observations = (
             [item for item in network_observations if item.dns_query is not None]
@@ -1182,23 +1011,17 @@ def _derive_c2(
             )
         if isinstance(expected_intervals_text, str) and expected_intervals_text:
             try:
-                expected_intervals = [
-                    float(value) for value in expected_intervals_text.split(",")
-                ]
+                expected_intervals = [float(value) for value in expected_intervals_text.split(",")]
             except ValueError as exc:
                 raise CollectionError("invalid frozen interval contract") from exc
             observed_times = sorted(item.timestamp for item in action_observations)
             observed_intervals = [
                 (current - previous).total_seconds()
-                for previous, current in zip(
-                    observed_times, observed_times[1:], strict=False
-                )
+                for previous, current in zip(observed_times, observed_times[1:], strict=False)
             ]
             if len(observed_intervals) != len(expected_intervals) or any(
                 abs(observed - expected) > max(3.0, expected * 0.20)
-                for observed, expected in zip(
-                    observed_intervals, expected_intervals, strict=True
-                )
+                for observed, expected in zip(observed_intervals, expected_intervals, strict=True)
             ):
                 raise CollectionError(
                     "observed action timing does not match the frozen interval contract: "
@@ -1206,7 +1029,7 @@ def _derive_c2(
                 )
 
     nonce_flow_ids: set[str] = set()
-    maximum_delta = max(5.0, draft.clock_preflight.maximum_skew_seconds * 2)
+    maximum_delta = source.correlation_window_seconds
     for event in events:
         if str((event.get("agent") or {}).get("name")) != source.suricata_agent_name:
             continue
@@ -1216,9 +1039,7 @@ def _derive_c2(
             payload is None
             or timestamp is None
             or not _matches_suricata(payload, draft.attribution)
-            or not _suricata_correlates(
-                payload, timestamp, network_observations, maximum_delta
-            )
+            or not _suricata_correlates(payload, timestamp, network_observations, maximum_delta)
         ):
             continue
         if _suricata_has_nonce(payload, nonce):
@@ -1238,9 +1059,7 @@ def _derive_c2(
             payload is None
             or timestamp is None
             or not _matches_suricata(payload, draft.attribution)
-            or not _suricata_correlates(
-                payload, timestamp, network_observations, maximum_delta
-            )
+            or not _suricata_correlates(payload, timestamp, network_observations, maximum_delta)
         ):
             continue
         flow_id = str(payload.get("flow_id", "")).strip()
@@ -1279,16 +1098,12 @@ def _derive_c2(
                 f"{name} event count failed quality gate: "
                 f"observed={observed_counts[name]}, minimum={minimum}"
             )
-    missing_signatures = sorted(
-        set(gates.required_suricata_signature_ids) - signature_ids
-    )
+    missing_signatures = sorted(set(gates.required_suricata_signature_ids) - signature_ids)
     if missing_signatures:
         raise CollectionError(
             f"required Suricata signatures were not observed: {missing_signatures}"
         )
-    forbidden_signatures = sorted(
-        set(gates.forbidden_suricata_signature_ids) & signature_ids
-    )
+    forbidden_signatures = sorted(set(gates.forbidden_suricata_signature_ids) & signature_ids)
     if forbidden_signatures:
         raise CollectionError(
             f"forbidden Suricata signatures were observed: {forbidden_signatures}"
@@ -1333,6 +1148,106 @@ def _write_checksums(evidence_dir: Path) -> None:
     _atomic_text(evidence_dir / "checksums.sha256", "".join(rows))
 
 
+def _validate_raw_event_structure(event: dict[str, Any]) -> None:
+    for field in ("agent", "data"):
+        if event.get(field) is not None and not isinstance(event[field], dict):
+            raise CollectionError(f"raw event {field} must be an object")
+    data = event.get("data") or {}
+    win = data.get("win")
+    if win is not None:
+        if not isinstance(win, dict):
+            raise CollectionError("raw event data.win must be an object")
+        for field in ("system", "eventdata"):
+            if win.get(field) is not None and not isinstance(win[field], dict):
+                raise CollectionError(f"raw event data.win.{field} must be an object")
+    payload = _suricata_payload(event)
+    if payload is not None:
+        for field in ("alert", "flow", "dns", "http", "tls"):
+            if payload.get(field) is not None and not isinstance(payload[field], dict):
+                raise CollectionError(f"raw EVE {field} must be an object")
+
+
+def _read_evidence_rows(path: Path, *, required: bool = True) -> list[dict[str, Any]]:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise CollectionError(f"cannot read raw evidence {path.name}: {exc}") from exc
+    rows: list[dict[str, Any]] = []
+    for number, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise CollectionError(f"invalid raw evidence {path.name}:{number}") from exc
+        if not isinstance(row, dict) or not row:
+            raise CollectionError(f"raw evidence must contain event objects: {path.name}:{number}")
+        _validate_raw_event_structure(row)
+        rows.append(row)
+    if required and not rows:
+        raise CollectionError(f"missing non-empty raw evidence: {path.name}")
+    return rows
+
+
+def verify_feature_provenance(
+    evidence_dir: Path,
+    manifest: ScenarioManifest,
+    incident: IncidentRequest,
+    state: dict[str, Any],
+) -> None:
+    """Reproduce the finalized vector from its raw archives without live log access."""
+    try:
+        draft = RunDraft.model_validate(
+            json.loads((evidence_dir / "ground_truth.json").read_text(encoding="utf-8"))
+        )
+        source = SourceConfig.model_validate(state.get("source"))
+    except (OSError, ValueError, TypeError) as exc:
+        raise CollectionError(f"invalid feature provenance configuration: {exc}") from exc
+    if _payload_sha256(draft.model_dump(mode="json")) != manifest.provenance_sha256:
+        raise CollectionError("raw provenance draft digest does not match manifest")
+    tolerance = timedelta(seconds=draft.clock_preflight.maximum_skew_seconds)
+    events = _read_evidence_rows(evidence_dir / "wazuh_archives.jsonl")
+    receipt = state.get("execution_receipt")
+    if not isinstance(receipt, dict):
+        raise CollectionError("feature provenance requires a valid execution receipt")
+    _validate_action_window(receipt, draft, events=events)
+    for event in events:
+        timestamp = _event_time(event)
+        if timestamp is None or not (
+            manifest.start_time - tolerance <= timestamp <= manifest.end_time + tolerance
+        ):
+            raise CollectionError("raw event has no valid time inside the declared action window")
+    if manifest.family == "account":
+        features, windows, _ = _derive_account(events, draft, source.windows_agent_name)
+        suricata: list[dict[str, Any]] = []
+    else:
+        features, windows, suricata, _ = _derive_c2(
+            events,
+            draft,
+            source,
+            _load_taxonomy(evidence_dir / "suspicious-process-taxonomy.yaml"),
+        )
+    if features != incident.features:
+        changed = sorted(
+            name
+            for name in features.keys() | incident.features.keys()
+            if features.get(name) != incident.features.get(name)
+        )
+        raise CollectionError(f"raw evidence does not reproduce finalized features: {changed}")
+
+    def canonical(rows: list[dict[str, Any]]) -> list[str]:
+        return sorted(json.dumps(row, sort_keys=True, separators=(",", ":")) for row in rows)
+
+    saved_windows = _read_evidence_rows(evidence_dir / "windows_events.jsonl")
+    saved_suricata = _read_evidence_rows(
+        evidence_dir / "suricata_eve.jsonl", required=manifest.family == "c2"
+    )
+    if canonical(saved_windows) != canonical(windows):
+        raise CollectionError("Windows evidence differs from attributed archive events")
+    if canonical(saved_suricata) != canonical(suricata):
+        raise CollectionError("Suricata evidence differs from attributed archive events")
+
+
 def _verify_start_snapshot(
     evidence_dir: Path,
     state: dict[str, Any],
@@ -1345,9 +1260,8 @@ def _verify_start_snapshot(
         ground_truth = json.loads(ground_truth_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise CollectionError(f"invalid start snapshot ground_truth.json: {exc}") from exc
-    if (
-        ground_truth != state.get("draft")
-        or _payload_sha256(ground_truth) != state.get("draft_snapshot_sha256")
+    if ground_truth != state.get("draft") or _payload_sha256(ground_truth) != state.get(
+        "draft_snapshot_sha256"
     ):
         raise CollectionError("start snapshot ground_truth.json changed after run start")
     start_contract_path = evidence_dir / "start-contract.json"
@@ -1396,16 +1310,13 @@ def _verify_start_snapshot(
     if (
         not markers
         or markers[0] != state.get("start_marker")
-        or markers[0].get("start_contract_sha256")
-        != state.get("start_contract_sha256")
+        or markers[0].get("start_contract_sha256") != state.get("start_contract_sha256")
     ):
         raise CollectionError("START marker does not match immutable collection state")
     protected = {
         source_snapshot_path: start_contract.get("source_config_sha256"),
         taxonomy_snapshot_path: start_contract.get("taxonomy_sha256"),
-        evidence_dir / "feature-schema.json": start_contract.get(
-            "feature_schema_sha256"
-        ),
+        evidence_dir / "feature-schema.json": start_contract.get("feature_schema_sha256"),
     }
     if start_contract.get("scenario_catalog_sha256") is not None:
         protected[evidence_dir / "scenario-catalog.yaml"] = start_contract.get(
@@ -1437,11 +1348,98 @@ def _verify_start_snapshot(
         "scenario_catalog_sha256": start_contract.get("scenario_catalog_sha256"),
         "feature_schema_sha256": start_contract.get("feature_schema_sha256"),
     }
-    if _payload_sha256(contract_components) != start_contract.get(
-        "collection_contract_sha256"
-    ):
+    if _payload_sha256(contract_components) != start_contract.get("collection_contract_sha256"):
         raise CollectionError("immutable start contract components are inconsistent")
     return start_contract
+
+
+_AGGREGATION_WINDOW_SECONDS = 300
+_ACTION_MANUAL_RESERVE_SECONDS = 10.0
+_LOGGER = logging.getLogger(__name__)
+
+
+def _aggregation_window(at: datetime) -> tuple[datetime, datetime]:
+    seconds = math.floor(at.timestamp() / _AGGREGATION_WINDOW_SECONDS)
+    start = datetime.fromtimestamp(seconds * _AGGREGATION_WINDOW_SECONDS, UTC)
+    return start, start + timedelta(seconds=_AGGREGATION_WINDOW_SECONDS)
+
+
+def _reserved_action_seconds(draft: RunDraft) -> float:
+    """Budget frozen waits plus a bounded allowance for issuing/finishing actions."""
+    parameters = draft.scenario_parameters
+
+    def seconds(value: Any) -> float:
+        try:
+            result = float(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise CollectionError("frozen action schedule contains invalid seconds") from exc
+        if isinstance(value, bool) or not math.isfinite(result) or result < 0:
+            raise CollectionError("frozen action schedule requires finite nonnegative seconds")
+        return result
+
+    pre_delay = seconds(parameters.get("pre_action_delay_seconds", 0.0))
+    if draft.family == "account":
+        attempt_delay = seconds(parameters.get("attempt_delay_seconds", 0.0))
+        attempts = (
+            draft.quality_gates.min_account_failures + draft.quality_gates.min_account_successes
+        )
+        return max(
+            60.0,
+            pre_delay + max(5.0, attempt_delay) * attempts + 20.0 + _ACTION_MANUAL_RESERVE_SECONDS,
+        )
+    count = parameters.get("expected_action_count")
+    raw_intervals = parameters.get("expected_intervals_seconds")
+    if count is None and raw_intervals is None:
+        # Custom, unscheduled drafts still face the strict actual receipt deadline.
+        return max(60.0, pre_delay + _ACTION_MANUAL_RESERVE_SECONDS)
+    try:
+        count_value = seconds(count)
+        interval_values = (
+            [] if raw_intervals == "" else [seconds(item) for item in str(raw_intervals).split(",")]
+        )
+    except CollectionError as exc:
+        raise CollectionError(f"invalid frozen action schedule: {exc}") from exc
+    if (
+        count_value < 1
+        or not count_value.is_integer()
+        or len(interval_values) != int(count_value) - 1
+        or any(value <= 0 for value in interval_values)
+    ):
+        raise CollectionError("frozen action schedule count and positive intervals disagree")
+    return pre_delay + sum(interval_values) + _ACTION_MANUAL_RESERVE_SECONDS
+
+
+def _validate_action_window(
+    receipt: dict[str, Any],
+    draft: RunDraft,
+    *,
+    events: list[dict[str, Any]] | None = None,
+) -> tuple[datetime, datetime]:
+    """Require the action and every attributed source event to share a UTC bucket."""
+    started = _parse_time(receipt.get("action_started_at"))
+    if started is None:
+        raise CollectionError("aggregation window is missing its action start")
+    start, end = _aggregation_window(started)
+    deadline = end - timedelta(seconds=draft.clock_preflight.maximum_skew_seconds)
+    reservation = _reserved_action_seconds(draft)
+    if (
+        receipt.get("aggregation_window_start") != _iso(start)
+        or receipt.get("aggregation_window_end") != _iso(end)
+        or receipt.get("action_deadline") != _iso(deadline)
+        or receipt.get("reserved_action_seconds") != reservation
+        or started + timedelta(seconds=reservation) > deadline
+    ):
+        raise CollectionError("execution receipt has an invalid aggregation window contract")
+    ended_value = receipt.get("action_ended_at")
+    if ended_value is not None:
+        ended = _parse_time(ended_value)
+        if ended is None or not started < ended < deadline:
+            raise CollectionError("action exceeded its guarded aggregation window deadline")
+    for event in events or []:
+        timestamp = _event_time(event)
+        if timestamp is None or not start <= timestamp < end:
+            raise CollectionError("attributed telemetry crosses the action aggregation window")
+    return start, end
 
 
 def begin_action(
@@ -1449,6 +1447,7 @@ def begin_action(
     project_root: Path,
     *,
     now: datetime | None = None,
+    wait_for_window: bool = False,
 ) -> dict[str, Any]:
     project_root = project_root.resolve()
     evidence_dir = project_root / "evidence/scenario-runs" / run_id
@@ -1459,10 +1458,49 @@ def begin_action(
     if state.get("status") != "STARTED" or state.get("execution_receipt") is not None:
         raise CollectionError("action can begin only once for a STARTED run")
     _verify_start_snapshot(evidence_dir, state, project_root)
+    draft = RunDraft.model_validate(state["draft"])
+    reservation = _reserved_action_seconds(draft)
+    guard = draft.clock_preflight.maximum_skew_seconds
+    if reservation > _AGGREGATION_WINDOW_SECONDS - guard * 2:
+        raise CollectionError(
+            "frozen action schedule cannot fit one guarded aggregation window; "
+            "reduce the clock skew or choose a shorter approved timing contract"
+        )
+    if wait_for_window and now is not None:
+        raise CollectionError("wait-for-window requires the live collector clock")
     action_started_at = _utc(now)
     collection_started_at = _parse_time(state.get("started_at"))
     if collection_started_at is None or action_started_at < collection_started_at:
         raise CollectionError("action start cannot precede collection start")
+    while True:
+        bucket_start, bucket_end = _aggregation_window(action_started_at)
+        guarded_start = bucket_start + timedelta(seconds=guard)
+        deadline = bucket_end - timedelta(seconds=guard)
+        if wait_for_window and action_started_at < guarded_start:
+            ready_at = guarded_start
+        elif action_started_at + timedelta(seconds=reservation) > deadline:
+            if not wait_for_window:
+                raise CollectionError(
+                    "frozen action schedule exceeds the remaining aggregation window; "
+                    "retry begin-action with --wait-for-window before executing actions"
+                )
+            ready_at = bucket_end + timedelta(seconds=guard)
+        else:
+            break
+        delay = min(30.0, (ready_at - action_started_at).total_seconds())
+        _LOGGER.info(
+            "Waiting for aggregation window: earliest action start %s; reserved %.3fs",
+            _iso(ready_at),
+            reservation,
+        )
+        time.sleep(delay)
+        action_started_at = _utc(None)
+    # An operator may have aborted or quarantined the run while this call waited.
+    refreshed = json.loads(state_path.read_text(encoding="utf-8"))
+    if refreshed.get("status") != "STARTED" or refreshed.get("execution_receipt") is not None:
+        raise CollectionError("run state changed while waiting for its aggregation window")
+    _verify_start_snapshot(evidence_dir, refreshed, project_root)
+    state = refreshed
     receipt = {
         "version": "execution-receipt-v1",
         "status": "STARTED",
@@ -1472,7 +1510,12 @@ def begin_action(
         "frozen_parameters_sha256": state["frozen_parameters_sha256"],
         "action_started_at": _iso(action_started_at),
         "action_ended_at": None,
+        "aggregation_window_start": _iso(bucket_start),
+        "aggregation_window_end": _iso(bucket_end),
+        "action_deadline": _iso(deadline),
+        "reserved_action_seconds": reservation,
     }
+    _validate_action_window(receipt, draft)
     state["execution_receipt"] = receipt
     _write_json(state_path, state)
     _write_json(evidence_dir / "execution_receipt.json", receipt)
@@ -1511,6 +1554,7 @@ def complete_action(
         raise CollectionError("action end must be later than action start")
     receipt["status"] = "COMPLETED"
     receipt["action_ended_at"] = _iso(action_ended_at)
+    _validate_action_window(receipt, RunDraft.model_validate(state["draft"]))
     state["execution_receipt"] = receipt
     _write_json(state_path, state)
     _write_json(receipt_path, receipt)
@@ -1549,9 +1593,7 @@ def finalize_run(
         _write_json(state_path, state)
         _release_active_run(evidence_dir.parent, run_id)
         validate_run(run_id, project_root)
-        return json.loads(
-            (evidence_dir / "collection_metadata.json").read_text(encoding="utf-8")
-        )
+        return json.loads((evidence_dir / "collection_metadata.json").read_text(encoding="utf-8"))
     if state.get("status") != "STARTED":
         raise CollectionError(f"run is not in STARTED state: {run_id}")
     try:
@@ -1572,9 +1614,7 @@ def finalize_run(
         raise CollectionError(f"invalid execution receipt: {exc}") from exc
     if receipt_snapshot != receipt:
         raise CollectionError("execution receipt does not match immutable collection state")
-    if receipt.get("frozen_parameters_sha256") != state.get(
-        "frozen_parameters_sha256"
-    ):
+    if receipt.get("frozen_parameters_sha256") != state.get("frozen_parameters_sha256"):
         raise CollectionError("execution receipt references the wrong frozen parameters")
     collection_started_at = _parse_time(state["started_at"])
     started_at = _parse_time(receipt.get("action_started_at"))
@@ -1589,6 +1629,7 @@ def finalize_run(
         or finalized_at < ended_at
     ):
         raise CollectionError("execution receipt contains an invalid action window")
+    _validate_action_window(receipt, draft)
 
     events = _read_appended_jsonl(state["archive_cursor"])
     tolerance = timedelta(seconds=draft.clock_preflight.maximum_skew_seconds)
@@ -1597,8 +1638,7 @@ def finalize_run(
     in_window = [
         event
         for event in events
-        if (timestamp := _event_time(event)) is not None
-        and window_start <= timestamp <= window_end
+        if (timestamp := _event_time(event)) is not None and window_start <= timestamp <= window_end
     ]
     if not in_window:
         raise CollectionError("no timestamped events fall inside the run window")
@@ -1619,17 +1659,14 @@ def finalize_run(
             in_window, draft, source, taxonomy
         )
         selected_suricata = {
-            json.dumps(item, sort_keys=True, separators=(",", ":"))
-            for item in suricata_events
+            json.dumps(item, sort_keys=True, separators=(",", ":")) for item in suricata_events
         }
         suricata_wrappers = [
             event
             for event in in_window
-            if str((event.get("agent") or {}).get("name"))
-            == source.suricata_agent_name
+            if str((event.get("agent") or {}).get("name")) == source.suricata_agent_name
             and (payload := _suricata_payload(event)) is not None
-            and json.dumps(payload, sort_keys=True, separators=(",", ":"))
-            in selected_suricata
+            and json.dumps(payload, sort_keys=True, separators=(",", ":")) in selected_suricata
         ]
         scoped_archive_events = list(windows_events) + suricata_wrappers
         scoped_archive_events.sort(
@@ -1637,6 +1674,7 @@ def finalize_run(
         )
         evidence_sources = ["wazuh-archives", "suricata-eve"]
 
+    _validate_action_window(receipt, draft, events=scoped_archive_events)
     incident_id = f"INC-{hashlib.sha256(run_id.encode()).hexdigest()[:16].upper()}"
     incident = IncidentRequest(
         incident_id=incident_id,
@@ -1696,17 +1734,13 @@ def finalize_run(
     if draft.execution_log_path:
         execution_log_source = _resolve(project_root, draft.execution_log_path).resolve()
         if not execution_log_source.is_file():
-            raise CollectionError(
-                f"declared execution log does not exist: {execution_log_source}"
-            )
+            raise CollectionError(f"declared execution log does not exist: {execution_log_source}")
 
     if final_dir.exists():
         raise CollectionError(f"final output already exists: {final_dir}")
     if temporary_dir.exists():
         if not temporary_dir.is_dir():
-            raise CollectionError(
-                f"stale temporary output is not a directory: {temporary_dir}"
-            )
+            raise CollectionError(f"stale temporary output is not a directory: {temporary_dir}")
         shutil.rmtree(temporary_dir)
     temporary_dir.mkdir(parents=True)
     _write_json(temporary_dir / "scenario_manifest.json", manifest.model_dump(mode="json"))
@@ -1830,9 +1864,7 @@ def validate_run(run_id: str, project_root: Path) -> dict[str, Any]:
         "scenario_catalog_sha256": state.get("scenario_catalog_sha256"),
         "feature_schema_sha256": state.get("feature_schema_sha256"),
     }
-    if _payload_sha256(contract_components) != state.get(
-        "collection_contract_sha256"
-    ):
+    if _payload_sha256(contract_components) != state.get("collection_contract_sha256"):
         raise CollectionError("collection contract digest is inconsistent")
     receipt_path = evidence_dir / "execution_receipt.json"
     try:
@@ -1842,8 +1874,7 @@ def validate_run(run_id: str, project_root: Path) -> dict[str, Any]:
     if (
         receipt != state.get("execution_receipt")
         or receipt.get("status") != "COMPLETED"
-        or receipt.get("frozen_parameters_sha256")
-        != state.get("frozen_parameters_sha256")
+        or receipt.get("frozen_parameters_sha256") != state.get("frozen_parameters_sha256")
     ):
         raise CollectionError("execution receipt is incomplete or inconsistent")
     metadata_path = evidence_dir / "collection_metadata.json"
@@ -1852,17 +1883,13 @@ def validate_run(run_id: str, project_root: Path) -> dict[str, Any]:
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     if (
         metadata.get("execution_receipt_sha256") != _sha256(receipt_path)
-        or metadata.get("start_contract_sha256")
-        != state.get("start_contract_sha256")
-        or metadata.get("frozen_parameters_sha256")
-        != state.get("frozen_parameters_sha256")
+        or metadata.get("start_contract_sha256") != state.get("start_contract_sha256")
+        or metadata.get("frozen_parameters_sha256") != state.get("frozen_parameters_sha256")
     ):
         raise CollectionError("execution receipt metadata is inconsistent")
     markers = [
         json.loads(line)
-        for line in (evidence_dir / "run_markers.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()
+        for line in (evidence_dir / "run_markers.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
     if (
@@ -1928,9 +1955,7 @@ def validate_run(run_id: str, project_root: Path) -> dict[str, Any]:
         or draft.get("label") != manifest.label
         or draft.get("scenario_parameters") != manifest.scenario_parameters
     ):
-        raise CollectionError(
-            "frozen execution parameters do not match the finalized manifest"
-        )
+        raise CollectionError("frozen execution parameters do not match the finalized manifest")
     receipt_start = _parse_time(receipt.get("action_started_at"))
     receipt_end = _parse_time(receipt.get("action_ended_at"))
     if (
@@ -1948,15 +1973,13 @@ def validate_run(run_id: str, project_root: Path) -> dict[str, Any]:
         suricata_path = evidence_dir / "suricata_eve.jsonl"
         if not suricata_path.is_file() or not suricata_path.read_text(encoding="utf-8").strip():
             raise CollectionError("C2 run is missing attributable Suricata evidence")
+    verify_feature_provenance(evidence_dir, manifest, incident, state)
     return {"status": "VALID", "run_id": run_id, "family": manifest.family, "label": manifest.label}
 
 
 def run_status(run_id: str, project_root: Path) -> dict[str, Any]:
     state_path = (
-        project_root.resolve()
-        / "evidence/scenario-runs"
-        / run_id
-        / ".collection_state.json"
+        project_root.resolve() / "evidence/scenario-runs" / run_id / ".collection_state.json"
     )
     if not state_path.is_file():
         raise CollectionError(f"unknown run_id: {run_id}")

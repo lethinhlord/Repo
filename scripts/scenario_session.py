@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 from pathlib import Path
 
 from ml.scenario_collection import (
@@ -24,13 +25,17 @@ def parser() -> argparse.ArgumentParser:
 
     start = subcommands.add_parser("start")
     start.add_argument("--draft", type=Path, required=True)
-    start.add_argument(
-        "--source-config", type=Path, default=Path("config/collection-sources.yaml")
-    )
+    start.add_argument("--source-config", type=Path, default=Path("config/collection-sources.yaml"))
 
     for name in ("begin-action", "complete-action", "finalize", "validate", "status"):
         command = subcommands.add_parser(name)
         command.add_argument("--run-id", required=True)
+        if name == "begin-action":
+            command.add_argument(
+                "--wait-for-window",
+                action="store_true",
+                help="wait for a UTC 5-minute bucket that fits the frozen action schedule",
+            )
 
     abort = subcommands.add_parser("abort")
     abort.add_argument("--run-id", required=True)
@@ -48,7 +53,9 @@ def main() -> int:
         if args.command == "start":
             payload = start_run(args.draft, args.source_config, root)
         elif args.command == "begin-action":
-            payload = begin_action(args.run_id, root)
+            if args.wait_for_window:
+                logging.basicConfig(level=logging.INFO, format="%(message)s")
+            payload = begin_action(args.run_id, root, wait_for_window=args.wait_for_window)
         elif args.command == "complete-action":
             payload = complete_action(args.run_id, root)
         elif args.command == "finalize":

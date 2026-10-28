@@ -103,18 +103,20 @@ Open `http://192.168.149.128:5678` inside the Ubuntu browser and select
 1. Wazuh Alert Webhook v2
 2. Verify Signed Ingress
 3. Ingress Verified?
-4. Extract Incident Features (stateful)
-5. Call AI Model
-6. Lookup Threat Intelligence
-7. Load Asset Context
-8. Evaluate Risk
-9. Enforce Shadow Gate
-10. Decision Ready?
-11. Build SHADOW or review decision
-12. Persist Incident And Queue
-13. Dispatch Notification
-14. Finalize Response
-15. Respond to Webhook
+4. Find Persisted Outcome; a duplicate bypasses feature/model/TI calls
+5. Outcome Missing?; only HTTP 404 enters fresh processing, other failures stop
+6. Extract Incident Features (stateful)
+7. Call AI Model
+8. Lookup Threat Intelligence
+9. Load Asset Context
+10. Evaluate Risk
+11. Enforce Shadow Gate
+12. Decision Ready?
+13. Build SHADOW or review decision
+14. Persist Incident And Queue
+15. Select Recorded Outcome → Dispatch Notification (exact notification revision)
+16. Finalize Response
+17. Respond to Webhook
 
 Checkpoint W2-05: capture the complete VMware screen with the entire workflow.
 No isolation, IP blocking, process termination or account-disabling node may
@@ -144,8 +146,26 @@ The response must be `shadow_notified` or `review_notified`, `SHADOW`,
 `SENT`/`ALREADY_SENT` notification receipt. A delivery failure returns
 `notification_pending` and leaves the outbox retryable.
 An interrupted dispatch remains leased for `NOTIFICATION_LEASE_SECONDS` (300 seconds
-by default), then becomes retryable with the same incident `Idempotency-Key`; webhook
-receivers must deduplicate that key because delivery is at-least-once.
+by default), then becomes retryable with the same revision's `Idempotency-Key`; webhook
+receivers must deduplicate that key because delivery is at-least-once. Meaningful
+decision changes create a new notification revision and key while preserving the
+incident ID. A queued older revision becomes `SUPERSEDED`. Retrying it returns
+`decision_superseded` with `superseded_by_revision`, without claiming stale delivery.
+
+After signature verification the workflow checks the durable event outcome before
+calling features, ML or TI. Retries must keep exactly the same event ID and payload,
+and use a new signing nonce. An accepted replay returns the original route, timestamp
+and `notification_revision`; a raw-content conflict returns HTTP 409. Lookup failures
+return 503 instead of recomputing a possibly different decision.
+
+Online windows are fixed UTC intervals `[floor(timestamp/300)*300, +300)`. Raw Sysmon
+and EVE timestamps are used. Event membership and cached replay responses survive
+restart. At the first upgrade to this window implementation, retain the state volume
+and drain a complete five-minute bucket before collecting new acceptance evidence;
+legacy uncached feature rows do not enter new buckets. Keep each collection action
+within its declared bucket using the collection runbook's deadline checks. Replay
+parity compares the same selected raw set; cumulative early snapshots need not equal
+the completed run vector until all relevant events have arrived.
 An invalid/expired/replayed signature is HTTP 401 and is never processed. A
 structurally invalid signed payload is also rejected before feature extraction.
 missing service, partial feature, ineligible model, malicious/unknown TI,

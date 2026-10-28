@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import platform
+import re
 import shutil
 import subprocess
 from datetime import UTC, datetime
@@ -17,10 +19,17 @@ from sklearn.base import clone
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.model_selection import StratifiedGroupKFold, cross_val_predict
 
-from ml.dataset import load_config, load_feature_schema, write_json
+from ml.dataset import (
+    DatasetRecord,
+    load_config,
+    load_feature_schema,
+    validate_feature_contract,
+    write_json,
+)
 from ml.metrics import (
     classification_metrics,
     grouped_bootstrap_intervals,
+    grouped_uncertainty_status,
     measure_latency_ms,
     reliability_curve,
     select_threshold,
@@ -28,10 +37,87 @@ from ml.metrics import (
 from ml.models import build_candidates
 
 
-def _read_partition(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        raise FileNotFoundError(f"partition does not exist: {path}")
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+def _is_sha256(value: Any) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+def verify_training_partitions(
+    processed_dir: Path,
+    schema_path: Path,
+    *,
+    require_collection_audit: bool = True,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    """Validate the builder's contract without reading the locked-test partition."""
+    manifest = json.loads((processed_dir / "dataset_manifest.json").read_text(encoding="utf-8"))
+    schema_bytes = schema_path.read_bytes()
+    schema = json.loads(schema_bytes)
+    if not isinstance(manifest, dict) or not isinstance(schema, dict):
+        raise ValueError("dataset manifest and feature schema must be mappings")
+    if (
+        manifest.get("manifest_version") != "dataset-manifest-v2"
+        or manifest.get("group_key") != "scenario_id"
+        or manifest.get("locked_test_status") != "UNOPENED"
+        or manifest.get("feature_schema_version") != schema.get("version")
+        or manifest.get("feature_schema_sha256") != hashlib.sha256(schema_bytes).hexdigest()
+        or not _is_sha256(manifest.get("dataset_hash_sha256"))
+        or not _is_sha256(manifest.get("locked_test_sha256"))
+    ):
+        raise ValueError(
+            "dataset manifest integrity/schema contract is invalid; rebuild partitions"
+        )
+    provenance = manifest.get("provenance")
+    if not isinstance(provenance, dict) or not _is_sha256(
+        provenance.get("builder_config_sha256")
+    ) or not provenance.get("builder_git_commit"):
+        raise ValueError("dataset builder provenance is missing or invalid")
+    collection = manifest.get("collection_audit", {})
+    if require_collection_audit and (
+        not isinstance(collection, dict)
+        or collection.get("status") not in {"READY", "TARGET_MET"}
+        or not _is_sha256(collection.get("report_sha256"))
+        or provenance.get("collection_mode") != "REAL_LAB"
+        or not _is_sha256(provenance.get("collection_contract_sha256"))
+        or collection.get("collection_contract_sha256")
+        != provenance.get("collection_contract_sha256")
+    ):
+        raise ValueError("dataset collection audit provenance is missing or not ready")
+    verified: dict[str, list[dict[str, Any]]] = {}
+    partitions = manifest.get("partitions")
+    record_counts = manifest.get("record_counts")
+    if not isinstance(partitions, dict) or not isinstance(record_counts, dict):
+        raise ValueError("partition integrity contract is missing")
+    locked_contract = partitions.get("locked_test")
+    if not isinstance(locked_contract, dict) or locked_contract.get("sha256") != manifest.get(
+        "locked_test_sha256"
+    ):
+        raise ValueError("locked-test commitment is inconsistent; do not open the test")
+    for name in ("train", "validation"):
+        contract = partitions.get(name)
+        payload = (processed_dir / f"{name}.jsonl").read_bytes()
+        if not isinstance(contract, dict) or hashlib.sha256(payload).hexdigest() != contract.get(
+            "sha256"
+        ):
+            raise ValueError(f"{name} partition integrity check failed")
+        rows = [json.loads(line) for line in payload.decode("utf-8").splitlines() if line.strip()]
+        if not rows or len(rows) != contract.get("record_count") or len(rows) != record_counts.get(
+            name
+        ):
+            raise ValueError(f"{name} partition record count integrity check failed")
+        try:
+            records = [DatasetRecord(**row) for row in rows]
+            if any(
+                record.family not in schema["x-family-features"]
+                or type(record.label) is not int
+                or record.label not in {0, 1}
+                or any(not math.isfinite(float(value)) for value in record.features.values())
+                for record in records
+            ):
+                raise ValueError("invalid family/label/non-finite feature")
+            validate_feature_contract(records, schema)
+        except (TypeError, KeyError, ValueError) as exc:
+            raise ValueError(f"{name} partition feature contract is invalid: {exc}") from exc
+        verified[name] = rows
+    return verified["train"], verified["validation"], manifest
 
 
 def _partition_hash(rows: list[dict[str, Any]]) -> set[str]:
@@ -199,8 +285,11 @@ def train(config_path: Path) -> dict[str, Any]:
     package_dir = Path(config["package_dir"])
     if (package_dir / "FROZEN.json").exists():
         raise PermissionError("refusing to overwrite a frozen model package")
-    train_rows = _read_partition(processed_dir / "train.jsonl")
-    validation_rows = _read_partition(processed_dir / "validation.jsonl")
+    train_rows, validation_rows, manifest = verify_training_partitions(
+        processed_dir,
+        Path(config["feature_schema"]),
+        require_collection_audit=bool(config["data"].get("require_collection_audit", True)),
+    )
     audit = leakage_audit(train_rows, validation_rows)
     if not audit["passed"]:
         raise ValueError(f"leakage audit failed: {audit['checks']}")
@@ -298,6 +387,7 @@ def train(config_path: Path) -> dict[str, Any]:
             confidence=float(config["selection"]["bootstrap_confidence"]),
             random_seed=int(config["random_seed"]),
         )
+        metrics["uncertainty"] = grouped_uncertainty_status(y_validation, validation_groups)
         metrics["latency"] = measure_latency_ms(
             lambda estimator=calibrated, matrix=x_validation: estimator.predict_proba(matrix)[
                 :, 1
@@ -315,6 +405,8 @@ def train(config_path: Path) -> dict[str, Any]:
             float(selected_threshold["threshold"]) - float(inner_threshold["threshold"])
         )
         gate_failures = []
+        if metrics["uncertainty"]["status"] != "ESTIMATED":
+            gate_failures.append("insufficient_validation_groups")
         if metrics["brier"] > float(config["selection"]["maximum_brier"]):
             gate_failures.append("maximum_brier_exceeded")
         if metrics["ece"] > float(config["selection"]["maximum_ece"]):
@@ -325,6 +417,7 @@ def train(config_path: Path) -> dict[str, Any]:
             selected_threshold["automation_eligible"] = False
             selected_threshold["selection_reason"] = "calibration_or_stability_gate_failed"
         selected_threshold["gate_failures"] = gate_failures
+        selected_threshold["uncertainty_status"] = metrics["uncertainty"]["status"]
         selected_threshold["inner_cv_threshold"] = inner_threshold["threshold"]
         selected_threshold["threshold_delta"] = threshold_delta
         family_results[selected_name]["validation"] = metrics
@@ -356,13 +449,19 @@ def train(config_path: Path) -> dict[str, Any]:
             "gate_failures": gate_failures,
         }
 
-    manifest = json.loads((processed_dir / "dataset_manifest.json").read_text(encoding="utf-8"))
     trained_at = datetime.now(UTC)
     metadata = {
         "model_version": f"week3-{trained_at.strftime('%Y%m%dT%H%M%SZ')}",
         "feature_schema_version": schema["version"],
         "training_timestamp_utc": trained_at.isoformat(),
         "dataset_hash_sha256": manifest["dataset_hash_sha256"],
+        "dataset_provenance": manifest["provenance"],
+        "training_partition_sha256": {
+            name: manifest["partitions"][name]["sha256"] for name in ("train", "validation")
+        },
+        "dataset_manifest_payload_sha256": hashlib.sha256(
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
         "training_config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
         "random_seed": int(config["random_seed"]),
         "git_commit": _git_commit(),

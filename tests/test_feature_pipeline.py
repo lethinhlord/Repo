@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,419 @@ from ml.feature_pipeline import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def raw_c2_alert(alert_id: str, event_id: int, data: dict, seconds: int) -> WazuhAlert:
+    timestamp = f"2026-10-27T00:00:{seconds:02d}Z"
+    return WazuhAlert.model_validate(
+        {
+            "id": alert_id,
+            "timestamp": timestamp,
+            "rule": {"id": "61600", "level": 5},
+            "agent": {"name": "WIN11-TARGET", "id": "001"},
+            "data": {
+                "win": {
+                    "system": {"eventID": str(event_id), "systemTime": timestamp},
+                    "eventdata": data,
+                }
+            },
+        }
+    )
+
+
+def test_raw_c2_uses_canonical_taxonomy_and_correlates_only_outbound_process() -> None:
+    alerts = [
+        raw_c2_alert(
+            "PROCESS",
+            1,
+            {
+                "image": "curl.exe",
+                "processGuid": "guid-one",
+                "commandLine": "curl.exe http://10.40.0.10:8081/beacon",
+            },
+            0,
+        ),
+        raw_c2_alert(
+            "NETWORK",
+            3,
+            {
+                "image": "curl.exe",
+                "processGuid": "guid-one",
+                "initiated": "true",
+                "sourceIp": "10.20.0.10",
+                "destinationIp": "10.40.0.10",
+                "destinationPort": "8081",
+            },
+            1,
+        ),
+        raw_c2_alert(
+            "INBOUND",
+            3,
+            {
+                "image": "curl.exe",
+                "processGuid": "guid-one",
+                "initiated": "false",
+                "sourceIp": "10.20.0.10",
+                "destinationIp": "10.40.0.10",
+                "destinationPort": "8081",
+            },
+            2,
+        ),
+        raw_c2_alert(
+            "WRONG-PROCESS",
+            3,
+            {
+                "image": "other.exe",
+                "processGuid": "unproven",
+                "initiated": "true",
+                "sourceIp": "10.20.0.10",
+                "destinationIp": "10.40.0.10",
+                "destinationPort": "8081",
+            },
+            3,
+        ),
+        raw_c2_alert(
+            "INVALID-DESTINATION",
+            3,
+            {
+                "image": "curl.exe",
+                "processGuid": "guid-one",
+                "initiated": "true",
+                "sourceIp": "10.20.0.10",
+                "destinationIp": "not-an-ip",
+                "destinationPort": "8081",
+            },
+            4,
+        ),
+    ]
+    result = aggregate_wazuh_alerts(alerts).incidents[0]
+    assert result.incident.features["suspicious_process"] == 1.0
+    assert result.incident.features["outbound_connection_count"] == 1.0
+    assert result.quality_status == "PARTIAL"
+
+
+def test_mapped_ipv6_and_source_event_time_have_same_account_semantics() -> None:
+    def account(i: str, success: bool, source: str, event_seconds: int) -> WazuhAlert:
+        timestamp = f"2026-10-27T00:00:{event_seconds:02d}Z"
+        return WazuhAlert.model_validate(
+            {
+                "id": i,
+                "timestamp": "2026-10-27T00:02:00Z",
+                "rule": {"id": "60100", "level": 5},
+                "agent": {"name": "WIN11-TARGET"},
+                "data": {
+                    "win": {
+                        "system": {
+                            "eventID": "4624" if success else "4625",
+                            "systemTime": timestamp,
+                        },
+                        "eventdata": {
+                            "targetUserName": "labuser",
+                            "ipAddress": source,
+                            "logonType": "3",
+                        },
+                    }
+                },
+            }
+        )
+
+    batch = aggregate_wazuh_alerts(
+        [
+            account("FAILURE", False, "::ffff:10.40.0.10", 0),
+            account("SUCCESS", True, "10.40.0.10", 10),
+        ]
+    )
+    assert len(batch.incidents) == 1
+    incident = batch.incidents[0].incident
+    assert incident.features["success_after_fail"] == 1.0
+    assert incident.features["unique_source_count"] == 1.0
+    assert incident.start_time == datetime(2026, 10, 27, tzinfo=UTC)
+    assert incident.end_time.second == 10
+
+
+def test_unrelated_suricata_does_not_make_c2_complete() -> None:
+    network = raw_c2_alert(
+        "NET-ONLY",
+        3,
+        {
+            "image": "curl.exe",
+            "processGuid": "unproven",
+            "initiated": "true",
+            "sourceIp": "10.20.0.10",
+            "destinationIp": "10.40.0.10",
+            "destinationPort": "8081",
+        },
+        1,
+    )
+    eve = WazuhAlert.model_validate(
+        {
+            "id": "EVE-UNRELATED",
+            "timestamp": "2026-10-27T00:00:01Z",
+            "rule": {"id": "86601", "level": 5},
+            "agent": {"name": "NET-SENSOR"},
+            "full_log": json.dumps(
+                {
+                    "event_type": "alert",
+                    "timestamp": "2026-10-27T00:00:01Z",
+                    "src_ip": "10.20.0.99",
+                    "dest_ip": "198.51.100.8",
+                    "dest_port": 80,
+                    "alert": {"signature_id": 1, "severity": 1},
+                }
+            ),
+        }
+    )
+    result = aggregate_wazuh_alerts([network, eve]).incidents[0]
+    assert result.quality_status == "PARTIAL"
+    assert result.incident.features["outbound_connection_count"] == 0.0
+    assert result.incident.features["suricata_alert_count"] == 0.0
+
+
+def test_fixed_windows_do_not_reassign_events_when_earliest_event_expires() -> None:
+    first = load_fixture("wazuh-alert-account.json")
+    second = load_fixture("wazuh-alert-account.json")
+    first.update(id="BUCKET-1", timestamp="2026-10-27T00:04:50Z")
+    second.update(id="BUCKET-2", timestamp="2026-10-27T00:05:10Z")
+    batch = aggregate_wazuh_alerts(
+        [WazuhAlert.model_validate(first), WazuhAlert.model_validate(second)]
+    )
+    assert len(batch.incidents) == 2
+
+
+def test_data_only_eve_is_preserved_at_wazuh_boundary_and_correlated() -> None:
+    process = raw_c2_alert(
+        "DATA-PROCESS",
+        1,
+        {
+            "image": "curl.exe",
+            "processGuid": "g1",
+            "commandLine": "curl.exe http://10.40.0.10:8081/beacon",
+        },
+        0,
+    )
+    network = raw_c2_alert(
+        "DATA-NETWORK",
+        3,
+        {
+            "image": "curl.exe",
+            "processGuid": "g1",
+            "initiated": "true",
+            "sourceIp": "10.20.0.10",
+            "destinationIp": "10.40.0.10",
+            "destinationPort": "8081",
+        },
+        1,
+    )
+    eve = WazuhAlert.model_validate(
+        {
+            "id": "DATA-EVE",
+            "timestamp": "2026-10-27T00:02:00Z",
+            "rule": {"id": "86601", "level": 5},
+            "agent": {"name": "NET-SENSOR"},
+            "data": {
+                "event_type": "alert",
+                "timestamp": "2026-10-27T00:00:01Z",
+                "src_ip": "10.20.0.10",
+                "dest_ip": "10.40.0.10",
+                "dest_port": 8081,
+                "alert": {"signature_id": 900001, "severity": 3},
+            },
+        }
+    )
+    result = aggregate_wazuh_alerts([process, network, eve]).incidents[0]
+    assert result.quality_status == "COMPLETE"
+    assert result.incident.features["suricata_alert_count"] == 1.0
+    assert result.incident.end_time.second == 1
+
+
+def test_dns_requires_process_and_client_correlated_eve(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "ml.feature_pipeline._collection_config",
+        lambda: {
+            "windows_agent_name": "WIN11-TARGET",
+            "suricata_agent_name": "NET-SENSOR",
+            "taxonomy_path": "config/suspicious-process-taxonomy.yaml",
+            "windows_source_ips": ["10.20.0.10"],
+        },
+    )
+    process = raw_c2_alert(
+        "DNS-PROCESS",
+        1,
+        {
+            "image": "powershell.exe",
+            "processGuid": "dns-guid",
+            "commandLine": "powershell.exe Resolve-DnsName auditnonce1.beacon.datn.test",
+        },
+        0,
+    )
+    query = raw_c2_alert(
+        "DNS-QUERY",
+        22,
+        {
+            "image": "powershell.exe",
+            "processGuid": "dns-guid",
+            "queryName": "auditnonce1.beacon.datn.test",
+        },
+        1,
+    )
+    payload = {
+        "event_type": "dns",
+        "timestamp": "2026-10-27T00:00:01Z",
+        "src_ip": "10.40.0.10",
+        "dest_ip": "10.20.0.10",
+        "src_port": 53,
+        "dns": {"type": "answer", "queries": [{"rrname": "auditnonce1.beacon.datn.test"}]},
+    }
+    envelope = {
+        "id": "DNS-ANSWER",
+        "timestamp": "2026-10-27T00:00:03Z",
+        "rule": {"id": "86601", "level": 3},
+        "agent": {"name": "NET-SENSOR"},
+    }
+    eve = WazuhAlert.model_validate({**envelope, "full_log": json.dumps(payload)})
+    result = aggregate_wazuh_alerts([process, query, eve]).incidents[0]
+    assert result.quality_status == "COMPLETE"
+    assert result.incident.features["dns_query_count"] == 1.0
+    assert result.incident.features["suspicious_process"] == 1.0
+
+    wrong_client = WazuhAlert.model_validate(
+        {**envelope, "full_log": json.dumps({**payload, "dest_ip": "10.20.0.99"})}
+    )
+    unrelated = aggregate_wazuh_alerts([process, query, wrong_client]).incidents[0]
+    assert unrelated.quality_status == "PARTIAL"
+    assert "suricata_alert_count" in unrelated.missing_required_features
+    missing_process = aggregate_wazuh_alerts([query, eve]).incidents[0]
+    assert missing_process.quality_status == "PARTIAL"
+    assert missing_process.incident.features["dns_query_count"] == 0.0
+
+
+@pytest.mark.parametrize("dns", [False, True])
+@pytest.mark.parametrize("mapped_ip", [False, True])
+@pytest.mark.parametrize("eve_second", [1, 16])
+def test_offline_and_online_derive_the_same_c2_vector_for_same_raw_window(
+    dns: bool, mapped_ip: bool, eve_second: int,
+) -> None:
+    import yaml
+
+    from ml.scenario_collection import CollectionError, RunDraft, SourceConfig, _derive_c2
+
+    nonce = "testnonce001"
+    query = f"{nonce}.beacon.datn.test"
+    command = (
+        f"powershell.exe Resolve-DnsName {query}"
+        if dns
+        else f"curl.exe http://10.40.0.10:8081/beacon?run={nonce}"
+    )
+    image = "powershell.exe" if dns else "curl.exe"
+    process = raw_c2_alert(
+        "PARITY-PROCESS",
+        1,
+        {
+            "image": image,
+            "processGuid": "parity-guid",
+            "commandLine": command,
+        },
+        0,
+    )
+    details = {"image": image, "processGuid": "parity-guid"}
+    details.update(
+        {"queryName": query}
+        if dns
+        else {
+            "initiated": "true",
+            "sourceIp": "::ffff:10.20.0.10" if mapped_ip else "10.20.0.10",
+            "destinationIp": "::ffff:10.40.0.10" if mapped_ip else "10.40.0.10",
+            "destinationPort": "8081",
+        }
+    )
+    network = raw_c2_alert("PARITY-NETWORK", 22 if dns else 3, details, 1)
+    eve_data = {
+        "event_type": "alert",
+        "timestamp": f"2026-10-27T00:00:{eve_second:02d}Z",
+        "src_ip": "::ffff:10.20.0.10" if mapped_ip else "10.20.0.10",
+        "dest_ip": "::ffff:10.40.0.10" if mapped_ip else "10.40.0.10",
+        "dest_port": 53 if dns else 8081,
+        "flow_id": 123,
+        "alert": {"signature_id": 900002 if dns else 900001, "severity": 3},
+    }
+    if dns:
+        eve_data["dns"] = {"type": "query", "queries": [{"rrname": query}]}
+    else:
+        eve_data["http"] = {"url": f"/beacon?run={nonce}"}
+    eve = WazuhAlert.model_validate(
+        {
+            "id": "PARITY-EVE",
+            "timestamp": "2026-10-27T00:02:00Z",
+            "rule": {"id": "86601", "level": 5},
+            "agent": {"name": "NET-SENSOR"},
+            "data": eve_data,
+        }
+    )
+    clock = {
+        name: "2026-10-27T00:00:00Z"
+        for name in (
+            "captured_at",
+            "controller_utc",
+            "target_utc",
+            "wazuh_utc",
+            "sensor_utc",
+            "attacker_utc",
+        )
+    }
+    clock["maximum_skew_seconds"] = 10
+    attribution = {
+        "process_names": [image],
+        "source_ips": ["10.20.0.10"],
+        "command_contains_any": ["beacon.datn.test" if dns else "/beacon"],
+    }
+    attribution.update(
+        {"dns_suffixes": ["beacon.datn.test"]}
+        if dns
+        else {"destination_ips": ["10.40.0.10"], "destination_ports": [8081]}
+    )
+    draft = RunDraft.model_validate(
+        {
+            "scenario_id": "PARITY",
+            "run_id": "PARITY-1",
+            "family": "c2",
+            "label": "malicious",
+            "host": "WIN11-TARGET",
+            "expected_behavior": "Controlled raw telemetry parity check.",
+            "operator": "test",
+            "attribution": attribution,
+            "quality_gates": {
+                "min_process_events": 1,
+                "min_dns_events" if dns else "min_network_events": 1,
+                "min_suricata_events": 1,
+            },
+            "collection_seed": 42,
+            "scenario_parameters": {
+                "run_nonce": nonce,
+                "expected_action_count": 1,
+                "expected_intervals_seconds": "",
+            },
+            "expected_observables": ["correlated process, network and EVE"],
+            "clock_preflight": clock,
+        }
+    )
+    source = SourceConfig.model_validate(
+        yaml.safe_load((ROOT / "config/collection-sources.yaml").read_text(encoding="utf-8"))
+    )
+    taxonomy = yaml.safe_load((ROOT / "config/suspicious-process-taxonomy.yaml").read_text())
+    alerts = [process, network, eve]
+    if eve_second == 16:
+        with pytest.raises(CollectionError, match="Suricata"):
+            _derive_c2(
+                [alert.model_dump(mode="json") for alert in alerts], draft, source, taxonomy
+            )
+        assert aggregate_wazuh_alerts(alerts).incidents[0].quality_status == "PARTIAL"
+        return
+    offline = _derive_c2(
+        [alert.model_dump(mode="json") for alert in alerts], draft, source, taxonomy
+    )[0]
+    online = aggregate_wazuh_alerts(alerts).incidents[0]
+    assert online.quality_status == "COMPLETE"
+    assert online.incident.features == offline
 
 
 def load_fixture(name: str) -> dict:
@@ -178,7 +592,7 @@ def test_raw_account_events_are_correlated_before_deriving_features() -> None:
                 "decoder": {"name": "windows_eventchannel"},
                 "data": {
                     "win": {
-                        "system": {"eventID": str(event_id)},
+                        "system": {"eventID": str(event_id), "systemTime": timestamp},
                         "eventdata": {
                             "targetUserName": "labuser",
                             "ipAddress": "10.40.0.10",
@@ -219,7 +633,7 @@ def test_password_spray_accounts_from_one_source_share_behavior_window() -> None
                 "decoder": {"name": "windows_eventchannel"},
                 "data": {
                     "win": {
-                        "system": {"eventID": "4625"},
+                        "system": {"eventID": "4625", "systemTime": timestamp},
                         "eventdata": {
                             "targetUserName": account,
                             "ipAddress": "10.40.0.10",
@@ -257,7 +671,7 @@ def test_account_events_from_different_sources_remain_separate() -> None:
             "decoder": {"name": "windows_eventchannel"},
             "data": {
                 "win": {
-                    "system": {"eventID": "4625"},
+                    "system": {"eventID": "4625", "systemTime": f"2026-10-05T12:00:0{index}Z"},
                     "eventdata": {
                         "targetUserName": "labuser",
                         "ipAddress": source,
@@ -287,7 +701,7 @@ def test_windows_logon_type_is_classified_by_remote_semantics(
         "decoder": {"name": "windows_eventchannel"},
         "data": {
             "win": {
-                "system": {"eventID": "4624"},
+                "system": {"eventID": "4624", "systemTime": "2026-10-05T12:00:00Z"},
                 "eventdata": {
                     "targetUserName": "labuser",
                     "ipAddress": "10.40.0.10",

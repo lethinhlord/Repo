@@ -70,3 +70,17 @@ def test_reliability_curve_accounts_for_every_probability() -> None:
 
     assert sum(row["count"] for row in curve) == 4
     assert curve[-1]["upper"] == 1.0
+
+
+def test_two_validation_scenarios_do_not_claim_point_confidence_intervals() -> None:
+    intervals = grouped_bootstrap_intervals(
+        np.asarray([0, 0, 1, 1]),
+        np.asarray([0.1, 0.6, 0.4, 0.9]),
+        np.asarray(["benign", "benign", "malicious", "malicious"]),
+        0.5,
+        iterations=50,
+        confidence=0.95,
+        random_seed=42,
+    )
+
+    assert all(value == {"low": None, "high": None} for value in intervals.values())

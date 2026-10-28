@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import subprocess
 from collections import Counter
 from pathlib import Path
 
@@ -21,6 +22,13 @@ from ml.dataset_audit import audit_dataset
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _git_commit() -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"], check=False, capture_output=True, text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else "unknown"
 
 
 def build_dataset(config_path: Path) -> dict[str, object]:
@@ -59,6 +67,7 @@ def build_dataset(config_path: Path) -> dict[str, object]:
             "status": report["status"],
             "audit_version": report["audit_version"],
             "report_sha256": _sha256(audit_report_path),
+            "collection_contract_sha256": report["collection_contract_sha256"],
         }
     records = discover_records(
         Path(data_config["raw_dir"]),
@@ -118,8 +127,27 @@ def build_dataset(config_path: Path) -> dict[str, object]:
         path.write_text("".join(f"{run_id}\n" for run_id in run_ids), encoding="utf-8")
 
     manifest = {
+        "manifest_version": "dataset-manifest-v2",
         "dataset_hash_sha256": dataset_hash(records),
         "feature_schema_version": schema["version"],
+        "feature_schema_sha256": _sha256(Path(config["feature_schema"])),
+        "partitions": {
+            partition: {
+                "sha256": _sha256(output_dir / f"{partition}.jsonl"),
+                "record_count": sum(
+                    partition_by_run[record.run_id] == partition for record in records
+                ),
+            }
+            for partition in split_folds
+        },
+        "provenance": {
+            "builder_git_commit": _git_commit(),
+            "builder_config_sha256": _sha256(config_path),
+            "collection_mode": "REAL_LAB" if audit_summary is not None else "SMOKE_ONLY",
+            "collection_contract_sha256": (
+                audit_summary["collection_contract_sha256"] if audit_summary else None
+            ),
+        },
         "group_key": group_key,
         "locked_test_status": "UNOPENED",
         "partition_counts": Counter(partition_by_run.values()),

@@ -129,13 +129,17 @@ files must still be time-stamped and retained for review and version comparison.
 
 ## 5. Record analyst feedback
 
-Use a stable, non-personal analyst identifier. A repeated submission is idempotent; the
-API rejects a changed verdict for the same `incident_id + model_version + analyst_id`.
+Use a stable, non-personal analyst identifier. Supply the `source_event_id` returned
+by the workflow to bind the review to that immutable prediction, including when a
+later event has updated the incident. Without it the API selects the most recent
+decision for that model. A repeated submission is idempotent; changed verdicts for the
+same incident, prediction fingerprint and analyst are rejected and retained for review.
 
 ```bash
 curl -fsS -H 'Content-Type: application/json' \
   -d '{
     "incident_id":"INC-EXAMPLE-001",
+    "source_event_id":"REPLACE_WITH_REVIEWED_EVENT_ID",
     "model_version":"REPLACE_WITH_DEPLOYED_VERSION",
     "analyst_id":"soc-analyst-01",
     "analyst_label":"benign",
@@ -149,6 +153,13 @@ curl -fsS -H 'Content-Type: application/json' \
 `true_negative` and `false_positive` require `analyst_label=benign`; unresolved cases
 use `needs_investigation` plus `analyst_label=uncertain`. Do not put credentials or raw
 telemetry in `notes`.
+
+The API also checks the stored prediction: false positives require a malicious
+prediction, and false negatives require a benign prediction. Multiple analysts do not
+create independent samples. Monitoring counts one adjudicated incident per model;
+conflicting verdicts become unresolved and are excluded from FPR/FNR denominators.
+Old reviews remain in the append-only ledger. Reviews migrated without a verifiable
+prediction are marked `FEEDBACK_LEGACY_UNVERIFIED` and cannot establish error rates.
 
 ## 6. Retraining gate
 

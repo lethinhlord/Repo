@@ -149,7 +149,7 @@ def test_week2_n8n_workflow_is_complete_and_never_executes_strong_action() -> No
         "Persist Incident And Queue"
     )
     assert connections["Persist Incident And Queue"]["main"][0][0]["node"] == (
-        "Dispatch Notification"
+        "Select Recorded Outcome"
     )
     assert connections["Dispatch Notification"]["main"][0][0]["node"] == (
         "Finalize Response"

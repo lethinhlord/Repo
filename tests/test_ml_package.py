@@ -12,6 +12,7 @@ from sklearn.linear_model import LogisticRegression
 
 from api.app.contracts import IncidentRequest
 from api.app.main import app, load_model_runtime
+from ml.behavior_features import C2_FEATURES
 from ml.evaluate import evaluate_locked_test
 from ml.freeze_model import freeze
 from ml.inference import ModelPackageError, ModelRuntime
@@ -38,6 +39,10 @@ def account_features(failed: float, success_after_fail: float) -> dict[str, floa
     }
 
 
+def c2_features(value: float) -> dict[str, float]:
+    return {name: value for name in C2_FEATURES}
+
+
 def create_package(
     path: Path,
     *,
@@ -56,6 +61,10 @@ def create_package(
         ),
         np.asarray([0, 0, 1, 1]),
     )
+    c2_estimator = LogisticRegression(random_state=42).fit(
+        np.asarray([list(c2_features(value).values()) for value in (0.0, 0.1, 0.8, 1.0)]),
+        np.asarray([0, 0, 1, 1]),
+    )
     metadata = {
         "model_version": model_version,
         "feature_schema_version": "features-v2",
@@ -72,7 +81,13 @@ def create_package(
                     "feature_order": feature_order,
                     "threshold": 0.5,
                     "model_name": "logistic_regression",
-                }
+                },
+                "c2": {
+                    "estimator": c2_estimator,
+                    "feature_order": list(C2_FEATURES),
+                    "threshold": 0.5,
+                    "model_name": "logistic_regression",
+                },
             },
         },
         path / "model.joblib",
@@ -86,7 +101,11 @@ def create_package(
                     "account": {
                         "threshold": 0.5,
                         "automation_eligible": automation_eligible,
-                    }
+                    },
+                    "c2": {
+                        "threshold": 0.5,
+                        "automation_eligible": automation_eligible,
+                    },
                 },
             }
         ),
@@ -107,7 +126,14 @@ def create_package(
                             name: {"ood_lower": -1.0, "ood_upper": 30.0}
                             for name in feature_order
                         },
-                    }
+                    },
+                    "c2": {
+                        "records": 4,
+                        "features": {
+                            name: {"ood_lower": -1.0, "ood_upper": 30.0}
+                            for name in C2_FEATURES
+                        },
+                    },
                 },
             }
         ),
@@ -142,6 +168,35 @@ def test_runtime_preserves_feature_order_and_package_versions(tmp_path: Path) ->
     assert result.threshold_revision == "test-threshold-v1"
     assert result.automation_eligible is True
     assert result.review_required is False
+
+
+def test_runtime_rejects_a_signed_package_missing_a_required_family(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    create_package(package)
+    bundle = joblib.load(package / "model.joblib")
+    bundle["families"].pop("c2", None)
+    joblib.dump(bundle, package / "model.joblib")
+    for filename in ("thresholds.json", "feature_profile.json"):
+        path = package / filename
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["families"].pop("c2", None)
+        path.write_text(json.dumps(document), encoding="utf-8")
+    freeze(package)
+
+    with pytest.raises(ModelPackageError, match="required families"):
+        ModelRuntime(package)
+
+
+def test_runtime_rejects_a_family_without_a_binary_estimator(tmp_path: Path) -> None:
+    package = tmp_path / "package"
+    create_package(package)
+    bundle = joblib.load(package / "model.joblib")
+    bundle["families"]["c2"].pop("estimator")
+    joblib.dump(bundle, package / "model.joblib")
+    freeze(package)
+
+    with pytest.raises(ModelPackageError, match="binary estimator capability"):
+        ModelRuntime(package)
 
 
 def test_locked_test_cannot_open_before_explicit_freeze_gate(tmp_path: Path) -> None:
@@ -296,7 +351,7 @@ def test_out_of_distribution_input_abstains_and_updates_metrics(tmp_path: Path) 
     assert result.review_required is True
     assert metrics.predictions_total == 1
     assert metrics.ood_total == 1
-    assert metrics.ood_by_family == {"account": 1}
+    assert metrics.ood_by_family == {"account": 1, "c2": 0}
     assert metrics.monitoring_alerts == []
     assert metrics.review_required_total == 1
 
@@ -402,7 +457,11 @@ def test_locked_test_hash_is_verified_and_opening_is_recorded(tmp_path: Path) ->
         "features": account_features(20.0, 1.0),
     }
     locked.write_text(
-        json.dumps(row) + "\n" + json.dumps(malicious_row) + "\n",
+        "".join(json.dumps(item) + "\n" for item in (
+            row, malicious_row,
+            {"family": "c2", "label": 0, "features": c2_features(0.0)},
+            {"family": "c2", "label": 1, "features": c2_features(1.0)},
+        )),
         encoding="utf-8",
     )
     metadata = json.loads((package / "metadata.json").read_text(encoding="utf-8"))

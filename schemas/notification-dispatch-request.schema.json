@@ -6,6 +6,19 @@
       "minLength": 1,
       "title": "Incident Id",
       "type": "string"
+    },
+    "notification_revision": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Notification Revision"
     }
   },
   "required": [

@@ -461,6 +461,57 @@
         }
       }
     },
+    "/incidents/events/{source_event_id}": {
+      "get": {
+        "summary": "Incident Event Outcome",
+        "operationId": "incident_event_outcome_incidents_events__source_event_id__get",
+        "parameters": [
+          {
+            "name": "source_event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "title": "Source Event Id"
+            }
+          },
+          {
+            "name": "payload_sha256",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "title": "Payload Sha256"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentRecordResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/notifications/dispatch": {
       "post": {
         "summary": "Dispatch Notification",
@@ -547,6 +598,19 @@
             "maxLength": 128,
             "minLength": 1,
             "title": "Incident Id"
+          },
+          "source_event_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Event Id"
           },
           "model_version": {
             "type": "string",
@@ -1020,6 +1084,18 @@
             "minLength": 1,
             "title": "Source Event Id"
           },
+          "source_payload_sha256": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Payload Sha256"
+          },
           "route": {
             "type": "string",
             "enum": [
@@ -1082,6 +1158,12 @@
               "ALREADY_QUEUED"
             ],
             "title": "Notification Status"
+          },
+          "notification_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Notification Revision",
+            "default": 1
           },
           "route": {
             "type": "string",
@@ -1388,6 +1470,18 @@
             "maxLength": 128,
             "minLength": 1,
             "title": "Incident Id"
+          },
+          "notification_revision": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notification Revision"
           }
         },
         "additionalProperties": false,
@@ -1403,35 +1497,66 @@
             "type": "string",
             "title": "Incident Id"
           },
+          "notification_revision": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Notification Revision",
+            "default": 1
+          },
           "notification_status": {
             "type": "string",
             "enum": [
               "SENT",
-              "ALREADY_SENT"
+              "ALREADY_SENT",
+              "SUPERSEDED"
             ],
             "title": "Notification Status"
           },
           "channel": {
-            "type": "string",
-            "enum": [
-              "audit-log",
-              "webhook"
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "audit-log",
+                  "webhook"
+                ]
+              },
+              {
+                "type": "null"
+              }
             ],
             "title": "Channel"
           },
           "delivered_at": {
-            "type": "string",
-            "format": "date-time",
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Delivered At"
+          },
+          "superseded_by_revision": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded By Revision"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
           "incident_id",
-          "notification_status",
-          "channel",
-          "delivered_at"
+          "notification_status"
         ],
         "title": "NotificationDispatchResponse"
       },
@@ -2359,6 +2484,154 @@
               }
             ],
             "title": "Win"
+          },
+          "event_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Type"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timestamp"
+          },
+          "src_ip": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Src Ip"
+          },
+          "dest_ip": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dest Ip"
+          },
+          "src_port": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Src Port"
+          },
+          "dest_port": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dest Port"
+          },
+          "flow_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flow Id"
+          },
+          "dns": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dns"
+          },
+          "http": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Http"
+          },
+          "tls": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tls"
+          },
+          "flow": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flow"
+          },
+          "alert": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alert"
           }
         },
         "type": "object",

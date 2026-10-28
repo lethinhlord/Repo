@@ -9,7 +9,13 @@ import pytest
 import yaml
 
 from ml.dataset_audit import audit_dataset
-from ml.scenario_collection import ScenarioCatalog
+from ml.scenario_collection import (
+    RunDraft,
+    ScenarioCatalog,
+    SourceConfig,
+    _derive_account,
+    _derive_c2,
+)
 
 FEATURES = {
     "failed_login_count": 0.0,
@@ -58,13 +64,19 @@ def write_run(
     scenario_slot: int,
     incident_id: str | None = None,
     include_suricata: bool = True,
+    c2_offsets: list[float] | None = None,
+    account_successes: int = 1,
+    remote: bool = False,
+    timing_offset: float | None = None,
 ) -> None:
     run_id = f"{family.upper()}-{label.upper()}-{index:02d}"
-    started = datetime(2026, 10, 16, 1, 0, tzinfo=UTC) + timedelta(minutes=index)
+    started = datetime(2026, 10, 16, 1, 0, 5, tzinfo=UTC) + timedelta(minutes=10 * index)
     ended = started + timedelta(seconds=30)
     run_dir = root / "data/raw" / run_id
-    run_dir.mkdir(parents=True)
+    run_dir.mkdir(parents=True, exist_ok=True)
     scenario_parameters = {"variant_index": index, "timing_jitter_percent": 10 + index}
+    if family == "c2":
+        scenario_parameters["run_nonce"] = hashlib.sha256(run_id.encode()).hexdigest()[:16]
     catalog_path = root / "scenario-catalog.yaml"
     parsed_catalog = ScenarioCatalog.model_validate(
         yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
@@ -99,11 +111,12 @@ def write_run(
         "expected_observables": ["test"],
         "clock_preflight": clock_preflight,
     }
+    ground_truth = RunDraft.model_validate(ground_truth).model_dump(mode="json")
     provenance_sha256 = hashlib.sha256(
         json.dumps(ground_truth, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     evidence_dir = root / "evidence/scenario-runs" / run_id
-    evidence_dir.mkdir(parents=True)
+    evidence_dir.mkdir(parents=True, exist_ok=True)
     source_snapshot = evidence_dir / "collection-sources.yaml"
     source_snapshot.write_bytes((root / "collection-sources.yaml").read_bytes())
     taxonomy_snapshot = evidence_dir / "suspicious-process-taxonomy.yaml"
@@ -167,6 +180,16 @@ def write_run(
         "frozen_parameters_sha256": frozen_parameters_sha256,
         "action_started_at": started.isoformat(),
         "action_ended_at": ended.isoformat(),
+        "aggregation_window_start": (started - timedelta(seconds=5)).isoformat().replace(
+            "+00:00", "Z"
+        ),
+        "aggregation_window_end": (started + timedelta(seconds=295)).isoformat().replace(
+            "+00:00", "Z"
+        ),
+        "action_deadline": (started + timedelta(seconds=293)).isoformat().replace(
+            "+00:00", "Z"
+        ),
+        "reserved_action_seconds": 60.0,
     }
     (evidence_dir / "execution-parameters.json").write_text(
         json.dumps(frozen_parameters), encoding="utf-8"
@@ -206,13 +229,46 @@ def write_run(
         "raw_refs": [f"evidence:{run_id}"],
         "indicator": "10.40.0.10" if family == "c2" else None,
     }
-    offset = 0.1 if label == "benign" else 0.2
+    offset = timing_offset if timing_offset is not None else (0.0 if label == "benign" else .01)
+    step = 1.0 + index * .05 + offset
+    raw_windows = []
+    raw_suricata = []
+
+    def win(event_id: int, seconds: float, fields: dict) -> dict:
+        timestamp = (started + timedelta(seconds=seconds)).isoformat()
+        return {"timestamp": timestamp, "agent": {"name": "WIN11-TARGET"},
+                "data": {"win": {"system": {"eventID": str(event_id),
+                    "systemTime": timestamp}, "eventdata": fields}}}
+
     if family == "account":
-        incident["features"]["failed_login_count"] = index + offset
-        incident["features"]["success_after_fail"] = float(index % 2)
+        fields = {"targetUserName": "labuser", "ipAddress": "10.40.0.10",
+                  "logonType": "3" if remote else "2"}
+        for number in range(index + 1):
+            raw_windows.append(win(4625, 1 + number * step, fields))
+        for number in range(account_successes):
+            raw_windows.append(win(4624, 1 + (index + 1 + number) * step, fields))
+        features, raw_windows, _ = _derive_account(
+            raw_windows, RunDraft.model_validate(ground_truth), "WIN11-TARGET"
+        )
     else:
-        incident["features"]["periodicity_score"] = (index + offset) / 12.0
-        incident["features"]["outbound_connection_count"] = float(index + 1)
+        nonce = scenario_parameters["run_nonce"]
+        raw_windows.append(win(1, .5, {"image": "curl.exe", "processGuid": "fixture-guid",
+            "commandLine": f"curl.exe http://10.40.0.10:8080/status?run={nonce}"}))
+        offsets = c2_offsets if c2_offsets is not None else [1+i*step for i in range(index+2)]
+        for seconds in offsets:
+            raw_windows.append(win(3, seconds, {"image": "curl.exe", "processGuid": "fixture-guid",
+                "initiated": "true", "sourceIp": "10.20.0.10",
+                "destinationIp": "10.40.0.10", "destinationPort": "8080"}))
+            timestamp = (started + timedelta(seconds=seconds)).isoformat()
+            payload = {"timestamp": timestamp, "event_type": "http", "src_ip": "10.20.0.10",
+                "dest_ip": "10.40.0.10", "dest_port": 8080, "http": {"url": f"/status?run={nonce}"}}
+            raw_suricata.append({"timestamp": timestamp, "agent": {"name": "NET-SENSOR"},
+                                 "full_log": json.dumps(payload)})
+        features, raw_windows, _, _ = _derive_c2(
+            raw_windows+raw_suricata, RunDraft.model_validate(ground_truth),
+            SourceConfig.model_validate(source_payload), {"revision": "test-v1", "rules": []},
+        )
+    incident["features"] = features
     (run_dir / "incidents.jsonl").write_text(json.dumps(incident) + "\n", encoding="utf-8")
 
     (evidence_dir / "ground_truth.json").write_text(
@@ -242,8 +298,10 @@ def write_run(
         ),
         encoding="utf-8",
     )
-    (evidence_dir / "wazuh_archives.jsonl").write_text("{}\n", encoding="utf-8")
-    (evidence_dir / "windows_events.jsonl").write_text("{}\n", encoding="utf-8")
+    (evidence_dir / "wazuh_archives.jsonl").write_text(
+        "".join(json.dumps(row)+"\n" for row in raw_windows+raw_suricata), encoding="utf-8")
+    (evidence_dir / "windows_events.jsonl").write_text(
+        "".join(json.dumps(row)+"\n" for row in raw_windows), encoding="utf-8")
     (evidence_dir / "run_markers.jsonl").write_text(
         json.dumps(
             {
@@ -265,7 +323,14 @@ def write_run(
         encoding="utf-8",
     )
     if family == "c2" and include_suricata:
-        (evidence_dir / "suricata_eve.jsonl").write_text("{}\n", encoding="utf-8")
+        from ml.telemetry import suricata_payload
+
+        (evidence_dir / "suricata_eve.jsonl").write_text(
+            "".join(json.dumps(suricata_payload(row))+"\n" for row in raw_suricata),
+            encoding="utf-8",
+        )
+    elif family == "account":
+        (evidence_dir / "suricata_eve.jsonl").write_text("", encoding="utf-8")
     (evidence_dir / ".collection_state.json").write_text(
         json.dumps(
             {
@@ -295,7 +360,7 @@ def write_catalog(root: Path) -> Path:
         for label in ("benign", "malicious"):
             for slot in range(1, 6):
                 attribution = (
-                    {"account_names": ["labuser"]}
+                    {"account_names": ["labuser"], "logon_types": [2, 3]}
                     if family == "account"
                     else {
                         "source_ips": ["10.20.0.10"],
@@ -384,6 +449,90 @@ def test_audit_reports_ready_at_ten_independent_runs_per_stratum(tmp_path: Path)
     assert report["total_valid_runs"] == 40
     assert report["strata"]["c2:benign"]["valid_runs"] == 10
     assert report["strata"]["c2:benign"]["shortage_to_target"] == 2
+
+
+def test_auditor_rejects_nonempty_but_meaningless_raw_evidence(tmp_path: Path) -> None:
+    write_catalog(tmp_path)
+    write_run(tmp_path, family="c2", label="benign", index=0, scenario_slot=1)
+    evidence = tmp_path / "evidence/scenario-runs/C2-BENIGN-00"
+    (evidence / "windows_events.jsonl").write_text("{}\n", encoding="utf-8")
+    (evidence / "wazuh_archives.jsonl").write_text("{}\n", encoding="utf-8")
+    checksums(evidence)
+
+    report = run_audit(tmp_path)
+
+    assert report["invalid_run_count"] == 1
+    assert any(item["code"] == "FEATURE_PROVENANCE_INVALID" for item in report["issues"])
+
+
+@pytest.mark.parametrize("filename", [
+    "start-contract.json", ".collection_state.json", "ground_truth.json",
+    "collection_metadata.json", "execution-parameters.json", "execution_receipt.json",
+    "run_markers.jsonl",
+])
+def test_auditor_reports_wrong_json_document_type_without_crashing(
+    tmp_path: Path, filename: str,
+) -> None:
+    write_catalog(tmp_path)
+    write_run(tmp_path, family="account", label="benign", index=0, scenario_slot=1)
+    evidence = tmp_path / "evidence/scenario-runs/ACCOUNT-BENIGN-00"
+    (evidence / filename).write_text("[]", encoding="utf-8")
+    checksums(evidence)
+
+    report = run_audit(tmp_path)
+
+    assert report["status"] == "NOT_READY"
+    assert report["invalid_run_count"] == 1
+    assert report["error_count"] > 0
+
+
+def test_auditor_rejects_a_consistently_rehashed_invalid_bucket(tmp_path: Path) -> None:
+    write_catalog(tmp_path)
+    write_run(tmp_path, family="account", label="benign", index=0, scenario_slot=1)
+    evidence = tmp_path / "evidence/scenario-runs/ACCOUNT-BENIGN-00"
+    receipt_path = evidence / "execution_receipt.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt["aggregation_window_end"] = "2026-10-16T01:10:00Z"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    state_path = evidence / ".collection_state.json"
+    state = json.loads(state_path.read_text())
+    state["execution_receipt"] = receipt
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    metadata_path = evidence / "collection_metadata.json"
+    metadata = json.loads(metadata_path.read_text())
+    metadata["execution_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    checksums(evidence)
+
+    report = run_audit(tmp_path)
+
+    assert report["invalid_run_count"] == 1
+    assert any(item["code"] == "FEATURE_PROVENANCE_INVALID" for item in report["issues"])
+
+
+@pytest.mark.parametrize("corruption", ["agent", "eve_alert"])
+def test_auditor_reports_malformed_nested_raw_event_without_crashing(
+    tmp_path: Path, corruption: str,
+) -> None:
+    write_catalog(tmp_path)
+    write_run(tmp_path, family="c2", label="benign", index=0, scenario_slot=1)
+    evidence = tmp_path / "evidence/scenario-runs/C2-BENIGN-00"
+    path = evidence / "wazuh_archives.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    if corruption == "agent":
+        rows[0]["agent"] = "not-an-object"
+    else:
+        index = next(i for i, row in enumerate(rows) if "full_log" in row)
+        payload = json.loads(rows[index]["full_log"])
+        payload.update(event_type="alert", alert=["not-an-object"])
+        rows[index]["full_log"] = json.dumps(payload)
+    path.write_text("".join(json.dumps(row)+"\n" for row in rows), encoding="utf-8")
+    checksums(evidence)
+
+    report = run_audit(tmp_path)
+
+    assert report["invalid_run_count"] == 1
+    assert any(item["code"] == "FEATURE_PROVENANCE_INVALID" for item in report["issues"])
 
 
 @pytest.mark.parametrize(
@@ -575,34 +724,18 @@ def test_audit_rejects_stale_started_collection(tmp_path: Path) -> None:
     assert any(issue["code"] == "STALE_STARTED_RUN" for issue in report["issues"])
 
 
-def test_audit_rejects_any_model_feature_that_perfectly_separates_labels(
-    tmp_path: Path,
-) -> None:
+def test_audit_rejects_any_model_feature_that_perfectly_separates_labels(tmp_path: Path) -> None:
     populate(tmp_path, count=10)
     for label in ("benign", "malicious"):
         for index in range(10):
-            run_id = f"C2-{label.upper()}-{index:02d}"
-            incident_path = tmp_path / f"data/raw/{run_id}/incidents.jsonl"
-            incident = json.loads(incident_path.read_text(encoding="utf-8"))
-            incident["features"]["periodicity_score"] = float(label == "malicious")
-            incident_path.write_text(json.dumps(incident) + "\n", encoding="utf-8")
-            evidence_dir = tmp_path / f"evidence/scenario-runs/{run_id}"
-            metadata_path = evidence_dir / "collection_metadata.json"
-            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-            metadata["incidents_sha256"] = hashlib.sha256(
-                incident_path.read_bytes()
-            ).hexdigest()
-            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
-            checksums(evidence_dir)
-
+            offsets = [1., 1.1, 1.2, 25.] if label == "benign" else [1., 6., 11., 16.]
+            write_run(tmp_path, family="c2", label=label, index=index,
+                      scenario_slot=index % 5 + 1, c2_offsets=offsets)
     report = run_audit(tmp_path)
-
     assert report["status"] == "NOT_READY"
-    separation = [
-        issue for issue in report["issues"] if issue["code"] == "FEATURE_LABEL_SEPARATION"
-    ]
-    assert len(separation) == 1
-    assert "periodicity_score" in separation[0]["message"]
+    assert any(item["code"] == "FEATURE_LABEL_SEPARATION"
+               and "periodicity_score" in item["message"] for item in report["issues"])
+    assert not any(item["code"] == "FEATURE_PROVENANCE_INVALID" for item in report["issues"])
 
 
 def test_audit_rejects_empty_checksum_manifest(tmp_path: Path) -> None:
@@ -722,52 +855,24 @@ def test_audit_detects_low_cardinality_joint_label_separation(tmp_path: Path) ->
     populate(tmp_path, count=10)
     for label in ("benign", "malicious"):
         for index in range(10):
-            run_id = f"ACCOUNT-{label.upper()}-{index:02d}"
-            incident_path = tmp_path / f"data/raw/{run_id}/incidents.jsonl"
-            incident = json.loads(incident_path.read_text(encoding="utf-8"))
-            if label == "benign":
-                values = ((0.0, 0.0), (1.0, 1.0))[index % 2]
-            else:
-                values = ((0.0, 1.0), (1.0, 0.0))[index % 2]
-            incident["features"]["failed_login_count"] = values[0]
-            incident["features"]["success_after_fail"] = values[1]
-            incident_path.write_text(json.dumps(incident) + "\n", encoding="utf-8")
-            evidence = tmp_path / f"evidence/scenario-runs/{run_id}"
-            metadata_path = evidence / "collection_metadata.json"
-            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-            metadata["incidents_sha256"] = hashlib.sha256(
-                incident_path.read_bytes()
-            ).hexdigest()
-            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
-            checksums(evidence)
-
+            success = index % 2
+            remote = bool(success if label == "benign" else 1-success)
+            write_run(tmp_path, family="account", label=label, index=index,
+                      scenario_slot=index % 5 + 1, account_successes=success, remote=remote)
     report = run_audit(tmp_path)
-
     assert report["status"] == "NOT_READY"
-    assert any(issue["code"] == "JOINT_FEATURE_LABEL_SEPARATION" for issue in report["issues"])
+    assert any(item["code"] == "JOINT_FEATURE_LABEL_SEPARATION" for item in report["issues"])
+    assert not any(item["code"] == "FEATURE_PROVENANCE_INVALID" for item in report["issues"])
 
 
 def test_audit_rejects_cross_label_full_vector_collision(tmp_path: Path) -> None:
     populate(tmp_path, count=10)
-    benign_path = tmp_path / "data/raw/ACCOUNT-BENIGN-00/incidents.jsonl"
-    malicious_path = tmp_path / "data/raw/ACCOUNT-MALICIOUS-00/incidents.jsonl"
-    benign = json.loads(benign_path.read_text(encoding="utf-8"))
-    malicious = json.loads(malicious_path.read_text(encoding="utf-8"))
-    malicious["features"] = benign["features"]
-    malicious_path.write_text(json.dumps(malicious) + "\n", encoding="utf-8")
-    evidence = tmp_path / "evidence/scenario-runs/ACCOUNT-MALICIOUS-00"
-    metadata_path = evidence / "collection_metadata.json"
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    metadata["incidents_sha256"] = hashlib.sha256(malicious_path.read_bytes()).hexdigest()
-    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
-    checksums(evidence)
-
+    write_run(tmp_path, family="account", label="malicious", index=0,
+              scenario_slot=1, timing_offset=0.)
     report = run_audit(tmp_path)
-
     assert report["status"] == "NOT_READY"
-    collisions = [
-        issue for issue in report["issues"] if issue["code"] == "CROSS_LABEL_COLLISION"
-    ]
+    collisions = [item for item in report["issues"] if item["code"] == "CROSS_LABEL_COLLISION"]
     assert len(collisions) == 1
     assert "ACCOUNT-BENIGN-00" in collisions[0]["message"]
     assert "ACCOUNT-MALICIOUS-00" in collisions[0]["message"]
+    assert not any(item["code"] == "FEATURE_PROVENANCE_INVALID" for item in report["issues"])
