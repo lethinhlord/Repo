@@ -322,7 +322,9 @@ def _audit_run(
     )
     if (
         not isinstance(start_contract, dict)
-        or start_contract.get("version") != "collection-start-contract-v1"
+        or start_contract.get("version") not in {
+            "collection-start-contract-v1", "collection-start-contract-v2"
+        }
         or start_contract_sha256 != state.get("start_contract_sha256")
         or start_contract_sha256 != metadata.get("start_contract_sha256")
         or any(start_contract.get(name) != state.get(name) for name in bound_start_fields)
@@ -477,7 +479,10 @@ def audit_dataset(
     scenario_catalog_path: Path = Path("config/scenario-catalog.yaml"),
     source_config_path: Path = Path("config/collection-sources.yaml"),
     taxonomy_path: Path = Path("config/suspicious-process-taxonomy.yaml"),
+    mode: str = "final",
 ) -> dict[str, Any]:
+    if mode not in {"progress", "final"}:
+        raise ValueError("audit mode must be progress or final")
     if minimum_runs < 5:
         raise ValueError("minimum_runs must be at least 5 for the configured grouped split")
     if target_runs < minimum_runs:
@@ -833,10 +838,31 @@ def audit_dataset(
                 f"maximum is {maximum_scenario_share:.1%}",
             )
 
+    pending_issues: list[dict[str, str]] = []
+    incomplete = any(
+        value["valid_runs"] < minimum_runs or value["distinct_scenarios"] < minimum_scenarios
+        for value in strata.values()
+    )
+    if mode == "progress" and incomplete:
+        # Only collection progress/design checks may be deferred. All raw,
+        # checksum, provenance, collision and contract errors remain blocking.
+        progress_codes = {
+            "STRATUM_SHORTAGE", "SCENARIO_DIVERSITY", "SCENARIO_CONCENTRATION",
+            "SCENARIO_CATALOG_COVERAGE", "SCENARIO_IMBALANCE",
+            "FEATURE_LABEL_SEPARATION", "JOINT_FEATURE_LABEL_SEPARATION",
+            "PARAMETER_LABEL_SEPARATION",
+        }
+        pending_issues = [
+            {**issue, "severity": "PENDING"}
+            for issue in issues if issue["code"] in progress_codes
+        ]
+        issues = [issue for issue in issues if issue["code"] not in progress_codes]
     error_count = sum(issue["severity"] == "ERROR" for issue in issues)
     minimum_met = all(value["valid_runs"] >= minimum_runs for value in strata.values())
     target_met = all(value["valid_runs"] >= target_runs for value in strata.values())
-    if error_count or not minimum_met:
+    if mode == "progress" and not error_count and incomplete:
+        status = "COLLECTING"
+    elif error_count or not minimum_met:
         status = "NOT_READY"
     elif target_met:
         status = "TARGET_MET"
@@ -844,6 +870,8 @@ def audit_dataset(
         status = "READY"
     return {
         "audit_version": "dataset-audit-v2",
+        "audit_mode": mode,
+        "pending_issues": pending_issues,
         "collection_contract_sha256": _payload_sha256({
             "source_config_sha256": source_config_sha256,
             "taxonomy_sha256": taxonomy_sha256,
@@ -899,5 +927,11 @@ def format_audit_report(report: dict[str, Any]) -> str:
         rows.extend(
             f"- [{item['code']}] {item['run_id']}: {item['message']}"
             for item in report["issues"]
+        )
+    if report.get("pending_issues"):
+        rows.append("PENDING COLLECTION CHECKS (not final readiness):")
+        rows.extend(
+            f"- [{item['code']}] {item['message']}"
+            for item in report["pending_issues"]
         )
     return "\n".join(rows) + "\n"

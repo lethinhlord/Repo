@@ -530,6 +530,27 @@ Không đổi `config/collection-sources.yaml` nếu agent vẫn mang đúng hai
 
 ## 7. Cài WIN11-TARGET
 
+### 7.0 Chuẩn bị công cụ kiểm Windows từ đúng checkout SOC-AI
+
+Mở Windows PowerShell 64-bit bằng Administrator. Cài OpenSSH Client nếu thiếu rồi
+copy helper từ checkout đã kiểm SHA ở SOC-AI; không lấy script từ một nhánh khác:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$client = Get-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
+if ($client.State -ne 'Installed') {
+  Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0 | Out-Null
+}
+New-Item -ItemType Directory -Force C:\DATN | Out-Null
+$SocUser = Read-Host 'SOC-AI SSH username'
+scp "${SocUser}@192.168.58.147:datn-ai-soar/scripts/Test-DatnWindowsPreflight.ps1" C:\DATN\
+if ($LASTEXITCODE -ne 0) { throw 'Cannot copy the Windows preflight helper' }
+Get-FileHash C:\DATN\Test-DatnWindowsPreflight.ps1 -Algorithm SHA256
+```
+
+Đối chiếu hash với `sha256sum scripts/Test-DatnWindowsPreflight.ps1` trên SOC-AI.
+Helper chỉ đọc trạng thái; quyền sửa user/firewall nằm ở các bước riêng bên dưới.
+
 ### 7.1 Tài khoản lab và audit policy
 
 Mở PowerShell bằng quyền Administrator. Tạo các tài khoản **chỉ dùng trong lab** bằng
@@ -548,6 +569,10 @@ function Ensure-DatnLabUser([string]$Name, [string]$Description) {
   }
   $verified = Get-LocalUser -Name $Name
   if (-not $verified.Enabled) { throw "Lab account is disabled: $Name" }
+  $usersGroup = Get-LocalGroup -SID 'S-1-5-32-545'
+  if (-not (Get-LocalGroupMember -Group $usersGroup | Where-Object SID -eq $verified.SID)) {
+    Add-LocalGroupMember -Group $usersGroup -Member $verified
+  }
 }
 Ensure-DatnLabUser datn_benign 'DATN benign lab account'
 Ensure-DatnLabUser datn_attack 'DATN attack decoy'
@@ -593,19 +618,15 @@ New-NetFirewallRule -Name DATN-SMB-From-Kali `
   -Direction Inbound -Action Allow -Protocol TCP -LocalPort 445 `
   -RemoteAddress 10.40.0.10 -Profile Any | Out-Null
 Get-NetFirewallRule -Name DATN-SMB-From-Kali | Format-List Name,Enabled,Action
-$wideSmbRules = Get-NetFirewallRule -Enabled True -Direction Inbound -Action Allow |
-  Where-Object Name -ne 'DATN-SMB-From-Kali' | ForEach-Object {
-    $port = $_ | Get-NetFirewallPortFilter
-    $address = $_ | Get-NetFirewallAddressFilter
-    if (($port.LocalPort -contains '445' -or $port.LocalPort -eq 'Any') -and
-        ($address.RemoteAddress -contains 'Any' -or
-         $address.RemoteAddress -contains 'LocalSubnet')) { $_ }
-  }
-if ($wideSmbRules) {
-  $wideSmbRules | Select-Object Name,DisplayName
-  throw 'Broad inbound SMB allow rule exists; disable it before collection'
-}
+& C:\DATN\Test-DatnWindowsPreflight.ps1 -InspectHost -AllowedSource 10.40.0.10
+if ($LASTEXITCODE -ne 0) { throw 'Windows firewall preflight needs review' }
 ```
+
+Nếu helper báo BROAD hoặc INCONCLUSIVE, xem rule cụ thể cùng Profile, InterfaceAlias,
+LocalAddress, application và service. Không disable hàng loạt rule UDP/ứng dụng khác.
+Rule ngoài profile/interface/address đang dùng không được xem là đang mở SMB; ghi
+bằng chứng hiệu lực và xử lý rule thực sự cho phép TCP 445 ngoài Kali. Sau đó vẫn
+phải kiểm kết nối từ Kali thành công và từ VM nguồn khác bị từ chối ở mục 10.
 
 Sau khi đóng dataset, khôi phục policy gốc bằng snapshot `01-TELEMETRY-READY` hoặc lệnh
 sau rồi reboot:
@@ -1293,8 +1314,11 @@ Resolve-DnsName preflight.www.datn.test -Server 10.40.0.10 | Out-Null
 Resolve-DnsName preflight.beacon.datn.test -Server 10.40.0.10 | Out-Null
 ```
 
-Tại console Windows, khóa màn hình, nhập sai mật khẩu `datn_benign` đúng một lần rồi
-đăng nhập đúng một lần. Trên Kali, tạo một SMB canary thất bại có chủ đích rồi một
+Tại console Windows, **đăng xuất (Sign out)** phiên hiện tại. Thực hiện **đăng nhập mới**
+bằng mật khẩu của `datn_benign`: nhập sai đúng một lần rồi nhập đúng một lần.
+Không thay bước này bằng mở khóa phiên hoặc nhập PIN; cần logon console type 2.
+Kiểm quyền đăng nhập của tài khoản trước khi thu, không chỉ trạng thái Enabled.
+Trên Kali, tạo một SMB canary thất bại có chủ đích rồi một
 canary thành công cho `datn_attack`. Đây là preflight trước mọi run, không phải mẫu train:
 
 ```bash
@@ -1597,11 +1621,14 @@ set -euo pipefail
   --scenario-catalog config/scenario-catalog.yaml \
   --minimum-runs 10 \
   --target-runs 12 \
+  --mode progress \
   --output evidence/dataset-audit.json
 ```
 
-Trước khi đủ 10 mỗi nhóm, exit `1` và `NOT_READY` là đúng; báo cáo phải cho biết chính
-xác thiếu nhóm nào. Không được nối `|| true` hoặc chạy tiếp sau exit `1`. Không được bỏ
+Trong chế độ progress, `COLLECTING` và exit 0 nghĩa là các run hiện có đúng integrity
+nhưng còn thiếu quota/coverage; tiếp tục cleanup rồi thu run mới. Các kiểm định chưa
+đủ coverage nằm trong `pending_issues`, không có nghĩa đã đạt gate cuối. `NOT_READY`
+hoặc exit khác 0 phải dừng xử lý lỗi; không nối `|| true`. Không được bỏ
 qua `RUN_INVALID`, `RUN_STATE_INVALID`, `SCENARIO_CATALOG_MISMATCH`,
 `SURICATA_MISSING`, duplicate, checksum, thiếu/sai năm scenario, phân bố lệch hoặc hơn
 12 run/nhóm.

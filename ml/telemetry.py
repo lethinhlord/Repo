@@ -8,7 +8,7 @@ from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any
 
-from ml.behavior_features import NetworkObservation
+from ml.behavior_features import NetworkObservation, SuricataObservation
 
 
 def parse_time(value: Any) -> datetime | None:
@@ -70,6 +70,12 @@ def event_time(event: dict[str, Any]) -> datetime | None:
         return parse_time(system.get("systemTime"))
     payload = suricata_payload(event)
     if payload is not None:
+        if payload.get("event_type") == "flow" and isinstance(payload.get("flow"), dict):
+            # Flow emission may be delayed by timeouts. Keep its original EVE
+            # timestamp in raw evidence, but attribute support to the flow start.
+            started = parse_time(payload["flow"].get("start"))
+            if started is not None:
+                return started
         return parse_time(payload.get("timestamp"))
     return parse_time(event.get("timestamp"))
 
@@ -214,3 +220,71 @@ def suricata_correlates(
         ):
             return True
     return False
+
+
+def suricata_observations(payloads: list[dict[str, Any]]) -> list[SuricataObservation]:
+    """Count each cumulative flow counter once; alerts retain their own severity."""
+    observations = []
+    counters: dict[tuple[str, ...], tuple[int, int]] = {}
+    for payload in payloads:
+        alert = payload.get("event_type") == "alert"
+        severity = None
+        if alert:
+            with suppress(TypeError, ValueError):
+                severity = int((payload.get("alert") or {}).get("severity"))
+        observations.append(SuricataObservation(alert, severity, 0))
+        flow = payload.get("flow")
+        if not isinstance(flow, dict) or not payload.get("flow_id"):
+            continue
+        started = parse_time(flow.get("start"))
+        endpoints = sorted((
+            f"{normalize_ip(payload.get('src_ip'))}:{payload.get('src_port', '')}",
+            f"{normalize_ip(payload.get('dest_ip'))}:{payload.get('dest_port', '')}",
+        ))
+        key = (
+            str(payload.get("sensor_instance", "")), str(payload["flow_id"]),
+            str(payload.get("proto", "")), *endpoints,
+            started.isoformat() if started else "unknown-start",
+        )
+        values = []
+        for field in ("bytes_toserver", "bytes_toclient"):
+            value = flow.get(field, 0)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError("flow counters must be non-negative integers")
+            values.append(value)
+        previous = counters.get(key, (0, 0))
+        counters[key] = (max(previous[0], values[0]), max(previous[1], values[1]))
+    observations.extend(SuricataObservation(False, None, sum(value)) for value in counters.values())
+    return observations
+
+
+def flow_connection_key(payload: dict[str, Any]) -> tuple[str, ...] | None:
+    if not payload.get("flow_id"):
+        return None
+    endpoints = sorted((
+        f"{normalize_ip(payload.get('src_ip'))}:{payload.get('src_port', '')}",
+        f"{normalize_ip(payload.get('dest_ip'))}:{payload.get('dest_port', '')}",
+    ))
+    return (str(payload["flow_id"]), str(payload.get("proto", "")), *endpoints)
+
+
+def linked_flow(
+    payload: dict[str, Any], references: list[tuple[dict[str, Any], datetime]],
+    tolerance: float,
+) -> bool:
+    """A final flow needs an attributable transaction, tuple and time interval."""
+    if payload.get("event_type") != "flow":
+        return False
+    key = flow_connection_key(payload)
+    flow = payload.get("flow")
+    if key is None or not isinstance(flow, dict):
+        return False
+    start, end = parse_time(flow.get("start")), parse_time(flow.get("end"))
+    if start is None or end is None or end < start:
+        return False
+    return any(
+        flow_connection_key(reference) == key
+        and -tolerance <= (at - start).total_seconds()
+        and (at - end).total_seconds() <= tolerance
+        for reference, at in references
+    )

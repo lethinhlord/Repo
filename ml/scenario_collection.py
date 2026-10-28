@@ -22,11 +22,11 @@ from api.app.contracts import IncidentRequest
 from ml.behavior_features import (
     AccountObservation,
     NetworkObservation,
-    SuricataObservation,
     derive_account_features,
     derive_c2_features,
     interval_features,
 )
+from ml.collection_windows import bucket_used, reserve_bucket
 from ml.dataset import (
     DatasetRecord,
     ScenarioManifest,
@@ -47,8 +47,10 @@ from ml.telemetry import (
 )
 from ml.telemetry import (
     is_interactive_logon,
+    linked_flow,
     network_is_outbound,
     normalize_ip,
+    suricata_observations,
 )
 from ml.telemetry import (
     parse_time as _parse_time,
@@ -637,6 +639,7 @@ def start_run(
         "feature_schema_sha256": _sha256(schema_path),
         "frozen_parameters_sha256": frozen_parameters_sha256,
         "execution_receipt": None,
+        "origin_project_root": str(project_root),
     }
     state["scenario_catalog_sha256"] = _sha256(catalog_path)
     state["collection_contract_sha256"] = _payload_sha256(
@@ -648,7 +651,9 @@ def start_run(
         }
     )
     start_contract = {
-        "version": "collection-start-contract-v1",
+        "version": "collection-start-contract-v2",
+        "origin_project_root": str(project_root),
+        "source_document": source.model_dump(mode="json"),
         "run_id": draft.run_id,
         "started_at": state["started_at"],
         "draft_sha256": state["draft_sha256"],
@@ -787,7 +792,9 @@ def _matches_dns(eventdata: dict[str, Any], attribution: Attribution) -> bool:
     return not process_names or _basename(eventdata.get("image")) in process_names
 
 
-def _matches_suricata(payload: dict[str, Any], attribution: Attribution) -> bool:
+def _matches_suricata(
+    payload: dict[str, Any], attribution: Attribution, *, bound_flow: bool = False
+) -> bool:
     event_type = payload.get("event_type")
     dns = payload.get("dns")
     dns_response = _suricata_dns_is_response(dns)
@@ -807,7 +814,7 @@ def _matches_suricata(payload: dict[str, Any], attribution: Attribution) -> bool
             return False
         if port not in set(attribution.destination_ports):
             return False
-    if attribution.dns_suffixes:
+    if attribution.dns_suffixes and not (bound_flow and event_type == "flow"):
         if event_type not in {"dns", "alert"}:
             return False
         queries = _suricata_dns_names(dns)
@@ -971,7 +978,7 @@ def _derive_c2(
             if timestamp is None:
                 continue
             windows.append(event)
-            destination = str(eventdata.get("destinationIp", "")).strip()
+            destination = normalize_ip(eventdata.get("destinationIp"))
             destination_port = None
             with suppress(TypeError, ValueError):
                 destination_port = int(eventdata.get("destinationPort"))
@@ -1029,6 +1036,7 @@ def _derive_c2(
                 )
 
     nonce_flow_ids: set[str] = set()
+    nonce_references: list[tuple[dict[str, Any], datetime]] = []
     maximum_delta = source.correlation_window_seconds
     for event in events:
         if str((event.get("agent") or {}).get("name")) != source.suricata_agent_name:
@@ -1043,6 +1051,7 @@ def _derive_c2(
         ):
             continue
         if _suricata_has_nonce(payload, nonce):
+            nonce_references.append((payload, timestamp))
             flow_id = str(payload.get("flow_id", "")).strip()
             if flow_id:
                 nonce_flow_ids.add(flow_id)
@@ -1055,11 +1064,14 @@ def _derive_c2(
             continue
         payload = _suricata_payload(event)
         timestamp = _event_time(event)
+        bound_flow = bool(payload and linked_flow(payload, nonce_references, maximum_delta))
         if (
             payload is None
             or timestamp is None
-            or not _matches_suricata(payload, draft.attribution)
-            or not _suricata_correlates(payload, timestamp, network_observations, maximum_delta)
+            or not _matches_suricata(payload, draft.attribution, bound_flow=bound_flow)
+            or (not bound_flow and not _suricata_correlates(
+                payload, timestamp, network_observations, maximum_delta
+            ))
         ):
             continue
         flow_id = str(payload.get("flow_id", "")).strip()
@@ -1109,27 +1121,9 @@ def _derive_c2(
             f"forbidden Suricata signatures were observed: {forbidden_signatures}"
         )
 
-    suricata_observations: list[SuricataObservation] = []
-    for payload in suricata:
-        flow = payload.get("flow") if isinstance(payload.get("flow"), dict) else {}
-        total_bytes = 0
-        for field in ("bytes_toserver", "bytes_toclient"):
-            with suppress(TypeError, ValueError):
-                total_bytes += max(0, int(flow.get(field, 0)))
-        severity = None
-        if payload.get("event_type") == "alert":
-            with suppress(TypeError, ValueError):
-                severity = int((payload.get("alert") or {}).get("severity"))
-        suricata_observations.append(
-            SuricataObservation(
-                is_alert=payload.get("event_type") == "alert",
-                severity=severity,
-                total_bytes=total_bytes,
-            )
-        )
     features = derive_c2_features(
         network_observations,
-        suricata_observations,
+        suricata_observations(suricata),
         suspicious_process=suspicious,
     )
     indicator = next(iter(draft.attribution.destination_ips), None)
@@ -1196,6 +1190,11 @@ def verify_feature_provenance(
     state: dict[str, Any],
 ) -> None:
     """Reproduce the finalized vector from its raw archives without live log access."""
+    contract = json.loads((evidence_dir / "start-contract.json").read_text(encoding="utf-8"))
+    if not isinstance(contract, dict):
+        raise CollectionError("start-contract.json must contain an object")
+    if contract.get("version") == "collection-start-contract-v2":
+        _verify_start_snapshot(evidence_dir, state, evidence_dir.parents[2])
     try:
         draft = RunDraft.model_validate(
             json.loads((evidence_dir / "ground_truth.json").read_text(encoding="utf-8"))
@@ -1271,7 +1270,9 @@ def _verify_start_snapshot(
         raise CollectionError(f"invalid immutable start contract: {exc}") from exc
     if (
         not isinstance(start_contract, dict)
-        or start_contract.get("version") != "collection-start-contract-v1"
+        or start_contract.get("version") not in {
+            "collection-start-contract-v1", "collection-start-contract-v2"
+        }
         or _payload_sha256(start_contract) != state.get("start_contract_sha256")
     ):
         raise CollectionError("immutable start contract digest is inconsistent")
@@ -1329,7 +1330,25 @@ def _verify_start_snapshot(
         snapshot_source = SourceConfig.model_validate(_read_yaml(source_snapshot_path))
     except ValueError as exc:
         raise CollectionError(f"invalid start snapshot source config: {exc}") from exc
-    normalized_source = _normalized_source(snapshot_source, project_root.resolve())
+    if start_contract["version"] == "collection-start-contract-v2":
+        # Runtime paths identify the original capture, not the recovery checkout.
+        # Both the parsed document and its original resolved paths are immutable.
+        if (
+            start_contract.get("source_document") != snapshot_source.model_dump(mode="json")
+            or start_contract.get("origin_project_root") != state.get("origin_project_root")
+            or not isinstance(start_contract.get("origin_project_root"), str)
+        ):
+            raise CollectionError("portable source document differs from the start contract")
+        normalized_source = start_contract["source"]
+        path_fields = {"wazuh_archives_path", "taxonomy_path", "scenario_catalog_path"}
+        if any(
+            normalized_source.get(name) != value
+            for name, value in snapshot_source.model_dump(mode="json").items()
+            if name not in path_fields
+        ):
+            raise CollectionError("portable source values differ from runtime origin")
+    else:
+        normalized_source = _normalized_source(snapshot_source, project_root.resolve())
     if normalized_source != start_contract.get("source"):
         raise CollectionError("normalized source differs from the immutable start contract")
     cursor = start_contract.get("archive_cursor")
@@ -1476,8 +1495,16 @@ def begin_action(
         bucket_start, bucket_end = _aggregation_window(action_started_at)
         guarded_start = bucket_start + timedelta(seconds=guard)
         deadline = bucket_end - timedelta(seconds=guard)
+        try:
+            occupied = bucket_used(project_root, draft.host, bucket_start)
+        except ValueError as exc:
+            raise CollectionError(str(exc)) from exc
         if wait_for_window and action_started_at < guarded_start:
             ready_at = guarded_start
+        elif occupied:
+            if not wait_for_window:
+                raise CollectionError("aggregation window already used; wait for a new bucket")
+            ready_at = bucket_end + timedelta(seconds=guard)
         elif action_started_at + timedelta(seconds=reservation) > deadline:
             if not wait_for_window:
                 raise CollectionError(
@@ -1516,6 +1543,10 @@ def begin_action(
         "reserved_action_seconds": reservation,
     }
     _validate_action_window(receipt, draft)
+    try:
+        reserve_bucket(project_root, draft.host, bucket_start, run_id)
+    except ValueError as exc:
+        raise CollectionError(str(exc)) from exc
     state["execution_receipt"] = receipt
     _write_json(state_path, state)
     _write_json(evidence_dir / "execution_receipt.json", receipt)

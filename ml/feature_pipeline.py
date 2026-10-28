@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from contextlib import suppress
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path, PurePath
@@ -33,10 +32,12 @@ from ml.telemetry import (
     basename,
     event_time,
     is_interactive_logon,
+    linked_flow,
     network_is_outbound,
     normalize_ip,
     process_guid,
     suricata_correlates,
+    suricata_observations,
     suricata_payload,
     taxonomy_match,
     windows_fields,
@@ -263,6 +264,17 @@ def _derive_raw_group(
 
         sources = configured_sources or observed_sources
         seen_eve: set[str] = set()
+        eve_payloads: list[dict[str, Any]] = []
+        maximum_delta = float(_collection_config().get("correlation_window_seconds", 10.0))
+        references = []
+        for alert in alerts:
+            if alert.agent.name != sensor_agent:
+                continue
+            payload = _suricata_payload(alert)
+            if payload is not None and suricata_correlates(
+                payload, alert_event_time(alert), network, maximum_delta, source_ips=sources,
+            ):
+                references.append((payload, alert_event_time(alert)))
         for alert in alerts:
             if alert.agent.name != sensor_agent:
                 continue
@@ -270,11 +282,11 @@ def _derive_raw_group(
             if (
                 payload is None
                 or not sources
-                or not suricata_correlates(
+                or not (linked_flow(payload, references, maximum_delta) or suricata_correlates(
                     payload, alert_event_time(alert), network,
-                    float(_collection_config().get("correlation_window_seconds", 10.0)),
+                    maximum_delta,
                     source_ips=sources,
-                )
+                ))
             ):
                 continue
             canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -282,22 +294,8 @@ def _derive_raw_group(
                 continue
             seen_eve.add(canonical)
             attributed.append(alert)
-            flow = payload.get("flow") if isinstance(payload.get("flow"), dict) else {}
-            total_bytes = 0
-            for field in ("bytes_toserver", "bytes_toclient"):
-                with suppress(TypeError, ValueError):
-                    total_bytes += max(0, int(flow.get(field, 0)))
-            severity = None
-            if payload.get("event_type") == "alert":
-                with suppress(TypeError, ValueError):
-                    severity = int((payload.get("alert") or {}).get("severity"))
-            suricata.append(
-                SuricataObservation(
-                    is_alert=payload.get("event_type") == "alert",
-                    severity=severity,
-                    total_bytes=total_bytes,
-                )
-            )
+            eve_payloads.append(payload)
+        suricata = suricata_observations(eve_payloads)
         has_raw = any(
             _windows_fields(alert)[0] in {"1", "3", "22"} or _suricata_payload(alert) is not None
             for alert in alerts

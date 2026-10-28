@@ -1,7 +1,7 @@
 # Checklist triển khai và nghiệm thu
 
 Baseline: `ee7f4f6a56c355ff855802671db4d9aabc5412fe`.
-**Tất cả task bên dưới đang chưa triển khai.** Việc tạo checklist không đóng lỗi.
+Đang triển khai trên nhánh `fix/handoff-context-v3`. Checkbox chỉ đánh dấu phần đã đủ bằng chứng; nghiệm thu bốn VM và dữ liệu thật còn tách riêng.
 Kế hoạch chi tiết và giới hạn: `plan.md` trong cùng thư mục này.
 Tên test/module mới là đề xuất; lệnh kiểm chỉ chạy sau khi chúng được triển khai.
 Nếu một task thực tế cần sửa quá năm file hoặc có hai subsystem độc lập, tách task
@@ -9,14 +9,14 @@ thêm trước khi thực hiện; không gom thay đổi lớn để né checkpo
 
 ## Chặng A — Đóng lỗi thu thập có thể tái hiện
 
-- [ ] **P01 — Đưa năm probe audit thành test hồi quy chính thức.**
+- [x] **P01 — Đưa năm probe audit thành test hồi quy chính thức.**
   - Đạt khi: test H01/H02/H05/H06 fail trên baseline vì đúng sai lệch đã ghi; fixture
     byte là EVE thật từ PCAP với nguồn rõ ràng; không dùng helper bị giảm gate để
     tuyên bố đã nghiệm thu một run catalog đầy đủ.
   - Kiểm: chạy test mới, lưu JUnit RED; giữ các assertion bất biến khi sửa.
   - Phụ thuộc: không. File dự kiến: test hồi quy mới và fixture EVE/PCAP liên quan (≤5).
 
-- [ ] **P02 — H05: normalize IP khi tạo observation.**
+- [x] **P02 — H05: normalize IP khi tạo observation.**
   - Đạt khi: parity IPv4/mapped IPv6/IPv6 tương đương; raw giữ nguyên; dữ liệu IP sai
     được xử lý nhất quán và không gây đếm đích giả.
   - Kiểm: test feature pipeline/scenario collection và ca mixed-IP RED chuyển GREEN.
@@ -29,7 +29,7 @@ thêm trước khi thực hiện; không gom thay đổi lớn để né checkpo
   - Phụ thuộc: P01. File: collector, module reservation mới, test collection windows,
     test restart/race mới (≤4).
 
-- [ ] **P04 — H02: validator portable giữ nguyên origin và checksum.**
+- [x] **P04 — H02: validator portable giữ nguyên origin và checksum.**
   - Đạt khi: restore khác root/home thành công; đổi raw/snapshot bị chặn; không cần
     original Archives còn tồn tại để xác minh offline.
   - Kiểm: restore probe GREEN và test đường dẫn không an toàn/contract sai revision.
@@ -70,7 +70,7 @@ thêm trước khi thực hiện; không gom thay đổi lớn để né checkpo
   - Kiểm: mock rule chỉ kiểm logic, sau đó phép thử TCP trên các VM thật.
   - Phụ thuộc: không. File: preflight Windows, runbook, test firewall mới (≤3).
 
-- [ ] **P09 — H07: audit progress/final và verify script.**
+- [x] **P09 — H07: audit progress/final và verify script.**
   - Đạt khi: thiếu quota hợp lệ → COLLECTING cho phép thu tiếp; run hỏng luôn chặn;
     final chưa đạt quota/coverage/quality không cho build.
   - Kiểm: Bash set-e sau một run VALID, checksum sai và final trên tập thiếu mẫu.
@@ -196,3 +196,10 @@ thêm trước khi thực hiện; không gom thay đổi lớn để né checkpo
   - [ ] Bản source, guide, toolchain, catalog/context spec và evidence dùng cùng revision.
   - [ ] Kiên có thể bắt đầu từ VM sạch, thu/validate, xử lý lỗi, backup/restore và xuất
     gói Colab theo hướng dẫn mà không đoán lệnh hoặc sửa hash bằng tay.
+
+## Nhật ký 28/10 — checkpoint nền thu
+
+- Hồi quy toàn repo: 347 test đạt; JUnit ngoài repo `outputs/handoff-implementation-20261028/foundation-full-suite.xml`.
+- P01/P02/P04/P09 đã có bằng chứng hồi quy. P03/P05/P07/P08 đã sửa phần cốt lõi và có test, tiếp tục kiểm các điều kiện còn lại; P06 chưa đóng.
+- Context primitive có 31 test đạt riêng; chưa tích hợp vào feature/API/trainer.
+- Bốn địa chỉ SSH đã biết không phản hồi; không có nghiệm thu VM thật ở checkpoint này.

@@ -10,6 +10,10 @@ RUFF="${RUFF:-.venv-ml/bin/ruff}"
   tests/test_scenario_collection.py \
   tests/test_dataset_audit.py \
   tests/test_collection_configuration.py \
+  tests/test_collection_windows.py \
+  tests/test_bucket_reservations.py \
+  tests/test_handoff_regressions.py \
+  tests/test_progress_audit.py \
   tests/test_export_run_parameters.py \
   tests/test_ml_dataset.py
 "$RUFF" check \
