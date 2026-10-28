@@ -48,8 +48,10 @@ hướng dẫn bàn giao cuối cùng cho Kiên. Chưa đổi COLLECTION_BASELIN
    đợt thu thật; cấu hình production hiện vẫn giữ split scenario của bản nền.
 2. Cần nối bước đóng window vào workflow n8n và kiểm runtime thật. Ingest tạm thời
    luôn REVIEW là có chủ đích; không được quảng cáo như đã có quyết định cuối tự động.
-3. Cần mount context vào container và đối chiếu revision runtime/collector. Chưa đo
-   hiệu quả phát hiện hay coverage trên dữ liệu mới.
+3. Compose đã mount đúng file baseline mặc định của collector vào API ở chế độ chỉ
+   đọc, không tự tạo directory thay cho file thiếu. Deploy kiểm baseline/TTL và model
+   trước khi dừng stack cũ. Vẫn cần kiểm revision/parity trong runtime n8n thật; chưa
+   đo hiệu quả phát hiện hay coverage trên dữ liệu mới.
 4. Challenge cần được thiết kế trước thu, gồm các cặp không đủ observability. Chưa có
    bộ challenge thật hay chính sách nhận diện mọi vùng xám. Context mới không đảm bảo
    phân biệt được hai ý định có cùng toàn bộ đầu vào.
