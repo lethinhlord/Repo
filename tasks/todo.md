@@ -236,3 +236,18 @@ thêm trước khi thực hiện; không gom thay đổi lớn để né checkpo
   Tổng 33 test Windows đạt trên PowerShell 5.1; JUnit `windows-effective-scope-green.xml`.
 - Không sửa rule/user/service trên host. P08 còn cần phép thử allowed/denied trên
   Windows 11 của lab; không lấy unit test thay cho bằng chứng kết nối thực tế.
+
+## Nhật ký 28/10 — runtime và Colab
+
+- Commit `77ad956`: mount baseline chỉ đọc, kiểm baseline/model trước khi dừng stack cũ.
+- Commit `1d19f88`: giữ scenario trong cùng cohort; builder/challenge/Colab qua 28 test,
+  không cần đọc locked test để xác minh train/validation.
+- Commit `dd765de`: collector và API dùng cùng grace cấu hình, từ chối giá trị không hợp lệ;
+  63 test liên quan đạt. `e8cec84` sửa verifier shell v2 còn giả COMPLETE cho legacy fixture.
+- Full suite mới **451/451** đạt, 0 lỗi/skip; pip check/Ruff đạt. JUnit/hash xem
+  `docs/runtime-acceptance-v3-20261028.md`.
+- Docker API/n8n/receiver thật đã PASS với dữ liệu smoke mới, context riêng: signed
+  ingress, replay/restart, idempotent notification, trace context, đóng window theo
+  đồng hồ thật, parity và late/raw conflict. Không phải dữ liệu lab/VM hay metric model.
+- P15 vẫn mở: cần workflow đóng window tự động và nghiệm thu revision/outbox/feedback
+  đầy đủ; test driver gọi close thủ công không thay cho thành phần đó.
