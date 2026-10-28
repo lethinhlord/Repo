@@ -89,3 +89,13 @@ def test_trainer_cv_uses_cohort_instead_of_separating_its_labels() -> None:
         label=label, features={'value':float(label)}, source_file='unit-only', cohort_id='PAIR',
     ).as_dict() for label in (0,1)]
     assert _matrix(rows, 'account', ['value'])[2].tolist() == ['PAIR','PAIR']
+
+
+def test_repeated_scenario_cannot_be_renamed_into_separate_cohorts() -> None:
+    rows = [DatasetRecord(
+        incident_id=f'I-{family}-{label}-{cohort}', scenario_id=f'S-{family}-{label}',
+        run_id=f'R-{family}-{label}-{cohort}', family=family, label=label, features={},
+        source_file='unit-only', cohort_id=f'{family}-COHORT-{cohort}',
+    ) for family in ('account','c2') for label in (0,1) for cohort in range(5)]
+    with pytest.raises(DatasetError, match='scenario.*cohort'):
+        assign_grouped_folds(rows, number_of_folds=5, random_seed=42, group_key='cohort_id')

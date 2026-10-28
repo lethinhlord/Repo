@@ -315,9 +315,15 @@ def _assign_cohort_folds(
     collection design instead of silently returning an empty-label partition.
     """
     members: dict[str, set[tuple[str, int]]] = {}
+    scenario_cohorts: dict[str, str] = {}
     for row in run_rows.values():
         if not row.cohort_id or not row.cohort_id.strip():
             raise DatasetError("cohort_id split requires an explicit cohort for every run")
+        previous = scenario_cohorts.setdefault(row.scenario_id, row.cohort_id)
+        if previous != row.cohort_id:
+            raise DatasetError(
+                f"scenario {row.scenario_id} appears in multiple cohorts; preserve its boundary"
+            )
         members.setdefault(row.cohort_id, set()).add((row.family, row.label))
     strata = {stratum for values in members.values() for stratum in values}
     sparse = {
