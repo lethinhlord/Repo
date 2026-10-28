@@ -18,8 +18,10 @@ build/
 *.pkl
 *.onnx
 data/raw/
+data/quarantine/
 data/processed/
 evidence/scenario-runs/
+evidence/quarantine/
 evidence/bucket-reservations/
 evidence/context-baseline*.json
 evidence/context-captures/
