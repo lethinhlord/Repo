@@ -10,7 +10,7 @@ from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from ml.context import build_baseline
+from ml.context import build_baseline, with_dns_suffix_history
 
 
 def main() -> int:
@@ -20,6 +20,8 @@ def main() -> int:
     parser.add_argument("--revision", required=True)
     parser.add_argument("--ttl-hours", type=float, default=24.0)
     parser.add_argument("--windows-agent", default="WIN11-TARGET")
+    parser.add_argument("--dns-suffix", action="append", default=[],
+                        help="pre-run inventory suffix; requires observed enrollment DNS evidence")
     parser.add_argument("--approved-enrollment", action="store_true", required=True,
                         help="confirm this separate capture contains reviewed baseline activity")
     args = parser.parse_args()
@@ -39,6 +41,8 @@ def main() -> int:
             valid_until=now + timedelta(hours=args.ttl_hours),
             source_capture_sha256=digest, windows_agent_name=args.windows_agent,
         )
+        if args.dns_suffix:
+            snapshot = with_dns_suffix_history(snapshot, args.dns_suffix)
         capture_path = args.output.parent / "context-captures" / f"{digest}.jsonl"
         capture_path.parent.mkdir(parents=True, exist_ok=True)
         if (

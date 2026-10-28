@@ -1,6 +1,8 @@
 """Independent, immutable-as-of history; no scenario labels or inferred approval."""
 from __future__ import annotations
 
+import ipaddress
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -205,6 +207,55 @@ def build_baseline(
             asset_id=asset, destination=destination, port=port, process_images=sorted(images),
         ) for (asset, destination, port), images in sorted(destinations.items())],
     )
+
+
+def with_dns_suffix_history(snapshot: BaselineSnapshot, suffixes: list[str]) -> BaselineSnapshot:
+    """Promote observed DNS history to an explicit pre-run inventory boundary.
+
+    This is destination matching, not an approval/benign feature. Unobserved,
+    wildcard or overlapping inventory cannot silently trust future names.
+    """
+    normalized = []
+    for value in suffixes:
+        name = value.strip().strip('.').casefold().encode('idna').decode('ascii')
+        labels = name.split('.')
+        try:
+            ipaddress.ip_address(name)
+        except ValueError:
+            pass
+        else:
+            raise ValueError('DNS suffix inventory must not contain IP addresses')
+        if len(labels) < 2 or len(name) > 253 or any(
+            not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', label)
+            for label in labels
+        ):
+            raise ValueError('DNS suffix inventory requires specific valid domain suffixes')
+        if any(name == other or name.endswith('.'+other) or other.endswith('.'+name)
+               for other in normalized):
+            raise ValueError('DNS suffix inventory must be unique and nonoverlapping')
+        normalized.append(name)
+    seen = set()
+    grouped: dict[tuple[str, str, int, str], set[str]] = {}
+    for item in snapshot.destinations:
+        destination, match = item.destination, item.match
+        if item.port == 53:
+            for suffix in normalized:
+                if destination == suffix or destination.endswith('.'+suffix):
+                    seen.add(suffix)
+                    destination, match = suffix, 'dns_suffix'
+                    break
+        key = (item.asset_id.casefold(), destination, item.port, match)
+        grouped.setdefault(key, set()).update(item.process_images)
+    if set(normalized) != seen:
+        missing = sorted(set(normalized) - seen)
+        raise ValueError(f'DNS suffix inventory has no enrollment evidence: {missing}')
+    return BaselineSnapshot.model_validate({
+        **snapshot.model_dump(),
+        'destinations': [DestinationHistory(
+            asset_id=asset, destination=destination, port=port, match=match,
+            process_images=sorted(images),
+        ) for (asset, destination, port, match), images in sorted(grouped.items())],
+    })
 
 
 def context_from_events(
