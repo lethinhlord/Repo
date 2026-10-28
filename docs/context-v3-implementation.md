@@ -55,8 +55,9 @@ hướng dẫn bàn giao cuối cùng cho Kiên. Chưa đổi COLLECTION_BASELIN
    phân biệt được hai ý định có cùng toàn bộ đầu vào.
 5. 10–12 run mỗi nhóm chỉ là quota thu thập. Số cohort validation có thể vẫn quá ít để
    ước lượng CI hoặc bật automation; không hạ gate để đạt trạng thái đẹp.
-6. Windows helper mới qua test logic/parse; chưa kiểm hiệu lực interface/local-address
-   và kết nối allowed/denied trên bốn VM thật. SSH lab hiện chưa truy cập được.
+6. Windows helper đã qua 33 test logic/parse, gồm giao của profile, interface alias/type,
+   địa chỉ local IPv4/IPv6/CIDR/range trên cùng adapter. Scope chưa giải được giữ
+   INCONCLUSIVE. Chưa kiểm kết nối allowed/denied trên bốn VM thật; SSH lab chưa truy cập được.
 7. Chưa cập nhật Kiên.txt, chưa chốt baseline/tag bàn giao và chưa merge nhánh triển
    khai. Không dùng dataset cũ, fixture, smoke hoặc PCAP tổng hợp làm kết quả train thật.
 

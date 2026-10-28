@@ -227,3 +227,12 @@ thêm trước khi thực hiện; không gom thay đổi lớn để né checkpo
 - Catalog/taxonomy G01–G07, Windows hiệu lực mạng, runtime context mount, n8n E2E,
   metric REVIEW/challenge, Colab và bản Kiên.txt chưa hoàn tất. Không ghi chúng là đã sửa xong.
 - Chưa freeze baseline/tag mới, chưa merge và không dùng lại bất kỳ dataset đã thu cũ nào.
+
+## Nhật ký 28/10 — firewall hiệu lực
+
+- H04 bổ sung kiểm giao profile, interface alias/type và local address trên cùng NIC;
+  không lấy profile từ NIC lab ghép với địa chỉ NIC management để báo broad nhầm.
+- IPv4/IPv6, CIDR/range, wildcard và scope chưa giải được có 11 case mới.
+  Tổng 33 test Windows đạt trên PowerShell 5.1; JUnit `windows-effective-scope-green.xml`.
+- Không sửa rule/user/service trên host. P08 còn cần phép thử allowed/denied trên
+  Windows 11 của lab; không lấy unit test thay cho bằng chứng kết nối thực tế.

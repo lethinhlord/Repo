@@ -93,36 +93,144 @@ function Get-DatnSmbRuleAssessment {
   [pscustomobject]@{Status=$status; Reason=$reason}
 }
 
+function Compare-DatnIPBytes {
+  param([byte[]]$First, [byte[]]$Second)
+  for ($i=0; $i -lt $First.Length; $i++) {
+    if ($First[$i] -lt $Second[$i]) { return -1 }
+    if ($First[$i] -gt $Second[$i]) { return 1 }
+  }
+  return 0
+}
+
+function Test-DatnLocalAddressScope {
+  param([string]$Scope, [string]$Address)
+  if ($Scope -in @('Any','*')) { return $true }
+  $current = $null
+  if (-not [System.Net.IPAddress]::TryParse($Address,[ref]$current)) { return $null }
+  if ($Scope -match '^(.+)/(\d+)$') {
+    $network = $null; $prefix = [int]$Matches[2]
+    if (-not [System.Net.IPAddress]::TryParse($Matches[1],[ref]$network)) { return $null }
+    $netBytes = $network.GetAddressBytes(); $addressBytes = $current.GetAddressBytes()
+    if ($prefix -gt $netBytes.Length * 8) { return $null }
+    if ($netBytes.Length -ne $addressBytes.Length) { return $false }
+    for ($i=0; $i -lt $netBytes.Length; $i++) {
+      $used = [Math]::Min(8,[Math]::Max(0,$prefix - $i*8))
+      $mask = [int](256 - [Math]::Pow(2,8-$used))
+      if (($netBytes[$i] -band $mask) -ne ($addressBytes[$i] -band $mask)) { return $false }
+    }
+    return $true
+  }
+  if ($Scope -match '^(.+)-(.+)$') {
+    $first = $null; $last = $null
+    if (-not [System.Net.IPAddress]::TryParse($Matches[1],[ref]$first) -or
+        -not [System.Net.IPAddress]::TryParse($Matches[2],[ref]$last)) { return $null }
+    $lo = $first.GetAddressBytes(); $hi = $last.GetAddressBytes()
+    if ($lo.Length -ne $hi.Length -or (Compare-DatnIPBytes $lo $hi) -gt 0) { return $null }
+    $value = $current.GetAddressBytes()
+    if ($lo.Length -ne $value.Length) { return $false }
+    return (Compare-DatnIPBytes $lo $value) -le 0 -and (Compare-DatnIPBytes $value $hi) -le 0
+  }
+  $exact = $null
+  if ([System.Net.IPAddress]::TryParse($Scope,[ref]$exact)) { return $exact.Equals($current) }
+  return $null
+}
+
+function Get-DatnFirewallRuleApplicability {
+  param(
+    [string[]]$Profiles, [string[]]$InterfaceAliases, [string[]]$LocalAddresses,
+    [string[]]$InterfaceTypes, [object[]]$Adapters
+  )
+  if (-not $Profiles -or -not $InterfaceAliases -or -not $LocalAddresses -or
+      -not $InterfaceTypes -or -not $Adapters) {
+    return [pscustomobject]@{Status='INCONCLUSIVE'; Reason='Missing effective adapter/filter data'}
+  }
+  $unresolved = $false
+  foreach ($adapter in $Adapters) {
+    $aliasMatches = 'Any' -in $InterfaceAliases -or @($InterfaceAliases | Where-Object {
+      $adapter.Name -like $_
+    }).Count -gt 0
+    if (-not $aliasMatches) { continue }
+    $unknown = $false
+    if ('Any' -notin $Profiles) {
+      if (-not $adapter.Profile -or $adapter.Profile -eq 'Unknown') { $unknown = $true }
+      elseif ($adapter.Profile -notin $Profiles) { continue }
+    }
+    if ('Any' -notin $InterfaceTypes) {
+      if (-not $adapter.InterfaceType -or $adapter.InterfaceType -eq 'Unknown') { $unknown = $true }
+      elseif ($adapter.InterfaceType -notin $InterfaceTypes) { continue }
+    }
+    $addressMatches = $false; $addressUnknown = -not $adapter.Addresses
+    foreach ($scope in $LocalAddresses) {
+      foreach ($address in $adapter.Addresses) {
+        $match = Test-DatnLocalAddressScope -Scope $scope -Address $address
+        if ($null -eq $match) { $addressUnknown = $true }
+        elseif ($match) { $addressMatches = $true }
+      }
+    }
+    if (-not $addressMatches -and -not $addressUnknown) { continue }
+    if ($unknown -or (-not $addressMatches -and $addressUnknown)) { $unresolved = $true }
+    else { return [pscustomobject]@{Status='APPLIES'; Reason='Filters intersect on an active adapter'} }
+  }
+  if ($unresolved) {
+    return [pscustomobject]@{Status='INCONCLUSIVE'; Reason='Effective adapter scope is unresolved'}
+  }
+  return [pscustomobject]@{Status='NOT_APPLICABLE'; Reason='No active adapter matches all filters'}
+}
+
 function Invoke-DatnWindowsFirewallInspection {
   param([string]$AllowedSource)
   $ErrorActionPreference = 'Stop'
-  $profiles = @(Get-NetConnectionProfile | ForEach-Object {
-    if ($_.NetworkCategory -eq 'DomainAuthenticated') { 'Domain' }
-    else { [string]$_.NetworkCategory }
+  $connections = @(Get-NetConnectionProfile)
+  $adapters = @(Get-NetAdapter | Where-Object Status -eq 'Up' | ForEach-Object {
+    $nic = $_
+    $connection = @($connections | Where-Object InterfaceIndex -eq $nic.ifIndex)
+    $profile = 'Unknown'
+    if ($connection.Count -eq 1) {
+      $profile = [string]$connection[0].NetworkCategory
+      if ($profile -eq 'DomainAuthenticated') { $profile = 'Domain' }
+    }
+    $media = [string]$nic.MediaType
+    $interfaceType = 'Unknown'
+    if ($media -match '802[. ]11') { $interfaceType = 'Wireless' }
+    elseif ($media -eq '802.3') { $interfaceType = 'Lan' }
+    elseif ($media -eq 'WAN') { $interfaceType = 'RemoteAccess' }
+    [pscustomobject]@{
+      Name=$nic.Name; Profile=$profile; InterfaceType=$interfaceType
+      Addresses=@(Get-NetIPAddress -InterfaceIndex $nic.ifIndex |
+        Where-Object AddressState -in @('Preferred','Deprecated') |
+        Select-Object -ExpandProperty IPAddress)
+    }
   })
+  $profiles = @($adapters | Select-Object -ExpandProperty Profile -Unique)
   $disabled = @(Get-NetFirewallProfile -PolicyStore ActiveStore |
-    Where-Object { $_.Name -in $profiles -and -not $_.Enabled })
+    Where-Object { ($_.Name -in $profiles -or 'Unknown' -in $profiles) -and -not $_.Enabled })
   if ($disabled.Count) { throw 'An active Windows firewall profile is disabled' }
   $rows = @(Get-NetFirewallRule -PolicyStore ActiveStore -Enabled True `
     -Direction Inbound -Action Allow | ForEach-Object {
       $rule = $_
       $ruleProfiles = @(([string]$rule.Profile -split ',') | ForEach-Object { $_.Trim() })
-      if ('Any' -notin $ruleProfiles -and
-          -not @($profiles | Where-Object { $_ -in $ruleProfiles }).Count) { return }
       $port = $rule | Get-NetFirewallPortFilter
       $address = $rule | Get-NetFirewallAddressFilter
       $application = $rule | Get-NetFirewallApplicationFilter
       $service = $rule | Get-NetFirewallServiceFilter
+      $interfaces = $rule | Get-NetFirewallInterfaceFilter
+      $interfaceTypes = $rule | Get-NetFirewallInterfaceTypeFilter
       $assessment = Get-DatnSmbRuleAssessment -Protocol ([string]$port.Protocol) `
         -LocalPort $port.LocalPort -RemoteAddress $address.RemoteAddress `
         -Program ([string]$application.Program) -Service ([string]$service.Service) `
         -AllowedSource $AllowedSource
       if ($assessment.Status -ne 'NOT_SMB') {
+        $scope = Get-DatnFirewallRuleApplicability -Profiles $ruleProfiles `
+          -InterfaceAliases $interfaces.InterfaceAlias -LocalAddresses $address.LocalAddress `
+          -InterfaceTypes $interfaceTypes.InterfaceType -Adapters $adapters
+        if ($scope.Status -eq 'NOT_APPLICABLE') { return }
+        if ($scope.Status -eq 'INCONCLUSIVE') { $assessment = $scope }
         [pscustomobject]@{
           Name=$rule.Name; Status=$assessment.Status; Reason=$assessment.Reason
           Profile=[string]$rule.Profile; Program=$application.Program
           Service=$service.Service; RemoteAddress=($address.RemoteAddress -join ',')
-          InterfaceAlias=(($rule | Get-NetFirewallInterfaceFilter).InterfaceAlias -join ',')
+          InterfaceAlias=($interfaces.InterfaceAlias -join ',')
+          InterfaceType=($interfaceTypes.InterfaceType -join ',')
           LocalAddress=($address.LocalAddress -join ',')
         }
       }
