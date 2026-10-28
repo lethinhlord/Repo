@@ -54,6 +54,13 @@ def _collection_config() -> dict[str, Any]:
     return yaml.safe_load((ROOT / "config/collection-sources.yaml").read_text(encoding="utf-8"))
 
 
+def collection_grace_seconds() -> int:
+    value = _collection_config().get("late_arrival_grace_seconds", 60)
+    if type(value) is not int or not 0 <= value <= 600:
+        raise ValueError("collection grace must be an integer in [0,600]")
+    return value
+
+
 def _collection_sources(document: dict[str, Any] | None = None) -> tuple[str, str]:
     document = _collection_config() if document is None else document
     return str(document["windows_agent_name"]), str(document["suricata_agent_name"])

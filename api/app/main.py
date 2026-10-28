@@ -51,7 +51,11 @@ from api.app.threat_intelligence import (
     lookup_threat_intelligence,
 )
 from api.app.webhook_auth import WebhookAuthenticationError, WebhookAuthenticator
-from ml.feature_pipeline import aggregate_wazuh_alerts, extract_wazuh_features
+from ml.feature_pipeline import (
+    aggregate_wazuh_alerts,
+    collection_grace_seconds,
+    extract_wazuh_features,
+)
 from ml.inference import InferenceInputError, ModelPackageError, ModelRuntime
 
 logger = logging.getLogger(__name__)
@@ -84,7 +88,10 @@ def _model_monitoring_path() -> str:
 
 @lru_cache(maxsize=4)
 def load_feature_state_store(path: str, retention_seconds: int) -> FeatureStateStore:
-    return FeatureStateStore(Path(path), retention_seconds=retention_seconds)
+    return FeatureStateStore(
+        Path(path), retention_seconds=retention_seconds,
+        late_arrival_grace_seconds=collection_grace_seconds(),
+    )
 
 
 @lru_cache(maxsize=4)

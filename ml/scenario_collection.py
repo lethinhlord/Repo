@@ -247,7 +247,7 @@ class SourceConfig(BaseModel):
     require_clean_bucket: bool = False
     require_flow_counters: bool = False
     require_online_parity: bool = False
-    late_arrival_grace_seconds: int = Field(default=60, ge=0, le=600)
+    late_arrival_grace_seconds: int = Field(default=60, ge=0, le=600, strict=True)
 
 
 class ScenarioDefinition(BaseModel):
