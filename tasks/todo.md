@@ -251,3 +251,17 @@ thêm trước khi thực hiện; không gom thay đổi lớn để né checkpo
   đồng hồ thật, parity và late/raw conflict. Không phải dữ liệu lab/VM hay metric model.
 - P15 vẫn mở: cần workflow đóng window tự động và nghiệm thu revision/outbox/feedback
   đầy đủ; test driver gọi close thủ công không thay cho thành phần đó.
+
+## Nhật ký 28/10 — bàn giao hướng dẫn pilot theo xác nhận của Thịnh
+
+- Thịnh xác nhận lab 4 VM ở máy Kiên, máy hiện tại chưa cài lab. Chuyển ưu tiên sang
+  hướng dẫn thao tác cho Kiên; không tiếp tục dò/bật VM cục bộ để coi là nghiệm thu.
+- Kiên.txt 3.0 đã viết lại và đồng bộ byte/hash với runbook trong repo; giữ bản gốc
+  riêng. Có điều kiện trước/sau/lỗi, enrollment, NTP nội bộ, watermark/grace, final
+  flow, khóa bucket, target yên, progress/final audit, restore offline và ảnh full host.
+- Full suite 461 đạt tại 95794cc; 24d98c3 chỉ sửa ignore quarantine sinh tự động.
+  Native Bash/PowerShell/jq/chrony/Suricata và backup/wheelhouse được kiểm riêng;
+  xem `docs/handoff-guide-validation-v3-20261028.md` để biết phạm vi và evidence.
+- P20 hoàn tất phần hướng dẫn pilot hiện hành; checkbox tổng vẫn mở cho baseline
+  chính thức. G7/catalog/cohort/taxonomy/challenge chưa chốt, không mở thu 40–48
+  trainable. P21/P22 chưa được nghiệm thu trên lab Kiên, không dùng dataset cũ.

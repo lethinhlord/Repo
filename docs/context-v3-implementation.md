@@ -46,12 +46,14 @@ hướng dẫn bàn giao cuối cùng cho Kiên. Chưa đổi COLLECTION_BASELIN
 1. Catalog/runner/taxonomy hiện hành còn cần thiết kế lại đối chứng G01–G07. Không dùng
    chỉ tên file/domain/nhịp riêng của lab để chứng minh intent. Chưa freeze cohort cho
    đợt thu thật; cấu hình production hiện vẫn giữ split scenario của bản nền.
-2. Cần nối bước đóng window vào workflow n8n và kiểm runtime thật. Ingest tạm thời
-   luôn REVIEW là có chủ đích; không được quảng cáo như đã có quyết định cuối tự động.
+2. Cần nối bước đóng window tự động vào workflow n8n. Docker API/n8n/receiver đã
+   kiểm với smoke mới; test driver gọi close thủ công. Xem runtime-acceptance-v3-20261028.md.
+   Ingest tạm thời luôn REVIEW; chưa có quyết định cuối tự động hoàn chỉnh.
 3. Compose đã mount đúng file baseline mặc định của collector vào API ở chế độ chỉ
    đọc, không tự tạo directory thay cho file thiếu. Deploy kiểm baseline/TTL và model
-   trước khi dừng stack cũ. Vẫn cần kiểm revision/parity trong runtime n8n thật; chưa
-   đo hiệu quả phát hiện hay coverage trên dữ liệu mới.
+   trước khi dừng stack cũ. Trace revision và parity đã kiểm ở lượt Docker có driver
+   close thủ công; final-window workflow tự động còn mở. Chưa đo hiệu quả phát hiện
+   hay coverage trên dữ liệu mới; Docker không thay nghiệm thu telemetry bốn VM.
 4. Challenge cần được thiết kế trước thu, gồm các cặp không đủ observability. Chưa có
    bộ challenge thật hay chính sách nhận diện mọi vùng xám. Context mới không đảm bảo
    phân biệt được hai ý định có cùng toàn bộ đầu vào.
@@ -59,9 +61,12 @@ hướng dẫn bàn giao cuối cùng cho Kiên. Chưa đổi COLLECTION_BASELIN
    ước lượng CI hoặc bật automation; không hạ gate để đạt trạng thái đẹp.
 6. Windows helper đã qua 33 test logic/parse, gồm giao của profile, interface alias/type,
    địa chỉ local IPv4/IPv6/CIDR/range trên cùng adapter. Scope chưa giải được giữ
-   INCONCLUSIVE. Chưa kiểm kết nối allowed/denied trên bốn VM thật; SSH lab chưa truy cập được.
-7. Chưa cập nhật Kiên.txt, chưa chốt baseline/tag bàn giao và chưa merge nhánh triển
-   khai. Không dùng dataset cũ, fixture, smoke hoặc PCAP tổng hợp làm kết quả train thật.
+   INCONCLUSIVE. Chưa kiểm kết nối allowed/denied trên bốn VM thật. Thịnh xác nhận
+   lab ở máy Kiên; máy hiện tại không có lab để nghiệm thu.
+7. Kiên.txt 3.0 đã đồng bộ với runbook cho giai đoạn setup/enrollment/pilot và giữ G7
+   đóng. Xem handoff-guide-validation-v3-20261028.md. Chưa chốt baseline/tag thu chính
+   thức, chưa merge nhánh triển khai. Không dùng dataset cũ, fixture, smoke hoặc PCAP
+   tổng hợp làm kết quả train thật.
 
 Các test dùng dữ liệu xác định hoặc PCAP/EVE offline nhằm kiểm correctness, không
 thay thế pilot thật. Xem JUnit tại

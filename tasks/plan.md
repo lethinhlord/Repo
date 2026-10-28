@@ -4,8 +4,10 @@ Ngày lập: 28/10/2026. Repo đối chiếu: `D:\Repo`.
 Baseline được rà soát: `ee7f4f6a56c355ff855802671db4d9aabc5412fe`.
 Trạng thái: **đang triển khai trên nhánh `fix/handoff-context-v3`; chưa freeze để thu chính thức**.
 Task list: `tasks/todo.md` trong cùng thư mục này. Kế hoạch tổng hợp gốc được giữ ở
-`outputs/handoff-remediation-plan-20261028` ngoài repo. Chỉ đồng bộ `Kiên.txt` và baseline
-bàn giao sau khi contract, catalog, runner, tài liệu và kiểm thử đã thống nhất.
+`outputs/handoff-remediation-plan-20261028` ngoài repo. Baseline thu chính thức chỉ
+được chốt sau khi contract, catalog, runner, tài liệu và kiểm thử đã thống nhất.
+Theo yêu cầu mới của Thịnh khi xác nhận lab ở máy Kiên, đã phát hành riêng Kiên.txt
+3.0 cho setup/enrollment/pilot, giữ G7 đóng; đây chưa phải baseline thu chính thức.
 
 ## 1. Kết quả cần đạt
 
