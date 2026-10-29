@@ -130,6 +130,7 @@ def _audit_run(
     expected_schema_sha256: str,
     expected_source_config_sha256: str,
     expected_taxonomy_sha256: str,
+    require_context: bool = False,
 ) -> tuple[ScenarioManifest | None, list[IncidentRequest], list[str]]:
     errors: list[str] = []
     run_dir = manifest_path.parent
@@ -152,6 +153,11 @@ def _audit_run(
             "SCENARIO_CATALOG_MISMATCH: scenario_id is missing from the catalog or "
             "does not match its catalog family/label"
         )
+    if catalog_scenario is not None and (
+        manifest.purpose not in {catalog_scenario.purpose, "pilot"}
+        or manifest.cohort_id != catalog_scenario.cohort_id
+    ):
+        errors.append("SCENARIO_CATALOG_MISMATCH: frozen purpose/cohort differs from catalog")
     if (
         manifest.collection_seed is None
         or not manifest.scenario_parameters
@@ -188,6 +194,11 @@ def _audit_run(
             f"each run must contain exactly one aggregated incident; found {len(incidents)}"
         )
     for incident in incidents:
+        if require_context and manifest.purpose == "trainable" and (
+            incident.context_status != "AVAILABLE" or not incident.context_revision
+            or incident.observation_quality != "COMPLETE"
+        ):
+            errors.append("trainable run requires available as-of context and complete telemetry")
         if incident.family_hint != manifest.family:
             errors.append(
                 f"family mismatch: manifest={manifest.family}, incident={incident.family_hint}"
@@ -243,6 +254,9 @@ def _audit_run(
     }
     if any(ground_truth.get(name) != value for name, value in manifest_identity.items()):
         errors.append("ground truth identity does not match finalized scenario manifest")
+    if (ground_truth.get("purpose", "trainable") != manifest.purpose
+            or ground_truth.get("cohort_id") != manifest.cohort_id):
+        errors.append("ground truth purpose/cohort does not match finalized manifest")
     if catalog_scenario is not None:
         catalog_contract = {
             "expected_behavior": catalog_scenario.expected_behavior,
@@ -322,7 +336,9 @@ def _audit_run(
     )
     if (
         not isinstance(start_contract, dict)
-        or start_contract.get("version") != "collection-start-contract-v1"
+        or start_contract.get("version") not in {
+            "collection-start-contract-v1", "collection-start-contract-v2"
+        }
         or start_contract_sha256 != state.get("start_contract_sha256")
         or start_contract_sha256 != metadata.get("start_contract_sha256")
         or any(start_contract.get(name) != state.get(name) for name in bound_start_fields)
@@ -355,6 +371,8 @@ def _audit_run(
     ).hexdigest()
     if (
         frozen_parameters.get("run_id") != manifest.run_id
+        or frozen_parameters.get("purpose", "trainable") != manifest.purpose
+        or frozen_parameters.get("cohort_id") != manifest.cohort_id
         or frozen_parameters.get("scenario_id") != manifest.scenario_id
         or frozen_parameters.get("family") != manifest.family
         or frozen_parameters.get("label") != manifest.label
@@ -477,7 +495,10 @@ def audit_dataset(
     scenario_catalog_path: Path = Path("config/scenario-catalog.yaml"),
     source_config_path: Path = Path("config/collection-sources.yaml"),
     taxonomy_path: Path = Path("config/suspicious-process-taxonomy.yaml"),
+    mode: str = "final",
 ) -> dict[str, Any]:
+    if mode not in {"progress", "final"}:
+        raise ValueError("audit mode must be progress or final")
     if minimum_runs < 5:
         raise ValueError("minimum_runs must be at least 5 for the configured grouped split")
     if target_runs < minimum_runs:
@@ -497,12 +518,14 @@ def audit_dataset(
     catalog = {item.scenario_id: item for item in parsed_catalog.scenarios}
     expected_scenarios: dict[str, set[str]] = {name: set() for name in STRATA}
     for item in parsed_catalog.scenarios:
-        expected_scenarios[f"{item.family}:{item.label}"].add(item.scenario_id)
+        if item.purpose == "trainable":
+            expected_scenarios[f"{item.family}:{item.label}"].add(item.scenario_id)
     schema = load_feature_schema(Path(__file__).with_name("feature_schema.json"))
     catalog_sha256 = _sha256(scenario_catalog_path)
     schema_sha256 = _sha256(Path(__file__).with_name("feature_schema.json"))
     try:
         source_config_sha256 = _sha256(source_config_path)
+        source_document = yaml.safe_load(source_config_path.read_text(encoding="utf-8"))
         taxonomy_sha256 = _sha256(taxonomy_path)
     except OSError as exc:
         raise ValueError(f"invalid canonical collection contract: {exc}") from exc
@@ -538,6 +561,7 @@ def audit_dataset(
             schema_sha256,
             source_config_sha256,
             taxonomy_sha256,
+            require_context=bool(source_document.get("context_baseline_path")),
         )
         run_id = manifest.run_id if manifest is not None else manifest_path.parent.name
         if errors:
@@ -609,6 +633,18 @@ def audit_dataset(
                 )
 
     incident_owners: dict[str, str] = {}
+    bucket_owners: dict[tuple[str, int], str] = {}
+    for run_id, (manifest, _) in candidates.items():
+        bucket = int(manifest.start_time.timestamp()) // 300
+        key = (manifest.host.casefold(), bucket)
+        previous = bucket_owners.setdefault(key, run_id)
+        if previous != run_id:
+            invalid_runs.update({previous, run_id})
+            _issue(
+                issues, "BUCKET_REUSE",
+                f"host {manifest.host} reuses UTC bucket {bucket} with {previous}",
+                run_id=run_id,
+            )
     for run_id, (_, incidents) in candidates.items():
         for incident in incidents:
             owner = incident_owners.get(incident.incident_id)
@@ -623,8 +659,14 @@ def audit_dataset(
             else:
                 incident_owners[incident.incident_id] = run_id
 
-    valid = {
+    all_valid = {
         run_id: value for run_id, value in candidates.items() if run_id not in invalid_runs
+    }
+    excluded_purposes = Counter(
+        manifest.purpose for manifest, _ in all_valid.values() if manifest.purpose != "trainable"
+    )
+    valid = {
+        run_id: value for run_id, value in all_valid.items() if value[0].purpose == "trainable"
     }
     parameter_rows: dict[str, list[tuple[str, int, dict[str, Any]]]] = {
         name: [] for name in STRATA
@@ -833,10 +875,31 @@ def audit_dataset(
                 f"maximum is {maximum_scenario_share:.1%}",
             )
 
+    pending_issues: list[dict[str, str]] = []
+    incomplete = any(
+        value["valid_runs"] < minimum_runs or value["distinct_scenarios"] < minimum_scenarios
+        for value in strata.values()
+    )
+    if mode == "progress" and incomplete:
+        # Only collection progress/design checks may be deferred. All raw,
+        # checksum, provenance, collision and contract errors remain blocking.
+        progress_codes = {
+            "STRATUM_SHORTAGE", "SCENARIO_DIVERSITY", "SCENARIO_CONCENTRATION",
+            "SCENARIO_CATALOG_COVERAGE", "SCENARIO_IMBALANCE",
+            "FEATURE_LABEL_SEPARATION", "JOINT_FEATURE_LABEL_SEPARATION",
+            "PARAMETER_LABEL_SEPARATION",
+        }
+        pending_issues = [
+            {**issue, "severity": "PENDING"}
+            for issue in issues if issue["code"] in progress_codes
+        ]
+        issues = [issue for issue in issues if issue["code"] not in progress_codes]
     error_count = sum(issue["severity"] == "ERROR" for issue in issues)
     minimum_met = all(value["valid_runs"] >= minimum_runs for value in strata.values())
     target_met = all(value["valid_runs"] >= target_runs for value in strata.values())
-    if error_count or not minimum_met:
+    if mode == "progress" and not error_count and incomplete:
+        status = "COLLECTING"
+    elif error_count or not minimum_met:
         status = "NOT_READY"
     elif target_met:
         status = "TARGET_MET"
@@ -844,6 +907,8 @@ def audit_dataset(
         status = "READY"
     return {
         "audit_version": "dataset-audit-v2",
+        "audit_mode": mode,
+        "pending_issues": pending_issues,
         "collection_contract_sha256": _payload_sha256({
             "source_config_sha256": source_config_sha256,
             "taxonomy_sha256": taxonomy_sha256,
@@ -862,6 +927,7 @@ def audit_dataset(
         "raw_event_rows_are_independent_samples": False,
         "discovered_runs": len(candidates),
         "total_valid_runs": len(valid),
+        "excluded_purpose_counts": dict(excluded_purposes),
         "invalid_run_count": len(invalid_runs),
         "excluded_aborted_run_count": len(excluded_aborted_runs),
         "error_count": error_count,
@@ -899,5 +965,11 @@ def format_audit_report(report: dict[str, Any]) -> str:
         rows.extend(
             f"- [{item['code']}] {item['run_id']}: {item['message']}"
             for item in report["issues"]
+        )
+    if report.get("pending_issues"):
+        rows.append("PENDING COLLECTION CHECKS (not final readiness):")
+        rows.extend(
+            f"- [{item['code']}] {item['message']}"
+            for item in report["pending_issues"]
         )
     return "\n".join(rows) + "\n"

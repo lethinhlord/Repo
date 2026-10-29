@@ -68,9 +68,13 @@ def write_run(
     account_successes: int = 1,
     remote: bool = False,
     timing_offset: float | None = None,
+    time_slot: int | None = None,
 ) -> None:
     run_id = f"{family.upper()}-{label.upper()}-{index:02d}"
-    started = datetime(2026, 10, 16, 1, 0, 5, tzinfo=UTC) + timedelta(minutes=10 * index)
+    slot = time_slot if time_slot is not None else (
+        index + 20 * ((family == "c2") * 2 + (label == "malicious"))
+    )
+    started = datetime(2026, 10, 16, 1, 0, 5, tzinfo=UTC) + timedelta(minutes=10 * slot)
     ended = started + timedelta(seconds=30)
     run_dir = root / "data/raw" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -255,12 +259,15 @@ def write_run(
         raw_windows.append(win(1, .5, {"image": "curl.exe", "processGuid": "fixture-guid",
             "commandLine": f"curl.exe http://10.40.0.10:8080/status?run={nonce}"}))
         offsets = c2_offsets if c2_offsets is not None else [1+i*step for i in range(index+2)]
-        for seconds in offsets:
+        for connection, seconds in enumerate(offsets):
             raw_windows.append(win(3, seconds, {"image": "curl.exe", "processGuid": "fixture-guid",
                 "initiated": "true", "sourceIp": "10.20.0.10",
+                "sourcePort": str(50000 + connection), "protocol": "tcp",
                 "destinationIp": "10.40.0.10", "destinationPort": "8080"}))
             timestamp = (started + timedelta(seconds=seconds)).isoformat()
             payload = {"timestamp": timestamp, "event_type": "http", "src_ip": "10.20.0.10",
+                "src_port": 50000 + connection, "proto": "TCP",
+                "flow_id": f"{run_id}-{connection}",
                 "dest_ip": "10.40.0.10", "dest_port": 8080, "http": {"url": f"/status?run={nonce}"}}
             raw_suricata.append({"timestamp": timestamp, "agent": {"name": "NET-SENSOR"},
                                  "full_log": json.dumps(payload)})
@@ -449,6 +456,16 @@ def test_audit_reports_ready_at_ten_independent_runs_per_stratum(tmp_path: Path)
     assert report["total_valid_runs"] == 40
     assert report["strata"]["c2:benign"]["valid_runs"] == 10
     assert report["strata"]["c2:benign"]["shortage_to_target"] == 2
+
+
+def test_auditor_blocks_individually_valid_runs_that_reuse_a_bucket(tmp_path: Path) -> None:
+    write_catalog(tmp_path)
+    for label in ("benign", "malicious"):
+        write_run(tmp_path, family="account", label=label, index=0, scenario_slot=1, time_slot=0)
+    report = run_audit(tmp_path)
+    assert report["status"] == "NOT_READY"
+    assert report["invalid_run_count"] == 2
+    assert any(item["code"] == "BUCKET_REUSE" for item in report["issues"])
 
 
 def test_auditor_rejects_nonempty_but_meaningless_raw_evidence(tmp_path: Path) -> None:

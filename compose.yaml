@@ -12,6 +12,7 @@ services:
       MODEL_PACKAGE_SIGNING_KEY: "${MODEL_PACKAGE_SIGNING_KEY:?Set MODEL_PACKAGE_SIGNING_KEY in .env}"
       FEATURE_STATE_DB: "/app/state/feature-state.sqlite3"
       FEATURE_STATE_RETENTION_SECONDS: "${FEATURE_STATE_RETENTION_SECONDS:-86400}"
+      CONTEXT_BASELINE_PATH: "/app/context-baseline.json"
       INCIDENT_DB: "/app/state/incidents.sqlite3"
       MODEL_FEEDBACK_DB: "/app/state/model-feedback.sqlite3"
       MODEL_MONITORING_DB: "${MODEL_MONITORING_DB:-/app/state/model-monitoring.sqlite3}"
@@ -26,6 +27,12 @@ services:
     volumes:
       - ${MODEL_PACKAGE_HOST_DIR:-./ml/model-package}:/app/ml/model-package:ro
       - feature_state:/app/state
+      - type: bind
+        source: ${CONTEXT_BASELINE_HOST_FILE:-./evidence/context-baseline.json}
+        target: /app/context-baseline.json
+        read_only: true
+        bind:
+          create_host_path: false
     security_opt:
       - no-new-privileges:true
     cap_drop:

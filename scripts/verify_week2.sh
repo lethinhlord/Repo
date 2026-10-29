@@ -60,13 +60,19 @@ feature = json.loads(Path("evidence/week2-feature-response.json").read_text())
 result = json.loads(Path("evidence/week2-e2e-response.json").read_text())
 benign = json.loads(Path("evidence/week2-e2e-benign-response.json").read_text())
 degraded = json.loads(Path("evidence/week2-e2e-degraded-response.json").read_text())
-assert feature["feature_schema_version"] == "features-v2"
-assert feature["quality_status"] == "COMPLETE"
-assert result["status"] in {"shadow_notified", "review_notified"}
+assert feature["feature_schema_version"] == "features-v3"
+# The legacy fixture has no complete raw window or enrolled history.
+# It must prove the conservative path, never claim a complete observation.
+assert feature["quality_status"] == "PARTIAL"
+assert feature["incident"]["observation_quality"] == "PARTIAL"
+assert feature["incident"]["context_status"] != "AVAILABLE"
+assert result["status"] == "review_notified"
+assert result["review_required"] is True
 assert result["automation_state"] == "SHADOW"
 assert result["strong_action_allowed"] is False
 assert result["notification_status"] in {"SENT", "ALREADY_SENT"}
-assert benign["status"] in {"shadow_notified", "review_notified"}
+assert benign["status"] == "review_notified"
+assert benign["review_required"] is True
 assert benign["strong_action_allowed"] is False
 assert degraded["response_code"] == 401
 assert degraded["status"] == "unauthorized"

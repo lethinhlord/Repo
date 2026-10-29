@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import re
 from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any
 
-from ml.behavior_features import NetworkObservation
+from ml.behavior_features import NetworkObservation, SuricataObservation
 
 
 def parse_time(value: Any) -> datetime | None:
@@ -51,15 +52,18 @@ def suricata_payload(event: dict[str, Any]) -> dict[str, Any] | None:
             payload = json.loads(full_log)
     if not isinstance(payload, dict):
         payload = event.get("data")
-    if isinstance(payload, dict) and isinstance(payload.get("event_type"), str) and payload.get(
-        "event_type"
-    ) in {
-        "alert",
-        "flow",
-        "dns",
-        "http",
-        "tls",
-    }:
+    if (
+        isinstance(payload, dict)
+        and isinstance(payload.get("event_type"), str)
+        and payload.get("event_type")
+        in {
+            "alert",
+            "flow",
+            "dns",
+            "http",
+            "tls",
+        }
+    ):
         return payload
     return None
 
@@ -70,6 +74,12 @@ def event_time(event: dict[str, Any]) -> datetime | None:
         return parse_time(system.get("systemTime"))
     payload = suricata_payload(event)
     if payload is not None:
+        if payload.get("event_type") == "flow" and isinstance(payload.get("flow"), dict):
+            # Flow emission may be delayed by timeouts. Keep its original EVE
+            # timestamp in raw evidence, but attribute support to the flow start.
+            started = parse_time(payload["flow"].get("start"))
+            if started is not None:
+                return started
         return parse_time(payload.get("timestamp"))
     return parse_time(event.get("timestamp"))
 
@@ -112,6 +122,34 @@ def is_interactive_logon(
 ) -> bool:
     value = str(eventdata.get("logonType", eventdata.get("LogonType", ""))).strip()
     return value in {str(item) for item in allowed_logon_types}
+
+
+def account_observation_eligible(
+    eventdata: dict[str, Any],
+    allowed_logon_types: tuple[int, ...] | list[int] = (2, 3, 10),
+) -> bool:
+    """Human-account scope, independent of scenario names or labels.
+
+    Virtual session identities require their OS SID namespace, domain and name;
+    a local account merely named DWM-1 must remain observable.
+    """
+    if not account_user(eventdata) or not is_interactive_logon(eventdata, allowed_logon_types):
+        return False
+    sid = str(eventdata.get("targetUserSid", eventdata.get("TargetUserSid", ""))).casefold()
+    domain = str(
+        eventdata.get("targetDomainName", eventdata.get("TargetDomainName", "")),
+    ).casefold()
+    user = account_user(eventdata)
+    virtual_session = (
+        domain == "window manager"
+        and re.fullmatch(r"dwm-\d+", user)
+        and re.fullmatch(r"s-1-5-90-\d+-\d+", sid)
+    ) or (
+        domain == "font driver host"
+        and re.fullmatch(r"umfd-\d+", user)
+        and re.fullmatch(r"s-1-5-96-\d+-\d+", sid)
+    )
+    return not virtual_session
 
 
 def process_guid(eventdata: dict[str, Any]) -> str:
@@ -190,6 +228,8 @@ def suricata_correlates(
     *,
     source_ips: tuple[str, ...] | list[str] | set[str] = (),
 ) -> bool:
+    if flow_connection_key(payload) is None:
+        return False
     response = suricata_dns_is_response(payload.get("dns"))
     source_field, destination_field = ("dest_ip", "src_ip") if response else ("src_ip", "dest_ip")
     if source_ips and normalize_ip(payload.get(source_field)) not in {
@@ -208,9 +248,173 @@ def suricata_correlates(
             if observation.dns_query.strip(".").casefold() in dns_names:
                 return True
         elif (
-            normalize_ip(observation.destination) == payload_ip
+            observation.source is not None
+            and normalize_ip(observation.source) == normalize_ip(payload.get(source_field))
+            and observation.source_port is not None
+            and observation.source_port == payload.get("dest_port" if response else "src_port")
+            and observation.protocol is not None
+            and observation.protocol.casefold() == str(payload.get("proto", "")).casefold()
+            and normalize_ip(observation.destination) == payload_ip
             and observation.destination_port is not None
             and observation.destination_port == payload_port
         ):
             return True
     return False
+
+
+def suricata_observations(payloads: list[dict[str, Any]]) -> list[SuricataObservation]:
+    """Count each cumulative flow counter once; alerts retain their own severity."""
+    observations = []
+    counters: dict[tuple[str, ...], tuple[int, int]] = {}
+    for payload in payloads:
+        alert = payload.get("event_type") == "alert"
+        severity = None
+        if alert:
+            with suppress(TypeError, ValueError):
+                severity = int((payload.get("alert") or {}).get("severity"))
+        observations.append(SuricataObservation(alert, severity, 0))
+        flow = payload.get("flow")
+        if not isinstance(flow, dict) or not payload.get("flow_id"):
+            continue
+        started = parse_time(flow.get("start"))
+        endpoints = sorted(
+            (
+                f"{normalize_ip(payload.get('src_ip'))}:{payload.get('src_port', '')}",
+                f"{normalize_ip(payload.get('dest_ip'))}:{payload.get('dest_port', '')}",
+            )
+        )
+        key = (
+            str(payload.get("sensor_instance", "")),
+            str(payload["flow_id"]),
+            str(payload.get("proto", "")),
+            *endpoints,
+            started.isoformat() if started else "unknown-start",
+        )
+        values = []
+        for field in ("bytes_toserver", "bytes_toclient"):
+            value = flow.get(field, 0)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError("flow counters must be non-negative integers")
+            values.append(value)
+        previous = counters.get(key, (0, 0))
+        counters[key] = (max(previous[0], values[0]), max(previous[1], values[1]))
+    observations.extend(SuricataObservation(False, None, sum(value)) for value in counters.values())
+    return observations
+
+
+def flow_connection_key(payload: dict[str, Any]) -> tuple[str, ...] | None:
+    if not payload.get("flow_id") or str(payload.get("proto", "")).casefold() not in {"tcp", "udp"}:
+        return None
+    for field in ("src_ip", "dest_ip"):
+        try:
+            ipaddress.ip_address(normalize_ip(payload.get(field)))
+        except ValueError:
+            return None
+    for field in ("src_port", "dest_port"):
+        value = payload.get(field)
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 < value <= 65535:
+            return None
+    endpoints = sorted(
+        (
+            f"{normalize_ip(payload.get('src_ip'))}:{payload.get('src_port', '')}",
+            f"{normalize_ip(payload.get('dest_ip'))}:{payload.get('dest_port', '')}",
+        )
+    )
+    return (
+        str(payload.get("sensor_instance", "")),
+        str(payload["flow_id"]),
+        str(payload.get("proto", "")).casefold(),
+        *endpoints,
+    )
+
+
+def linked_flow(
+    payload: dict[str, Any],
+    references: list[tuple[dict[str, Any], datetime]],
+    tolerance: float,
+) -> bool:
+    """A final flow needs an attributable transaction, tuple and time interval."""
+    if payload.get("event_type") != "flow":
+        return False
+    key = flow_connection_key(payload)
+    flow = payload.get("flow")
+    if key is None or not isinstance(flow, dict):
+        return False
+    start, end = parse_time(flow.get("start")), parse_time(flow.get("end"))
+    if start is None or end is None or end < start:
+        return False
+    return any(
+        reference.get("event_type") in {"http", "dns", "tls"}
+        and flow_connection_key(reference) == key
+        and -tolerance <= (at - start).total_seconds()
+        and (at - end).total_seconds() <= tolerance
+        for reference, at in references
+    )
+
+
+def flow_counter_issues(
+    payloads: list[dict[str, Any]],
+    *,
+    window_start: datetime,
+    window_end: datetime,
+) -> list[str]:
+    keys = {flow_connection_key(item) for item in payloads}
+    keys.discard(None)
+    if not keys:
+        return ["flow:missing_final_counters"]
+    reasons = set()
+    for key in keys:
+        related = [item for item in payloads if flow_connection_key(item) == key]
+        final = [item for item in related if item.get("event_type") == "flow"]
+        if not final:
+            reasons.add("flow:missing_final_counters")
+            continue
+        related_flows = [item["flow"] for item in related if isinstance(item.get("flow"), dict)]
+        final_flows = [item["flow"] if isinstance(item.get("flow"), dict) else {} for item in final]
+        starts = {parse_time(flow.get("start")) for flow in final_flows}
+        if len(starts) != 1:
+            reasons.add("flow:ambiguous_reused_id")
+        for flow in final_flows:
+            start, end = parse_time(flow.get("start")), parse_time(flow.get("end"))
+            if start is None or end is None or not window_start <= start <= end < window_end:
+                reasons.add("flow:cross_window_or_invalid_interval")
+            for field in ("bytes_toserver", "bytes_toclient"):
+                value = flow.get(field)
+                if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                    reasons.add("flow:invalid_counter")
+                elif any(
+                    isinstance(row.get(field), int) and row[field] > value for row in related_flows
+                ):
+                    reasons.add("flow:counter_reset_or_conflict")
+    return sorted(reasons)
+
+
+def unambiguous_transactions(
+    references: list[tuple[dict[str, Any], datetime]], tolerance: float
+) -> list[tuple[dict[str, Any], datetime]]:
+    """DNS22 has no socket: competing tuples for the same query stay uncertain."""
+    result = []
+    for payload, at in references:
+        names = set(suricata_dns_names(payload.get("dns")))
+        competing = {
+            flow_connection_key(other)
+            for other, other_at in references
+            if names.intersection(suricata_dns_names(other.get("dns")))
+            and abs((at - other_at).total_seconds()) <= 2 * tolerance
+        }
+        if not names or len(competing) == 1:
+            result.append((payload, at))
+    return result
+
+
+def linked_transaction(
+    payload: dict[str, Any], at: datetime,
+    references: list[tuple[dict[str, Any], datetime]], tolerance: float,
+) -> bool:
+    """Nonce inheritance requires the retained transaction's full identity and time."""
+    key = flow_connection_key(payload)
+    return key is not None and any(
+        flow_connection_key(reference) == key
+        and abs((at - reference_at).total_seconds()) <= tolerance
+        for reference, reference_at in references
+    )

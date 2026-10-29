@@ -20,10 +20,15 @@ class ExternalModel(BaseModel):
 class HealthResponse(StrictModel):
     status: Literal["ok"] = "ok"
     service: Literal["datn-ai-soar-api"] = "datn-ai-soar-api"
-    api_version: Literal["3.1.0"] = "3.1.0"
+    api_version: Literal["4.0.0"] = "4.0.0"
 
 
 class IncidentRequest(StrictModel):
+    feature_schema_version: Literal["features-v3"] = "features-v3"
+    context_status: Literal["AVAILABLE", "MISSING", "STALE", "FUTURE", "UNKNOWN"] = "MISSING"
+    context_revision: str | None = None
+    review_reasons: list[str] = Field(default_factory=list)
+    observation_quality: Literal["COMPLETE", "PARTIAL"] = "PARTIAL"
     incident_id: str = Field(min_length=1, max_length=128)
     asset_id: str = Field(min_length=1, max_length=128)
     start_time: datetime
@@ -88,6 +93,8 @@ class WazuhAlertData(ExternalModel):
     src_port: int | None = Field(default=None, ge=0, le=65535)
     dest_port: int | None = Field(default=None, ge=0, le=65535)
     flow_id: int | str | None = None
+    proto: str | None = Field(default=None, max_length=32)
+    sensor_instance: str | None = Field(default=None, max_length=128)
     dns: dict[str, object] | None = None
     http: dict[str, object] | None = None
     tls: dict[str, object] | None = None
@@ -137,7 +144,7 @@ class SignedWazuhIngestResponse(StrictModel):
 
 
 class FeaturePipelineResponse(StrictModel):
-    feature_schema_version: Literal["features-v2"] = "features-v2"
+    feature_schema_version: Literal["features-v3"] = "features-v3"
     feature_order: list[str]
     ordered_vector: list[float]
     quality_status: Literal["COMPLETE", "PARTIAL"]
@@ -154,7 +161,7 @@ class WazuhAlertBatch(StrictModel):
 
 
 class FeatureBatchResponse(StrictModel):
-    feature_schema_version: Literal["features-v2"] = "features-v2"
+    feature_schema_version: Literal["features-v3"] = "features-v3"
     input_alert_count: int = Field(ge=1)
     unique_alert_count: int = Field(ge=1)
     duplicate_alert_count: int = Field(ge=0)
@@ -168,7 +175,13 @@ class FeatureStateResponse(StrictModel):
     feature: FeaturePipelineResponse
 
 
+class FeatureWindowFinalizeRequest(StrictModel):
+    alert_id: str = Field(min_length=1, max_length=128)
+    window_minutes: int = Field(default=5, ge=1, le=5)
+
+
 class PredictionResponse(StrictModel):
+    review_reasons: list[str] = Field(default_factory=list)
     model_version: str = Field(default="mock-v1", min_length=1, max_length=128)
     predicted_class: Literal["malicious", "benign"]
     malicious_probability: float = Field(ge=0.0, le=1.0)
@@ -412,8 +425,8 @@ class NotificationDispatchResponse(StrictModel):
 class ReadinessResponse(StrictModel):
     status: Literal["ready", "degraded"]
     service: Literal["datn-ai-soar-api"] = "datn-ai-soar-api"
-    api_version: Literal["3.1.0"] = "3.1.0"
-    feature_schema_version: Literal["features-v2"] = "features-v2"
+    api_version: Literal["4.0.0"] = "4.0.0"
+    feature_schema_version: Literal["features-v3"] = "features-v3"
     asset_context_revision: Literal["asset-context-v1"] = "asset-context-v1"
     risk_policy_revision: Literal["risk-week2-v2"] = "risk-week2-v2"
     ti_policy_revision: Literal["ti-week2-v1"] = "ti-week2-v1"

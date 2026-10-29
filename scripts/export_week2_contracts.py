@@ -13,6 +13,7 @@ from api.app.contracts import (  # noqa: E402 - repository root is bootstrapped 
     FeatureBatchResponse,
     FeaturePipelineResponse,
     FeatureStateResponse,
+    FeatureWindowFinalizeRequest,
     IncidentRecordRequest,
     IncidentRecordResponse,
     ModelMetricsResponse,
@@ -35,6 +36,7 @@ def write_json(name: str, value: dict) -> None:
     (SCHEMA_DIR / name).write_text(
         json.dumps(value, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
+        newline="\n",
     )
 
 
@@ -45,6 +47,9 @@ if __name__ == "__main__":
     )
     write_json("feature-batch-response.schema.json", FeatureBatchResponse.model_json_schema())
     write_json("feature-state-response.schema.json", FeatureStateResponse.model_json_schema())
+    write_json(
+        "feature-window-finalize.schema.json", FeatureWindowFinalizeRequest.model_json_schema(),
+    )
     write_json("incident-record-request.schema.json", IncidentRecordRequest.model_json_schema())
     write_json("incident-record-response.schema.json", IncidentRecordResponse.model_json_schema())
     write_json("signed-ingest-request.schema.json", SignedWazuhIngestRequest.model_json_schema())

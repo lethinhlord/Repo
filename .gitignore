@@ -18,8 +18,13 @@ build/
 *.pkl
 *.onnx
 data/raw/
+data/quarantine/
 data/processed/
 evidence/scenario-runs/
+evidence/quarantine/
+evidence/bucket-reservations/
+evidence/context-baseline*.json
+evidence/context-captures/
 evidence/dataset-audit.json
 evidence/live-week2-*.json
 run-drafts/

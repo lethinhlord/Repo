@@ -30,7 +30,7 @@ def test_health_exposes_service_liveness_identity() -> None:
     assert response.json() == {
         "status": "ok",
         "service": "datn-ai-soar-api",
-        "api_version": "3.1.0",
+        "api_version": "4.0.0",
     }
     assert app.version == response.json()["api_version"]
 

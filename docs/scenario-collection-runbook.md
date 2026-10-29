@@ -1,30 +1,78 @@
-# QUY TRÌNH CHUẨN THU THẬP DỮ LIỆU TRAIN TRÊN LAB 4 VM
+# HƯỚNG DẪN BÀN GIAO KIÊN — LAB 4 VM VÀ THU DỮ LIỆU V3
 
-Phiên bản: 2.2 — hoàn tất ngày 28/10/2026
-Phạm vi: dữ liệu `account-benign`, `account-malicious`, `c2-benign`,
-`c2-malicious` cho nhánh `feature/week3-model-training`.
+Phiên bản tài liệu: 3.1 — ngày 29/10/2026.
+Máy thực hiện: máy của Kiên có VMware; các thao tác bên dưới không yêu cầu Thịnh
+truy cập trực tiếp vào máy đó. Người thực hiện ghi kết quả thật, không đánh dấu đạt sẵn.
 
-Baseline sửa lỗi bắt buộc: người bàn giao ghi **commit SHA đã được merge** vào
-`COLLECTION_BASELINE_COMMIT`; SHA đó phải là ancestor của commit đang chạy. Không chỉ
-kiểm tra tên branch và không dùng một tag có thể bị force-move.
+TRẠNG THÁI BÀN GIAO HIỆN TẠI
+
+- Có thể dùng tài liệu để dựng/kiểm lại 4 VM, cấu hình telemetry, enrollment context,
+  chạy pilot bằng collector v3, kiểm tra, sao lưu và gửi evidence cho Thịnh.
+- Chưa mở đợt thu 40–48 mẫu train chính thức. Catalog đối chứng/cohort/taxonomy và
+  challenge G01–G07 đang hoàn thiện; nhánh triển khai chưa được chốt thành baseline
+  thu train. Cổng G7 dưới đây chủ động dừng nếu các điều kiện đó chưa đạt.
+- Không lấy pilot, smoke test, dữ liệu cũ hoặc JSON viết tay để bù quota. Khi Thịnh
+  gửi baseline thu chính thức đã kiểm, Kiên mới thực hiện phần thu chính thức.
+- 10–12 run/nhóm là quota thu ban đầu, không bảo đảm accuracy hoặc đủ điều kiện
+  phản ứng tự động. Model/policy thiếu bằng chứng phải REVIEW; hệ thống giữ SHADOW.
+
+Nguồn pilot đã rà soát: nhánh `fix/handoff-context-v3` của
+https://github.com/lethinhlord/Repo.
+Dùng bản Kiên.txt 3.1 này làm hướng dẫn thao tác. Hướng dẫn có revision tài liệu riêng;
+checkout mã pilot có thể chứa bản runbook lịch sử, không dùng bản lịch sử đó để thực hiện.
+`REVIEWED_SOURCE_COMMIT` được ghi bằng SHA đầy đủ ở mục 6.2. Đây là revision pilot,
+không phải tag/commit baseline thu train. Không dùng lại tag `data-collection-v2.0.0`
+hoặc tự chọn commit theo tên nhánh.
+
+## 0. Cách thực hiện và trách nhiệm
+
+1. Kiên: dựng/kiểm 4 VM, mạng, giờ, dịch vụ, capture thật, pilot, backup/restore,
+   ảnh và nhật ký. Nếu hệ thống đã cài đúng, kiểm tra các mục tương ứng trước khi thay đổi.
+2. Thịnh: chốt code/schema/catalog/cohort/context contract, xử lý sai lệch pilot,
+   phát hành baseline thu chính thức; audit/build/Colab và đánh giá model.
+3. Từng khối lệnh có tên máy ngay trước khối. Không chạy lệnh Windows trên Ubuntu,
+   hoặc lệnh NET-SENSOR trên SOC-AI. Dùng console VMware khi đổi mạng.
+4. Bash: mở `bash`, dùng `set -euo pipefail` cho phiên thao tác. PowerShell: mở
+   Windows PowerShell 64-bit, dùng Administrator ở các mục cài đặt/cấu hình.
+5. Giữ console SOC-AI và console hành động đang mở xuyên suốt một run. Nếu mất phiên,
+   dùng `scenario_session status` xác định trạng thái rồi phục hồi đúng RUN_ID;
+   không tạo run khác hoặc đoán lại tham số.
+6. Mỗi bước có điều kiện đạt. Sai điều kiện thì giữ log/evidence, dừng bước phụ thuộc,
+   sửa nguyên nhân rồi chạy lại phép kiểm. Không sửa timestamp, nhãn, nonce, hash,
+   receipt hoặc giảm gate để hợp thức hóa một run.
+7. Dùng checkout mới `~/datn-ai-soar-v3`, tách khỏi repo/dataset cũ. Dữ liệu cũ có thể
+   giữ ở nơi lưu trữ riêng để tham khảo, không nhập vào checkout này.
+
+Chỉ cần 4 VM cho phạm vi này: Windows 11 là endpoint; SOC-AI gộp Wazuh và collector;
+NET-SENSOR gộp router và Suricata; Kali phát hoạt động mô phỏng. Không dựng Domain
+Controller trong đợt này. Các account scenario hiện dùng local account trên Windows 11.
+
+Thứ tự thao tác: đọc mục 0–3 để hiểu contract; thực hiện 4–9 để cài/kiểm; quay lại
+bảng chuyển đổi 1.1; làm 10.1–10.5; theo mục 11–12 chạy bốn pilot 10.6; làm backup
+15 và bàn giao 18.1. Mục 10.7/13/14/18.2 chỉ dùng sau khi G7 được mở.
+
+Sản phẩm Kiên gửi sau pilot: source SHA, cấu hình/phiên bản thực tế, baseline + capture,
+raw/evidence của các pilot, báo cáo progress, backup đã restore kiểm tra và ảnh nguyên
+màn hình. Mục 15/18 quy định chi tiết. Không chỉ gửi ảnh hoặc một file CSV đã tách log.
+
 
 ## 1. Kết quả bắt buộc
 
-Mỗi lần chạy kịch bản là **một mẫu độc lập**, có một `run_id`, một nhãn được khai báo
+Mỗi lần thực thi mới là **một run/đơn vị thu**; các run cùng cohort vẫn có thể tương quan. Mỗi run có một `run_id`, một nhãn được khai báo
 trước khi chạy, bằng chứng gốc và checksum. Không coi từng dòng log là một mẫu.
 
 Mỗi code block Bash là một phiên lệnh fail-closed. Nếu block không lặp lại dòng khởi tạo,
 phải chạy `set -euo pipefail` trong cùng shell trước khi chạy; dừng ngay ở exit code khác
 0, không copy riêng các dòng sau lỗi và không thêm `|| true` ngoài vị trí đã ghi rõ.
 
-| Nhóm | Tối thiểu để bắt đầu train | Mục tiêu nên thu |
+| Nhóm | Quota tối thiểu để kiểm đợt thu | Mục tiêu nên thu |
 |---|---:|---:|
 | account-benign | 10 run hợp lệ | 12 |
 | account-malicious | 10 run hợp lệ | 12 |
 | c2-benign | 10 run hợp lệ | 12 |
 | c2-malicious | 10 run hợp lệ | 12 |
 
-Mỗi nhóm dùng đủ **năm** kịch bản trong `config/scenario-catalog.yaml`. Ở mốc 10,
+Chỉ sau G7 mới áp dụng quota: mỗi nhóm trainable dùng đủ **năm** kịch bản trong `config/scenario-catalog.yaml`. Ở mốc 10,
 mỗi kịch bản chạy đúng hai lần. Ở mốc 11, chọn một kịch bản để chạy lần thứ ba; ở mốc
 12, chọn thêm một kịch bản khác để chạy lần thứ ba. Vì vậy phân bố luôn cân bằng và
 không kịch bản nào vượt 27,3% số run của nhóm. Không nhân bản file để tăng số mẫu.
@@ -38,7 +86,8 @@ tính vào mốc 40–48 vì dùng schema `metadata.json`/`events_raw.jsonl`, ag
 Không xóa bộ cũ, không đổi tên file để hợp thức hóa và không copy `Benign`/`C2` vào
 `data/raw/`.
 
-Trước khi thu run mới, phải hoàn tất cả bốn chuyển đổi sau:
+Đây là bảng kiểm SAU cài đặt mục 4–9, không chạy lệnh ở mục 1.1 trên VM chưa cài
+Wazuh/repo/agent. Trước pilot mới phải hoàn tất cả bốn chuyển đổi sau:
 
 | Thành phần cũ | Trạng thái bắt buộc cho dataset mới |
 |---|---|
@@ -67,7 +116,7 @@ Kiểm tra chỉ đọc; lệnh phải không in đường dẫn nào:
 
 ```bash
 set -euo pipefail
-cd "$HOME/datn-ai-soar"
+cd "$HOME/datn-ai-soar-v3"
 if [ -d data/raw ]; then
   LEGACY_MARKERS=$(find data/raw -type f \
     \( -name events_raw.jsonl -o -name metadata.json \) -print)
@@ -89,7 +138,7 @@ Lệnh `scenario_session start` cũng từ chối fail-closed với lỗi
 `incompatible raw dataset layout` nếu phát hiện marker cũ hoặc run trước không còn
 validate được đầy đủ cả raw/evidence/checksum. Nếu bị từ chối, không xóa dữ liệu tại chỗ:
 sao lưu, xác minh checksum rồi chuyển toàn bộ bộ cũ ra ngoài repo dưới tên riêng. Chỉ sau
-đó mới chạy lại preflight và hai pilot ở G5.
+đó mới chạy lại preflight và pilot tại G6.
 
 ## 2. Kiến trúc 4 VM
 
@@ -106,16 +155,23 @@ management vì traffic cùng VMnet có thể đi tắt và Suricata không nhìn
 
 ## 3. Cổng kiểm soát theo thứ tự
 
-Không chuyển sang cổng sau nếu cổng trước chưa đạt:
+Không chuyển sang bước phụ thuộc khi cổng trước chưa đạt:
 
-1. `G0`: đúng tên máy, IP, giờ và snapshot sạch.
-2. `G1`: Windows → NET-SENSOR → Kali định tuyến được.
-3. `G2`: Wazuh nhận cả `WIN11-TARGET` và `NET-SENSOR`.
-4. `G3`: Sysmon có Event ID 1, 3, 22; Security có 4624/4625.
-5. `G4`: Suricata tạo EVE JSON và Wazuh chuyển EVE về Archives.
-6. `G5`: một pilot account và một pilot C2 finalize/validate được.
-7. `G6`: thu đủ 10–12 run mỗi nhóm; auditor báo `READY` hoặc `TARGET_MET`.
-8. `G7`: build dataset thành công, locked test vẫn `UNOPENED`.
+| Cổng | Điều kiện và bằng chứng |
+|---|---|
+| G0 | đúng source pilot/release, OS, tên máy, IP/MAC, giờ, snapshot và disk |
+| G1 | Windows → NET-SENSOR → Kali đúng route; management phục vụ quản trị/Wazuh |
+| G2 | Wazuh có WIN11-TARGET và NET-SENSOR Active |
+| G3 | Security 4624/4625 và Sysmon 1/3/22 mới xuất hiện tại manager |
+| G4 | EVE alert/DNS/HTTP/final flow về Archives; timeout/độ trễ đáp ứng grace |
+| G5 | enrollment riêng trước pilot, baseline hợp lệ/TTL/hash và đủ history |
+| G6 | pilot cả bốn nhóm VALID, parity, backup/restore và evidence được Thịnh kiểm |
+| G7 | baseline thu chính thức + cohort/catalog/taxonomy/challenge đã freeze |
+| G8 | quota mới đạt; final audit READY/TARGET_MET, không còn run hỏng |
+| G9 | build thành công, hash/split đúng, locked test UNOPENED; gói Colab đúng bốn file |
+
+Hiện chỉ triển khai tới G6. G7 chưa được xác nhận. Đủ ảnh, dịch vụ Active hoặc một
+pilot VALID không tự động mở G7 và không chứng minh model đã phân biệt tốt hai nhãn.
 
 ## 4. Chuẩn bị và snapshot
 
@@ -134,8 +190,12 @@ Tài nguyên khởi điểm:
 
 ### 4.1 Tạo mới bốn VM trong VMware Workstation
 
-1. Tải ISO từ trang chính thức, lưu cả SHA-256 và kiểm tra bằng
-   `Get-FileHash <ISO> -Algorithm SHA256` trên host.
+1. Tải ISO x86_64 từ các trang chính thức: Ubuntu Server 24.04 LTS tại
+   https://releases.ubuntu.com/24.04/ ; Windows 11 ISO tại
+   https://www.microsoft.com/software-download/windows11 ; Kali Installer tại
+   https://www.kali.org/get-kali/ . Chọn đúng OS/architecture trong installer, không
+   dựa chỉ vào tiêu đề trang. Lưu filename/version/SHA256SUMS; đối chiếu hash bằng
+   `Get-FileHash <ISO> -Algorithm SHA256` trên host. Không dùng ISO chỉnh sửa từ nguồn khác.
 2. Chọn `File > New Virtual Machine > Custom`, EFI/UEFI, rồi gắn ISO.
 3. Tạo đúng bốn VM, cấp CPU/RAM/disk theo bảng trên; disk dùng một file hoặc split đều
    được nhưng phải còn ít nhất 30 GB trống trên host trong suốt đợt thu.
@@ -154,18 +214,31 @@ sudo apt full-upgrade -y
 sudo apt install -y open-vm-tools openssh-server curl git jq
 sudo systemctl enable --now ssh
 grep '^PRETTY_NAME=' /etc/os-release
+if [ -f /var/run/reboot-required ]; then
+  echo 'REBOOT REQUIRED: reboot Linux now, then resume setup from the next section'
+fi
 ```
 
-Hai VM Ubuntu phải hiện `Ubuntu 24.04 LTS`. Nếu đang là Ubuntu 26.04 hoặc một bản chưa
+Trên hai VM Ubuntu, `. /etc/os-release; test "$ID" = ubuntu; test "$VERSION_ID" = 24.04` phải đạt; PRETTY_NAME có thể kèm số point release như 24.04.3 LTS. Nếu đang là Ubuntu 26.04 hoặc một bản chưa
 nằm trong ma trận hỗ trợ hiện hành của Wazuh, dừng và cài lại 24.04; không cố cài Wazuh
 rồi dùng kết quả lỗi làm dữ liệu.
 
 Đặt hostname:
 
 ```bash
-# Chạy đúng lệnh tương ứng trên từng VM Linux
+# CHỈ SOC-AI chạy dòng này:
 sudo hostnamectl set-hostname SOC-AI
+```
+
+NET-SENSOR:
+
+```bash
 sudo hostnamectl set-hostname NET-SENSOR
+```
+
+Kali:
+
+```bash
 sudo hostnamectl set-hostname ATTACK-LAB
 ```
 
@@ -361,11 +434,13 @@ if nmcli -t -f NAME connection show | grep -qx 'ATTACK-LAB'; then
   sudo nmcli connection modify ATTACK-LAB \
     connection.interface-name "$DATA_IF" ipv4.method manual \
     ipv4.addresses 10.40.0.10/24 \
-    ipv4.routes "10.20.0.0/24 10.40.0.1" ipv6.method disabled
+    ipv4.routes "10.20.0.0/24 10.40.0.1" ipv4.gateway "" \
++    ipv4.never-default yes ipv4.ignore-auto-dns yes ipv6.method disabled
 else
   sudo nmcli connection add type ethernet ifname "$DATA_IF" con-name ATTACK-LAB \
     ipv4.method manual ipv4.addresses 10.40.0.10/24 \
-    ipv4.routes "10.20.0.0/24 10.40.0.1" ipv6.method disabled
+    ipv4.routes "10.20.0.0/24 10.40.0.1" ipv4.gateway "" \
++    ipv4.never-default yes ipv4.ignore-auto-dns yes ipv6.method disabled
 fi
 sudo nmcli connection up ATTACK-LAB
 ip route get 10.20.0.10
@@ -373,23 +448,33 @@ ip route get 10.20.0.10
 
 ### 5.4 Windows 11
 
-Thay `Ethernet 2` bằng NIC VMnet3 thực tế. Khối dưới kiểm tra trạng thái trước để
-không tạo IP/route trùng khi chạy lại:
+Mở PowerShell Administrator tại console VMware. Đối chiếu MAC trước khi nhập alias:
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-$DataIf = "Ethernet 2"
+Get-NetAdapter | Format-Table Name,MacAddress,Status
+$DataIf = Read-Host 'Alias cua NIC VMnet3 da doi chieu MAC (vi du Ethernet 2)'
+$adapter = Get-NetAdapter -Name $DataIf -ErrorAction Stop
+$adapter | Format-List Name,MacAddress,Status
+$confirm = Read-Host 'Go VMNET3 de xac nhan day la NIC du lieu, KHONG phai management'
+if ($confirm -cne 'VMNET3') { throw 'NIC identification not confirmed' }
+Set-NetIPInterface -InterfaceAlias $DataIf -AddressFamily IPv4 -Dhcp Disabled
+# Chi bo APIPA tu NIC du lieu vua xac nhan; giu va bao loi moi IP khac.
+Get-NetIPAddress -InterfaceAlias $DataIf -AddressFamily IPv4 `
+  -ErrorAction SilentlyContinue | Where-Object IPAddress -Like '169.254.*' |
+  Remove-NetIPAddress -Confirm:$false
 $unexpectedIp = Get-NetIPAddress -InterfaceAlias $DataIf -AddressFamily IPv4 `
   -ErrorAction SilentlyContinue | Where-Object {
     $_.IPAddress -ne '10.20.0.10' -and $_.PrefixOrigin -ne 'WellKnown'
   }
 if ($unexpectedIp) { throw "Unexpected IPv4 address exists on $DataIf" }
+if (Get-NetRoute -InterfaceAlias $DataIf -DestinationPrefix '0.0.0.0/0' `
+  -ErrorAction SilentlyContinue) { throw 'Data NIC must not have a default gateway' }
 if (-not (Get-NetIPAddress -InterfaceAlias $DataIf -AddressFamily IPv4 `
-  -ErrorAction SilentlyContinue | Where-Object IPAddress -eq "10.20.0.10")) {
+  -ErrorAction SilentlyContinue | Where-Object IPAddress -eq '10.20.0.10')) {
   New-NetIPAddress -InterfaceAlias $DataIf -IPAddress 10.20.0.10 -PrefixLength 24
 }
-$routes = @(Get-NetRoute -DestinationPrefix "10.40.0.0/24" `
-  -ErrorAction SilentlyContinue)
+$routes = @(Get-NetRoute -DestinationPrefix '10.40.0.0/24' -ErrorAction SilentlyContinue)
 if ($routes | Where-Object {
   $_.InterfaceAlias -ne $DataIf -or $_.NextHop -ne '10.20.0.1'
 }) { throw 'Competing route to 10.40.0.0/24 exists' }
@@ -402,8 +487,9 @@ Test-NetConnection 10.40.0.10
 tracert -d 10.40.0.10
 ```
 
-Đạt G1 khi `tracert` đi qua `10.20.0.1`, sau đó tới `10.40.0.10`. Nếu đi qua
-management hoặc không có hop NET-SENSOR thì dừng, sửa mạng trước khi cài collector.
+Đạt G1 khi route dùng `10.20.0.1` trên NIC VMnet3 và `tracert` tới Kali. Nếu ICMP bị
+firewall chặn, không suy route đúng chỉ từ timeout: đối chiếu `Get-NetRoute`, MAC và
+canary TCP/DNS tại G4, quan sát cùng traffic ở NIC NET-SENSOR. Không thu qua management.
 
 ## 6. Cài SOC-AI
 
@@ -453,82 +539,141 @@ agent đã gửi dữ liệu, không tự tạo file rỗng để vượt kiểm
 `df -h /var/ossec` và tắt sau khi đã đóng gói dữ liệu. Không chạy một scenario qua thời
 điểm Archives rotate; nếu source rotate/truncate, collector sẽ từ chối run đó.
 
-### 6.2 Repo, môi trường Python và Week 2 services
+### 6.2 Repo và môi trường Python trên SOC-AI
+
+Dùng checkout mới để tránh đưa nhầm dataset/venv/config cũ vào đợt v3. Có Internet
+ở giai đoạn cài đặt; collection mode chỉ bật sau khi cài và tải tài nguyên xong.
+
+```bash
+set -euo pipefail
+test "$(id -u)" -ne 0 # Repo dung user thuong co sudo, khong dung root
+LAB_USER="$(id -un)"
+PROJECT_ROOT="$HOME/datn-ai-soar-v3"
+REVIEWED_SOURCE_COMMIT=d06d04034f0d1c996907365841f21cdb874e4d5a
+if [ ! -e "$PROJECT_ROOT" ]; then
+  git clone --branch fix/handoff-context-v3 --single-branch \
+    https://github.com/lethinhlord/Repo.git "$PROJECT_ROOT"
+fi
+test -d "$PROJECT_ROOT/.git"
+cd "$PROJECT_ROOT"
+test -z "$(git status --porcelain --untracked-files=all)" || {
+  echo 'STOP: checkout has local changes; preserve them and resolve before collection' >&2
+  exit 1
+}
+git fetch origin fix/handoff-context-v3
+git cat-file -e "$REVIEWED_SOURCE_COMMIT^{commit}"
+git checkout --detach "$REVIEWED_SOURCE_COMMIT"
+test "$(git rev-parse HEAD)" = "$REVIEWED_SOURCE_COMMIT"
+mkdir -p evidence operator-logs run-drafts
+git rev-parse HEAD | tee evidence/collection-source-commit.txt
+bash scripts/bootstrap_ml.sh
+.venv-ml/bin/python -m pip check
+# Tai wheel truoc collection mode de restore/validate offline cung OS/Python/architecture.
+mkdir -p operator-logs/wheelhouse
+.venv-ml/bin/python -m pip download --only-binary=:all: --dest operator-logs/wheelhouse \
+  --requirement requirements.lock --requirement requirements-ml.lock
+(cd operator-logs/wheelhouse && sha256sum ./* > ../wheelhouse.sha256)
+.venv-ml/bin/python -m pytest -q \
+  tests/test_scenario_collection.py tests/test_dataset_audit.py \
+  tests/test_collection_configuration.py tests/test_collection_windows.py \
+  tests/test_bucket_reservations.py tests/test_handoff_regressions.py \
+  tests/test_progress_audit.py tests/test_context_baseline.py \
+  tests/test_context_enrollment.py tests/test_context_dns_suffix.py \
+  tests/test_context_feature_contract.py tests/test_dataset_purposes.py \
+  tests/test_cohort_dataset_build.py tests/test_feature_window_closure.py
+.venv-ml/bin/python -m scripts.create_run_draft --help
+.venv-ml/bin/python -m scripts.scenario_session finalize --help
+.venv-ml/bin/python -m scripts.enroll_context_baseline --help
+```
+
+Các test phải đạt trên môi trường Linux, các CLI phải có `--purpose`,
+`finalize --wait-for-window`, enrollment `--dns-suffix`. Không lấy con số test đã chạy
+trên máy Windows của Thịnh làm bằng chứng Ubuntu của Kiên đã đạt.
+
+Cho user vận hành đọc Archives rồi mở phiên SSH mới:
 
 ```bash
 set -euo pipefail
 LAB_USER="$(id -un)"
-PROJECT_ROOT="$HOME/datn-ai-soar"
-if [ -d "$PROJECT_ROOT/.git" ]; then
-  git -C "$PROJECT_ROOT" fetch --prune origin
-  git -C "$PROJECT_ROOT" switch feature/week3-model-training
-  git -C "$PROJECT_ROOT" pull --ff-only origin feature/week3-model-training
-else
-  git clone --branch feature/week3-model-training --single-branch \
-    https://github.com/lethinhlord/Repo.git "$PROJECT_ROOT"
-fi
-cd "$PROJECT_ROOT"
-test "$(git branch --show-current)" = "feature/week3-model-training"
-test -z "$(git status --porcelain)" || {
-  echo 'FAIL: repository has local changes' >&2
-  exit 1
-}
-test "$(git rev-parse HEAD)" = "$(git rev-parse origin/feature/week3-model-training)"
-: "${COLLECTION_BASELINE_COMMIT:?Nhap commit SHA da duoc merge do nguoi ban giao cung cap}"
-[[ "$COLLECTION_BASELINE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
-git cat-file -e "$COLLECTION_BASELINE_COMMIT^{commit}"
-git merge-base --is-ancestor "$COLLECTION_BASELINE_COMMIT" HEAD || {
-  echo "FAIL: repository is older than $COLLECTION_BASELINE_COMMIT" >&2
-  exit 1
-}
-git rev-parse HEAD | tee evidence/collection-source-commit.txt
-chmod +x scripts/bootstrap_ml.sh scripts/deploy_week2.sh scripts/verify_week2.sh
-./scripts/bootstrap_ml.sh
-.venv-ml/bin/python -m pytest -q \
-  tests/test_scenario_collection.py \
-  tests/test_dataset_audit.py \
-  tests/test_collection_configuration.py \
-  tests/test_export_run_parameters.py \
-  tests/test_ml_dataset.py
-echo 'REPOSITORY_PREFLIGHT=PASS'
+sudo usermod -aG wazuh "$LAB_USER"
+id "$LAB_USER"
 ```
 
-Kết quả chuẩn là toàn bộ test pass. Nếu cần API/n8n Week 2 trên cùng VM:
-
-```bash
-sudo apt install -y docker.io docker-compose-v2
-sudo usermod -aG docker "$LAB_USER"
-```
-
-Thoát SSH, đăng nhập lại để group có hiệu lực, rồi:
+Thoát SSH, đăng nhập lại; sau khi agent đã gửi event, kiểm:
 
 ```bash
 set -euo pipefail
-cd "$HOME/datn-ai-soar"
+id
+test -r /var/ossec/logs/archives/archives.json
+stat -c '%U %G %a %n' /var/ossec/logs/archives/archives.json
+```
+
+Nếu vẫn Permission denied, kiểm group/ACL và logrotate trên SOC-AI. Không `chmod 777`
+và không chạy cả repo bằng root để che lỗi quyền. Không tạo Archives rỗng để vượt kiểm.
+
+### 6.3 API/n8n là phần kiểm tích hợp, tách khỏi việc chuẩn bị dữ liệu
+
+Collector đọc Archives trực tiếp; dựng lab, enrollment và thu pilot không cần model
+đã train hoặc API/n8n đang chạy. Vì vậy tránh vòng lặp “phải có model mới thu được data”.
+
+Đây là mục TÙY CHỌN kiểm tích hợp, không chạy trong lúc thu. Chỉ khi Thịnh đã cung
+cấp package v3 đã freeze, `.env` qua kênh riêng với signing key khớp package, đúng
+N8N_PUBLIC_HOST=192.168.58.147, N8N_BIND_ADDRESS=127.0.0.1, VT_MODE=mock và
+NOTIFICATION_MODE=log, mới deploy. Không tự sinh signing key khác để xác minh package
+của Thịnh; không đưa `.env` vào backup dataset hoặc ảnh:
+
+```bash
+sudo apt update
+sudo apt install -y docker.io docker-compose-v2
+sudo usermod -aG docker "$(id -un)"
+```
+
+Mở phiên mới để group Docker có hiệu lực rồi chạy:
+
+```bash
+set -euo pipefail
+cd "$HOME/datn-ai-soar-v3"
 docker version
-./scripts/deploy_week2.sh
-./scripts/verify_week2.sh
+docker compose version
+test -s evidence/context-baseline.json
+test -f ml/model-package/FROZEN.json
+test -f .env
+chmod 600 .env
+bash scripts/deploy_week2.sh
+bash scripts/verify_week2.sh
+curl -fsS http://127.0.0.1:8000/health | jq .
 curl -fsS http://127.0.0.1:8000/ready | jq .
 curl -fsS http://127.0.0.1:5678/healthz
 ```
 
-Cho user vận hành quyền đọc Archives rồi đăng nhập lại SSH:
-
-```bash
-LAB_USER="$(id -un)"
-sudo usermod -aG wazuh "$LAB_USER"
-id "$LAB_USER"
-sudo -u "$LAB_USER" test -r /var/ossec/logs/archives/archives.json
-```
-
-Sau khi thêm group, thoát toàn bộ phiên SSH rồi đăng nhập lại. `git status --short` phải
-rỗng; nếu có thay đổi cục bộ, không `reset --hard`, không ghi đè mà phải bàn giao cho
-người phụ trách repo xử lý trước khi thu.
-
-Không đổi `config/collection-sources.yaml` nếu agent vẫn mang đúng hai tên
-`WIN11-TARGET` và `NET-SENSOR`.
+Không train hoặc đóng gói một model giả để vượt bước này. Package schema v2 không
+được dùng với vector v3. Baseline được mount chỉ đọc vào API; thiếu/hết hạn phải xử lý
+trước deploy. Ingest online là tạm thời/REVIEW; kết quả cửa sổ cuối cần endpoint
+`/features/wazuh/finalize-window` sau watermark. Workflow hiện chưa tự đóng window.
+Không yêu cầu nhập OpenAI API key vào hộp Assistant của n8n để chạy collector hay ML.
 
 ## 7. Cài WIN11-TARGET
+
+### 7.0 Chuẩn bị công cụ kiểm Windows từ đúng checkout SOC-AI
+
+Mở Windows PowerShell 64-bit bằng Administrator. Cài OpenSSH Client nếu thiếu rồi
+copy helper từ checkout đã kiểm SHA ở SOC-AI; không lấy script từ một nhánh khác:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$client = Get-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
+if ($client.State -ne 'Installed') {
+  Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0 | Out-Null
+}
+New-Item -ItemType Directory -Force C:\DATN | Out-Null
+$SocUser = Read-Host 'SOC-AI SSH username'
+scp "${SocUser}@192.168.58.147:datn-ai-soar-v3/scripts/Test-DatnWindowsPreflight.ps1" C:\DATN\
+if ($LASTEXITCODE -ne 0) { throw 'Cannot copy the Windows preflight helper' }
+Get-FileHash C:\DATN\Test-DatnWindowsPreflight.ps1 -Algorithm SHA256
+```
+
+Đối chiếu hash với `sha256sum scripts/Test-DatnWindowsPreflight.ps1` trên SOC-AI.
+Helper chỉ đọc trạng thái; quyền sửa user/firewall nằm ở các bước riêng bên dưới.
 
 ### 7.1 Tài khoản lab và audit policy
 
@@ -548,6 +693,10 @@ function Ensure-DatnLabUser([string]$Name, [string]$Description) {
   }
   $verified = Get-LocalUser -Name $Name
   if (-not $verified.Enabled) { throw "Lab account is disabled: $Name" }
+  $usersGroup = Get-LocalGroup -SID 'S-1-5-32-545'
+  if (-not (Get-LocalGroupMember -Group $usersGroup | Where-Object SID -eq $verified.SID)) {
+    Add-LocalGroupMember -Group $usersGroup -Member $verified
+  }
 }
 Ensure-DatnLabUser datn_benign 'DATN benign lab account'
 Ensure-DatnLabUser datn_attack 'DATN attack decoy'
@@ -591,23 +740,20 @@ if (Get-NetFirewallRule -Name DATN-SMB-From-Kali -ErrorAction SilentlyContinue) 
 New-NetFirewallRule -Name DATN-SMB-From-Kali `
   -DisplayName 'DATN SMB authentication from Kali only' `
   -Direction Inbound -Action Allow -Protocol TCP -LocalPort 445 `
-  -RemoteAddress 10.40.0.10 -Profile Any | Out-Null
+  -RemoteAddress 10.40.0.10 -LocalAddress 10.20.0.10 -Profile Any | Out-Null
 Get-NetFirewallRule -Name DATN-SMB-From-Kali | Format-List Name,Enabled,Action
-$wideSmbRules = Get-NetFirewallRule -Enabled True -Direction Inbound -Action Allow |
-  Where-Object Name -ne 'DATN-SMB-From-Kali' | ForEach-Object {
-    $port = $_ | Get-NetFirewallPortFilter
-    $address = $_ | Get-NetFirewallAddressFilter
-    if (($port.LocalPort -contains '445' -or $port.LocalPort -eq 'Any') -and
-        ($address.RemoteAddress -contains 'Any' -or
-         $address.RemoteAddress -contains 'LocalSubnet')) { $_ }
-  }
-if ($wideSmbRules) {
-  $wideSmbRules | Select-Object Name,DisplayName
-  throw 'Broad inbound SMB allow rule exists; disable it before collection'
-}
+& C:\DATN\Test-DatnWindowsPreflight.ps1 -InspectHost -AllowedSource 10.40.0.10
+if ($LASTEXITCODE -ne 0) { throw 'Windows firewall preflight needs review' }
 ```
 
-Sau khi đóng dataset, khôi phục policy gốc bằng snapshot `01-TELEMETRY-READY` hoặc lệnh
+Nếu helper báo BROAD hoặc INCONCLUSIVE, xem rule cụ thể cùng Profile, InterfaceAlias,
+LocalAddress, application và service. Không disable hàng loạt rule UDP/ứng dụng khác.
+Rule ngoài profile/interface/address đang dùng không được xem là đang mở SMB; ghi
+bằng chứng hiệu lực và xử lý rule thực sự cho phép TCP 445 ngoài Kali. Sau đó vẫn
+phải kiểm kết nối từ Kali thành công và từ VM nguồn khác bị từ chối ở mục 10.
+
+Chỉ sau backup/restore đã kiểm, khi không còn run active và đã kết thúc đợt thu, có
+thể khôi phục policy gốc bằng lệnh
 sau rồi reboot:
 
 ```powershell
@@ -632,11 +778,14 @@ ssh -V
 $SocUser = Read-Host "SOC-AI SSH username"
 $SocHome = ssh "${SocUser}@192.168.58.147" 'printf %s "$HOME"'
 if ($LASTEXITCODE -ne 0 -or -not $SocHome) { throw "Cannot resolve SOC-AI HOME" }
-$SocRepo = "$SocHome/datn-ai-soar"
+$SocRepo = "$SocHome/datn-ai-soar-v3"
 New-Item -ItemType Directory -Force C:\DATN | Out-Null
 scp "${SocUser}@192.168.58.147:${SocRepo}/config/sysmon-datn.xml" C:\DATN\
+if ($LASTEXITCODE -ne 0) { throw "Cannot copy pinned resource: config/sysmon-datn.xml" }
 scp "${SocUser}@192.168.58.147:${SocRepo}/config/wazuh-windows-localfile.xml" C:\DATN\
+if ($LASTEXITCODE -ne 0) { throw "Cannot copy pinned resource: config/wazuh-windows-localfile.xml" }
 scp "${SocUser}@192.168.58.147:${SocRepo}/scripts/run_dns_scenario.ps1" C:\DATN\
+if ($LASTEXITCODE -ne 0) { throw "Cannot copy pinned resource: scripts/run_dns_scenario.ps1" }
 $remoteDnsScriptHashLine = ssh "${SocUser}@192.168.58.147" `
   "sha256sum '${SocRepo}/scripts/run_dns_scenario.ps1'"
 if ($LASTEXITCODE -ne 0 -or -not $remoteDnsScriptHashLine) {
@@ -674,7 +823,12 @@ if ($sysmonSignature.Status -ne 'Valid' -or
     $sysmonSignature.SignerCertificate.Subject -notmatch 'Microsoft') {
   throw 'Invalid Sysmon executable signature'
 }
-C:\DATN\Sysmon\Sysmon64.exe -accepteula -i C:\DATN\sysmon-datn.xml
+if (Get-Service Sysmon64 -ErrorAction SilentlyContinue) {
+  C:\DATN\Sysmon\Sysmon64.exe -c C:\DATN\sysmon-datn.xml
+} else {
+  C:\DATN\Sysmon\Sysmon64.exe -accepteula -i C:\DATN\sysmon-datn.xml
+}
+if ($LASTEXITCODE -ne 0) { throw 'Sysmon installation/configuration failed' }
 C:\DATN\Sysmon\Sysmon64.exe -c
 Get-Service Sysmon64
 ```
@@ -715,10 +869,15 @@ $wazuhSignature = Get-AuthenticodeSignature C:\DATN\wazuh-agent-4.14.9-1.msi
 if ($wazuhSignature.Status -ne 'Valid') { throw 'Invalid Wazuh MSI signature' }
 Get-FileHash C:\DATN\wazuh-agent-4.14.9-1.msi -Algorithm SHA256 |
   Format-List | Out-File C:\DATN\wazuh-agent-4.14.9-1.msi.sha256.txt -Encoding ascii
-msiexec.exe /i C:\DATN\wazuh-agent-4.14.9-1.msi /q `
-  WAZUH_MANAGER="192.168.58.147" `
-  WAZUH_REGISTRATION_SERVER="192.168.58.147" `
-  WAZUH_AGENT_NAME="WIN11-TARGET" /l*v C:\DATN\wazuh-agent-install.log
+$msiArgs = '/i C:\DATN\wazuh-agent-4.14.9-1.msi /qn /norestart ' +
+  'WAZUH_MANAGER="192.168.58.147" WAZUH_REGISTRATION_SERVER="192.168.58.147" ' +
+  'WAZUH_AGENT_NAME="WIN11-TARGET" /l*v C:\DATN\wazuh-agent-install.log'
+$install = Start-Process msiexec.exe -ArgumentList $msiArgs -Wait -PassThru
+if ($install.ExitCode -notin 0,3010) { throw "Wazuh MSI failed: $($install.ExitCode)" }
+if ($install.ExitCode -eq 3010) {
+  throw 'Installation succeeded; reboot now, then continue ossec.conf setup after login'
+}
+Get-Service WazuhSvc -ErrorAction Stop
 ```
 
 Wazuh Windows đã thu `Security` theo mặc định. **Không chèn thêm block Security thứ
@@ -828,6 +987,8 @@ read -rp 'Kali SSH username: ' KALI_USER
 [[ "$KALI_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
 ssh-copy-id -i "$CLOCK_KEY.pub" "${SENSOR_USER}@192.168.58.150"
 ssh-copy-id -i "$CLOCK_KEY.pub" "${KALI_USER}@192.168.58.132"
+# Lan dau ket noi Windows: doi chieu fingerprint tren console guest truoc khi accept.
+ssh -i "$CLOCK_KEY" -o ConnectTimeout=5 datn_clock@192.168.58.148 whoami
 ssh -i "$CLOCK_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
   datn_clock@192.168.58.148 powershell.exe -NoProfile -NonInteractive -Command \
   "[DateTimeOffset]::UtcNow.ToString('o')"
@@ -837,6 +998,9 @@ ssh -i "$CLOCK_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
   "${KALI_USER}@192.168.58.132" date -u --iso-8601=seconds
 ```
 
+Đối chiếu fingerprint Windows bằng `ssh-keygen.exe -lf
+C:\ProgramData\ssh\ssh_host_ed25519_key.pub` trên console guest; Linux dùng
+`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`. Chỉ accept host key đúng.
 Cả ba lệnh cuối phải trả kết quả mà không hỏi mật khẩu. Nếu không, sửa key/ACL trước;
 không bỏ `BatchMode=yes`, không lưu mật khẩu trong script và không mở port 22 Windows
 cho địa chỉ khác.
@@ -851,15 +1015,26 @@ sudo apt install -y software-properties-common jq curl gnupg acl netcat-openbsd
 sudo add-apt-repository -y ppa:oisf/suricata-stable
 sudo apt update
 sudo apt install -y suricata
-suricata --build-info | head -n 20
+suricata --build-info | sed -n '1,20p'
+suricata -V | grep -E 'version 8\.'
+dpkg-query -W -f='${Package}=${Version}\n' suricata
+sudo apt-mark hold suricata
 ```
+
+PPA stable có thể đổi major theo thời gian. Phải xác nhận Suricata 8.x đã cài và ghi
+version/hash cấu hình; nếu không phải 8.x, dừng để Thịnh xác nhận tương thích. Không
+downgrade tùy ý hoặc chạy tiếp với schema EVE chưa kiểm. Kiểm service thật bằng
+`systemctl cat suricata`: tham số interface/capture mode từ unit/default không được
+ghi đè NIC YAML. `ps -C Suricata-Main -o args=; pgrep -a suricata` hỗ trợ đối chiếu.
 
 Trong `/etc/suricata/suricata.yaml`:
 
 - đặt `HOME_NET` là `[10.20.0.0/24]`;
 - cấu hình `af-packet` nghe **chỉ NIC phía Kali** (ví dụ `ens37`) để tránh đếm đôi;
 - trong `eve-log.types` bật `alert`, `dns`, `http`, `tls`, `flow`;
-- thêm đường dẫn tuyệt đối `/etc/suricata/rules/datn.rules` vào `rule-files`.
+- trong lab kiểm soát này, `rule-files` chỉ chứa `/etc/suricata/rules/datn.rules`.
+  Không tham chiếu `suricata.rules` khi chưa có file, không tự cập nhật ET giữa đợt thu;
+  mở rộng ruleset cần phiên bản/hash và pilot lại trước một đợt mới.
 
 Khối tối thiểu cần đối chiếu trong YAML (không tạo block trùng nếu file đã có):
 
@@ -887,11 +1062,12 @@ outputs:
         - flow
 
 rule-files:
-  - suricata.rules
   - /etc/suricata/rules/datn.rules
 ```
 
-Đây là các mục cần sửa **trong các section sẵn có**, không dán thêm một bộ khóa
+Giữ hai dòng đầu `%YAML 1.1` và `---` của file stock. Đây là fragment để sửa
+trong các section sẵn có, không thay toàn bộ suricata.yaml bằng fragment này.
+Không dán thêm một bộ khóa
 `vars`/`af-packet`/`outputs`/`rule-files` ở cuối file. Trước khi lưu, dùng
 `grep -nE '^(vars:|af-packet:|outputs:|rule-files:)'` và bảo đảm mỗi khóa cấp cao nhất chỉ
 có một lần. Nếu không xác định được đúng vị trí, phục hồi backup và nhờ người phụ trách
@@ -902,8 +1078,9 @@ Chuyển rule từ SOC-AI:
 ```bash
 read -rp 'SOC-AI SSH username: ' SOC_USER
 SOC_HOME=$(ssh "${SOC_USER}@192.168.58.147" 'printf %s "$HOME"') || exit 1
-SOC_REPO="$SOC_HOME/datn-ai-soar"
+SOC_REPO="$SOC_HOME/datn-ai-soar-v3"
 scp "${SOC_USER}@192.168.58.147:${SOC_REPO}/config/suricata-datn.rules" /tmp/
+sudo install -d -m 0755 /etc/suricata/rules
 sudo install -m 0644 /tmp/suricata-datn.rules /etc/suricata/rules/datn.rules
 sudo suricata --init-errors-fatal -T -c /etc/suricata/suricata.yaml
 sudo systemctl enable suricata
@@ -915,10 +1092,70 @@ sudo grep -E 'sid:(900001|900002|900004);' /etc/suricata/rules/datn.rules
 sudo tail -n 5 /var/log/suricata/eve.json | jq -c .
 ```
 
-Ba SID local: 900001 HTTP beacon độc hại, 900002 DNS beacon độc hại và 900004 DNS
-canary hợp lệ. Hai kịch bản staged-transfer cố ý chỉ tạo flow/HTTP, không có local alert,
+Ba SID local 900001/900002/900004 nhận diện traffic mô phỏng HTTP/DNS/canary trong lab.
+SID không phải ground truth của ý định; một canary/health hợp lệ cũng có thể trúng rule. Hai kịch bản staged-transfer cố ý chỉ tạo flow/HTTP, không có local alert,
 để `suricata_alert_count` không trở thành feature làm lộ nhãn. Nếu
 `suricata -T` báo lỗi, dừng; không chạy collector bằng ruleset lỗi.
+
+
+
+#### 8.1.1 Final flow phải về trước hạn thu
+
+Collector v3 yêu cầu final flow counter. Suricata 8.0.7 mặc định có UDP established
+300 giây và TCP closed 60 giây; chờ tùy ý 90 giây sau thao tác có thể chưa có final flow.
+Đây là timeout sau hoạt động cuối của flow, không phải thời lượng của kịch bản.
+
+Trên NET-SENSOR, sao lưu YAML rồi dùng `sudoedit` sửa các khóa sẵn có trong
+`flow-timeouts`. Giữ các khóa/protocol khác của cấu hình gốc; không dán thêm một
+block `flow-timeouts` thứ hai. Các giá trị sau dành riêng cho lab HTTP/DNS ngắn:
+
+```yaml
+flow-timeouts:
+  tcp:
+    new: 15
+    established: 60
+    closed: 15
+    emergency-new: 5
+    emergency-established: 10
+    emergency-closed: 5
+  udp:
+    new: 10
+    established: 15
+    emergency-new: 5
+    emergency-established: 5
+```
+
+Kiểm cấu hình thật và restart trước preflight, không đổi giữa run:
+
+```bash
+set -euo pipefail
+sudo suricata --init-errors-fatal -T -c /etc/suricata/suricata.yaml
+sudo systemctl restart suricata
+sudo systemctl is-active suricata
+sudo suricata --dump-config -c /etc/suricata/suricata.yaml \
+  | grep -E '^flow-timeouts\.(tcp|udp)\.'
+sudo sha256sum /etc/suricata/suricata.yaml /etc/suricata/rules/datn.rules
+```
+
+Phải thấy UDP new=10/established=15, TCP new=15/established=60/closed=15 và các
+emergency timeout nhỏ hơn regular tương ứng. Không để warning timeout đảo ngược. `-T` chỉ
+chứng minh cấu hình/rule hợp lệ; G4 còn phải thấy final flow thật sau canary HTTP và DNS.
+Theo dõi native trên NET-SENSOR khi Windows chạy canary ở mục 10.4:
+
+```bash
+sudo tail -n 0 -F /var/log/suricata/eve.json | jq --unbuffered -c \
+  'select(.event_type=="flow" and .src_ip=="10.20.0.10" and .dest_ip=="10.40.0.10") |
+   {timestamp,flow_id,proto,src_ip,dest_ip,src_port,dest_port,flow}'
+```
+
+Dừng bằng Ctrl+C sau khi đã thấy TCP và UDP final flow. Đối chiếu lại cùng flow_id
+tại Archives trên SOC-AI. Cần đo độ trễ thực tế EVE → Archives nhỏ hơn grace 60 giây.
+Nếu không đạt, sửa đường log/tài nguyên/timeout và chạy lại pilot; không tăng grace
+sau khi đã thu chính thức hoặc điền byte=0. Flow kéo qua hai bucket bị báo thiếu
+độ chính xác; dùng HTTP request đóng connection và thu lại trong bucket sạch.
+
+Nguồn: https://docs.suricata.io/en/suricata-8.0.7/configuration/suricata-yaml.html
+
 
 ### 8.2 Wazuh Agent chuyển EVE JSON
 
@@ -944,7 +1181,7 @@ bằng đúng 1. Cho Wazuh đọc được EVE hiện tại và file tạo sau r
 ```bash
 read -rp 'SOC-AI SSH username: ' SOC_USER
 SOC_HOME=$(ssh "${SOC_USER}@192.168.58.147" 'printf %s "$HOME"') || exit 1
-SOC_REPO="$SOC_HOME/datn-ai-soar"
+SOC_REPO="$SOC_HOME/datn-ai-soar-v3"
 scp "${SOC_USER}@192.168.58.147:${SOC_REPO}/config/wazuh-suricata-localfile.xml" /tmp/
 sudo cp -a /var/ossec/etc/ossec.conf \
   "/var/ossec/etc/ossec.conf.bak.$(date -u +%Y%m%dT%H%M%SZ)"
@@ -956,6 +1193,7 @@ test "$(sudo grep -cF '<location>/var/log/suricata/eve.json</location>' \
 sudo setfacl -m u:wazuh:rx /var/log/suricata
 sudo setfacl -m u:wazuh:r /var/log/suricata/eve.json
 sudo setfacl -d -m u:wazuh:rx /var/log/suricata
+sudo getfacl /var/log/suricata /var/log/suricata/eve.json
 sudo /var/ossec/bin/wazuh-logcollector -t
 sudo /var/ossec/bin/wazuh-agentd -t
 sudo systemctl daemon-reload
@@ -1037,15 +1275,117 @@ test "$(dig +short @10.40.0.10 www.datn.test A)" = 10.40.0.10
 test "$(dig +short @10.40.0.10 r01.beacon.datn.test A)" = 10.40.0.10
 ```
 
+### 9.1 Đồng bộ giờ nội bộ trước khi cô lập Internet
+
+Thực hiện sau khi IP management ổn định, trước snapshot telemetry/pilot. SOC-AI làm
+nguồn giờ cho ba VM còn lại qua VMnet8. Nó đồng bộ UTC từ Internet trước buổi thu;
+trong collection mode nó giữ giờ nội bộ bằng chrony local stratum 10. Đây là đồng bộ
+lab khi mất upstream, không phải chứng nhận UTC độc lập. Mỗi buổi phải lưu phép đo
+UTC trước cô lập và đo skew thực giữa bốn máy ở mục 10.3/11. Không chỉnh giờ, suspend,
+restore snapshot hoặc chạy `makestep` giữa run.
+
+Cả ba Linux VM — cài khi còn Internet:
+
+```bash
+sudo apt update
+sudo apt install -y chrony
+sudo systemctl disable --now systemd-timesyncd.service 2>/dev/null || true
+sudo cp -a /etc/chrony/chrony.conf "/etc/chrony/chrony.conf.before-datn.$(date -u +%Y%m%dT%H%M%SZ)"
+```
+
+Chỉ SOC-AI — cấu hình đầy đủ cho lab (không nối thêm vào file cũ):
+
+```bash
+sudo tee /etc/chrony/chrony.conf >/dev/null <<'EOF'
+pool ntp.ubuntu.com iburst maxsources 4
+driftfile /var/lib/chrony/chrony.drift
+makestep 1.0 3
+rtcsync
+allow 192.168.58.132/32
+allow 192.168.58.148/32
+allow 192.168.58.150/32
+local stratum 10
+logdir /var/log/chrony
+EOF
+sudo chronyd -p -f /etc/chrony/chrony.conf
+sudo systemctl enable --now chrony
+sudo systemctl restart chrony
+sudo chronyc waitsync 60 0.1
+chronyc sources -v
+chronyc tracking
+```
+
+Trước cô lập, SOC-AI phải có upstream được chọn (`^*`), leap Normal và ngày UTC đúng;
+local stratum 10 không thay thế điều kiện này. Nếu UFW trên SOC-AI đang active, thêm
+rule UDP 123 từ từng `.132`, `.148`, `.150` tới `.147`; giữ các port Wazuh 1514/TCP,
+1515/TCP và quản trị cần thiết. Ví dụ một rule, lặp cho đúng hai IP còn lại:
+
+```bash
+sudo ufw allow from 192.168.58.132 to 192.168.58.147 port 123 proto udp
+sudo ufw allow from 192.168.58.148 to 192.168.58.147 port 123 proto udp
+sudo ufw allow from 192.168.58.150 to 192.168.58.147 port 123 proto udp
+sudo ufw status verbose
+```
+
+Chỉ NET-SENSOR và Kali — client trỏ về SOC-AI, không có nguồn giờ Internet thứ hai:
+
+```bash
+sudo tee /etc/chrony/chrony.conf >/dev/null <<'EOF'
+server 192.168.58.147 iburst minpoll 4 maxpoll 6
+driftfile /var/lib/chrony/chrony.drift
+makestep 1.0 3
+rtcsync
+logdir /var/log/chrony
+EOF
+sudo chronyd -p -f /etc/chrony/chrony.conf
+sudo systemctl enable --now chrony
+sudo systemctl restart chrony
+sudo chronyc waitsync 60 0.1
+chronyc sources -v
+chronyc tracking
+```
+
+Windows PowerShell Administrator — dùng NTP client mode tới SOC-AI:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+Set-Service W32Time -StartupType Automatic
+Start-Service W32Time
+w32tm /config /manualpeerlist:"192.168.58.147,0x8" /syncfromflags:MANUAL /update
+if ($LASTEXITCODE -ne 0) { throw 'Cannot configure lab NTP peer' }
+Restart-Service W32Time
+Start-Sleep -Seconds 5
+w32tm /resync /rediscover
+if ($LASTEXITCODE -ne 0) { throw 'Windows cannot synchronize to SOC-AI' }
+w32tm /query /source
+w32tm /query /status
+w32tm /stripchart /computer:192.168.58.147 /dataonly /samples:5
+if ($LASTEXITCODE -ne 0) { throw 'Lab NTP measurement failed' }
+```
+
+Nguồn Windows phải là `192.168.58.147`, hai client Linux phải có `^* 192.168.58.147`.
+VMware Tools > Options > VMware Tools > Synchronize guest time with host phải tắt
+periodic sync nếu nó tranh chấp chrony/W32Time; sau resume/reboot chạy preflight lại.
+Nếu mất sync, mở NAT khi không có run, sync lại rồi cô lập; không đặt ngày bằng tay
+để qua gate. Lưu `chronyc tracking`, `w32tm /query /status` và clock YAML cùng buổi thu.
+
+Nguồn chính thức: https://ubuntu.com/server/docs/how-to/networking/serve-ntp-with-chrony/
+và https://chrony-project.org/doc/4.5/chrony.conf.html ; W32Time:
+https://learn.microsoft.com/en-us/windows-server/networking/windows-time-service/Windows-Time-Service-Tools-and-Settings
+
 ## 10. Preflight bắt buộc trước mỗi buổi thu
 
 ### 10.1 Chuyển lab sang collection mode cô lập Internet
 
-Chỉ thực hiện sau khi đã cài hết package. **Trước khi xóa route**, đồng bộ giờ khi
+Chỉ thực hiện sau khi đã cài hết package và hoàn tất chrony/W32Time mục 9.1.
+SOC-AI phải vừa có upstream UTC thật; chụp/lưu nguồn đó trước khi cắt NAT. Sau khi
+cô lập, local stratum 10 duy trì giờ lab, ba client vẫn lấy từ `.147`. **Trước khi xóa route**, đồng bộ giờ khi
 management/NAT còn hoạt động. Trên từng Linux VM:
 
 ```bash
-sudo timedatectl set-ntp true
+sudo systemctl is-active chrony
+chronyc sources -v
+chronyc tracking
 for attempt in $(seq 1 12); do
   test "$(timedatectl show -p NTPSynchronized --value)" = yes && break
   sleep 5
@@ -1116,7 +1456,8 @@ try {
 ```
 
 Nếu cần Internet để cập nhật, dừng thu, đóng run đang mở, reboot/khôi phục route, cập nhật
-xong rồi quay lại snapshot và chạy lại toàn bộ preflight. Không cập nhật trong cửa sổ run.
+xong rồi chạy lại toàn bộ preflight. Không revert snapshot chứa dataset/cursor cũ;
+giữ evidence/bucket reservation đã thu và backup trước mọi thay đổi. Không cập nhật trong cửa sổ run.
 
 ### 10.2 Kiểm tra fail-closed từng VM
 
@@ -1139,12 +1480,20 @@ AVAILABLE_KB=$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)
 FREE_KB=$(df -Pk /var/ossec | awk 'NR==2 {print $4}')
 test "$AVAILABLE_KB" -ge 2097152
 test "$FREE_KB" -ge 10485760
-cd "$HOME/datn-ai-soar"
+cd "$HOME/datn-ai-soar-v3"
 test -z "$(git status --porcelain)"
-test "$(git branch --show-current)" = feature/week3-model-training
-: "${COLLECTION_BASELINE_COMMIT:?Missing merged collection baseline SHA}"
-[[ "$COLLECTION_BASELINE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
-git merge-base --is-ancestor "$COLLECTION_BASELINE_COMMIT" HEAD
+COLLECTION_MODE=pilot # Chi dung trainable sau khi G7 duoc nghiem thu
+if [ "$COLLECTION_MODE" = pilot ]; then
+  EXPECTED_SOURCE_COMMIT=d06d04034f0d1c996907365841f21cdb874e4d5a
+elif [ "$COLLECTION_MODE" = trainable ]; then
+  : "${COLLECTION_BASELINE_COMMIT:?Can baseline thu chinh thuc do Thinh cung cap}"
+  EXPECTED_SOURCE_COMMIT="$COLLECTION_BASELINE_COMMIT"
+else
+  echo 'Unknown collection mode' >&2; exit 1
+fi
+[[ "$EXPECTED_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_COMMIT"
+mkdir -p evidence/scenario-runs
 test ! -e evidence/scenario-runs/.active-run.json
 while IFS= read -r -d '' STATE; do
   jq -e . "$STATE" >/dev/null
@@ -1273,8 +1622,11 @@ Trên SOC-AI, ghi byte cursor tại đúng ranh giới dòng:
 ```bash
 set -euo pipefail
 ARCHIVE=/var/ossec/logs/archives/archives.json
-test "$(sudo tail -c 1 "$ARCHIVE" | od -An -t u1 | tr -d ' ')" = 10
-sudo stat -c %s "$ARCHIVE" | tee /tmp/datn-preflight.cursor
+CURSOR=$(sudo stat -c %s "$ARCHIVE")
+test "$CURSOR" -gt 0
+test "$(sudo dd if="$ARCHIVE" iflag=skip_bytes,count_bytes skip="$((CURSOR - 1))" count=1 status=none | od -An -t u1 | tr -d ' ')" = 10
+sudo stat -c '%d:%i' "$ARCHIVE" > /tmp/datn-preflight.identity
+printf '%s\n' "$CURSOR" | tee /tmp/datn-preflight.cursor
 ```
 
 Ngay sau đó trên Windows PowerShell chạy canary an toàn và bắt mọi lỗi HTTP:
@@ -1293,8 +1645,12 @@ Resolve-DnsName preflight.www.datn.test -Server 10.40.0.10 | Out-Null
 Resolve-DnsName preflight.beacon.datn.test -Server 10.40.0.10 | Out-Null
 ```
 
-Tại console Windows, khóa màn hình, nhập sai mật khẩu `datn_benign` đúng một lần rồi
-đăng nhập đúng một lần. Trên Kali, tạo một SMB canary thất bại có chủ đích rồi một
+Tại console Windows, **đăng xuất (Sign out)** phiên hiện tại. Thực hiện **đăng nhập mới**
+bằng mật khẩu của `datn_benign`: nhập sai đúng một lần rồi nhập đúng một lần.
+Không thay bước này bằng mở khóa phiên hoặc nhập PIN; cần logon console type 2.
+Canary xong chờ final flow về, giữ tách khỏi bucket pilot; preflight không tính quota.
+Kiểm quyền đăng nhập của tài khoản trước khi thu, không chỉ trạng thái Enabled.
+Trên Kali, tạo một SMB canary thất bại có chủ đích rồi một
 canary thành công cho `datn_attack`. Đây là preflight trước mọi run, không phải mẫu train:
 
 ```bash
@@ -1319,6 +1675,8 @@ CURSOR=$(cat /tmp/datn-preflight.cursor)
 FRESH=/tmp/datn-preflight-fresh.jsonl
 PASS=0
 for attempt in $(seq 1 18); do
+  test "$(sudo stat -c '%d:%i' "$ARCHIVE")" = "$(cat /tmp/datn-preflight.identity)"
+  test "$(sudo stat -c %s "$ARCHIVE")" -ge "$CURSOR"
   sudo tail -c "+$((CURSOR + 1))" "$ARCHIVE" > "$FRESH"
   if jq -e 'select(.agent.name=="WIN11-TARGET" and
       ((.data.win.system.eventID//"")|tostring)=="1")' "$FRESH" >/dev/null 2>&1 \
@@ -1363,26 +1721,239 @@ for SID in 900001 900002 900004; do
     select(.event_type=="alert" and .alert.signature_id==$sid)' \
     "$FRESH" >/dev/null
 done
+for TYPE in dns http; do
+  jq -e --arg type "$TYPE" 'select(.agent.name=="NET-SENSOR") |
+    (.full_log|fromjson?) | select(.event_type==$type and
+    .src_ip=="10.20.0.10" and .dest_ip=="10.40.0.10")' "$FRESH" >/dev/null
+done
+for PROTO in TCP UDP; do
+  jq -e --arg proto "$PROTO" 'select(.agent.name=="NET-SENSOR") |
+    (.full_log|fromjson?) | select(.event_type=="flow" and .proto==$proto and
+    .src_ip=="10.20.0.10" and .dest_ip=="10.40.0.10" and
+    .flow.start!=null and .flow.end!=null and
+    (.flow.bytes_toserver|type)=="number" and
+    (.flow.bytes_toclient|type)=="number")' "$FRESH" >/dev/null
+done
 echo 'END_TO_END_PREFLIGHT=PASS'
 ```
 
 Nếu bất kỳ block nào không in `PASS`, không bắt đầu run. Sửa nguyên nhân rồi chạy lại
 từ 10.1; không dùng event cũ, không tạo file Archives giả và không hạ ngưỡng kiểm tra.
 
-### 10.5 Pilot collector bắt buộc sau khi cài mới hoặc đổi code/config
+### 10.5 Enrollment context riêng trước pilot và trước đợt thu
 
-Chạy trọn quy trình mục 11 cho đúng hai pilot sau, gồm `start`, export tham số bất biến,
-`begin-action`, hành động, `complete-action`, `finalize` và `validate`:
+Baseline là lịch sử đã quan sát trước sự kiện, không phải danh sách nhãn benign.
+Giữ riêng capture enrollment, pilot, trainable và challenge. Chưa mở run trong lúc
+enrollment; không dùng lại raw của các run đã gán nhãn để tạo lịch sử quá khứ.
 
-1. `ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS` để kiểm đường SMB, LogonType 3 và chuỗi
-   4625→4624;
-2. `C2-MALICIOUS-HTTP-BEACON` để kiểm Event 1/3, nonce, ProcessGuid, timing, HTTP EVE
-   và SID 900001.
+SOC-AI — mở một terminal và giữ phiên này tới hết bước capture:
 
-Hai pilot phải in `VALID`. Sau khi chụp bằng chứng, loại khỏi dataset train bằng lệnh
-`quarantine` với lý do `installation-pilot`; không đổi tên pilot thành run thật. Canary
-mục 10.4 đã phủ thêm console 4624/4625, DNS benign/malicious SID 900004/900002,
-HTTP benign và staged-transfer. Vì vậy toàn bộ đường thu đã được kiểm trước run thật.
+```bash
+set -euo pipefail
+cd "$HOME/datn-ai-soar-v3"
+test ! -e evidence/scenario-runs/.active-run.json
+ENROLL_ID="ENROLL-$(date -u +%Y%m%dT%H%M%SZ)"
+ENROLL_DIR="$PWD/operator-logs/enrollment/$ENROLL_ID"
+mkdir -p "$ENROLL_DIR"
+ARCHIVE=/var/ossec/logs/archives/archives.json
+test -r "$ARCHIVE"
+stat -c '%d:%i' "$ARCHIVE" > "$ENROLL_DIR/archive.identity"
+START_BYTE=$(stat -c %s "$ARCHIVE")
+test "$START_BYTE" -gt 0
+test "$(dd if="$ARCHIVE" iflag=skip_bytes,count_bytes skip="$((START_BYTE - 1))" count=1 status=none | od -An -t u1 | tr -d ' ')" = 10
+printf '%s\n' "$START_BYTE" > "$ENROLL_DIR/start-byte.txt"
+date -u --iso-8601=seconds > "$ENROLL_DIR/start-utc.txt"
+```
+
+Windows — đăng nhập thành công các account lab để ghi lịch sử local hợp lệ. Có thể
+dùng `runas` lần lượt, nhập đúng mật khẩu tại prompt thật; không dùng `/savecred`:
+
+```powershell
+runas /user:.\datn_benign "cmd /c whoami"
+runas /user:.\datn_attack "cmd /c whoami"
+runas /user:.\datn_spray01 "cmd /c whoami"
+runas /user:.\datn_spray02 "cmd /c whoami"
+runas /user:.\datn_spray03 "cmd /c whoami"
+```
+
+Kali — enrollment remote là hoạt động quản trị được phê duyệt trước, làm với cả
+account mang tên benign và attack, không suy nguồn tin cậy từ nhãn sau này:
+
+```bash
+set -euo pipefail
+for USER_NAME in datn_benign datn_attack datn_spray01 datn_spray02 datn_spray03; do
+  smbclient '//10.20.0.10/IPC$' -W WIN11-TARGET -U "$USER_NAME" -c 'quit'
+done
+```
+
+Windows — tạo lịch sử các dịch vụ lab được chuẩn bị sẵn. Đây là thao tác enrollment
+được ghi riêng, không phải run C2 và không tính quota:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+foreach ($uri in @(
+  'http://10.40.0.10:8080/health?enrollment=1',
+  'http://10.40.0.10:8081/beacon?enrollment=1',
+  'http://10.40.0.10:9001/stage.bin?enrollment=1'
+)) {
+  curl.exe --fail --silent --show-error --output NUL $uri
+  if ($LASTEXITCODE -ne 0) { throw "Enrollment request failed: $uri" }
+}
+Resolve-DnsName enrollment.www.datn.test -Server 10.40.0.10 -Type A -DnsOnly
+Resolve-DnsName enrollment.beacon.datn.test -Server 10.40.0.10 -Type A -DnsOnly
+```
+
+SOC-AI — chờ agent chuyển log (theo độ trễ đã đo ở G4), rồi đóng capture ở ranh giới
+dòng. Nếu `tail` cuối chưa là newline, chờ và kiểm lại, không lấy JSON dở:
+
+```bash
+set -euo pipefail
+sleep 30
+test "$(stat -c '%d:%i' "$ARCHIVE")" = "$(cat "$ENROLL_DIR/archive.identity")"
+START_BYTE=$(cat "$ENROLL_DIR/start-byte.txt")
+END_BYTE=$(stat -c %s "$ARCHIVE")
+test "$END_BYTE" -gt "$START_BYTE"
+dd if="$ARCHIVE" iflag=skip_bytes,count_bytes skip="$START_BYTE" \
+  count="$((END_BYTE - START_BYTE))" status=none > "$ENROLL_DIR/archives-capture.jsonl"
+test "$(stat -c '%d:%i' "$ARCHIVE")" = "$(cat "$ENROLL_DIR/archive.identity")"
+test "$(wc -c < "$ENROLL_DIR/archives-capture.jsonl")" -eq "$((END_BYTE - START_BYTE))"
+test "$(tail -c 1 "$ENROLL_DIR/archives-capture.jsonl" | od -An -t u1 | tr -d ' ')" = 10
+printf '%s\n' "$END_BYTE" > "$ENROLL_DIR/end-byte.txt"
+date -u --iso-8601=seconds > "$ENROLL_DIR/end-utc.txt"
+jq -e . "$ENROLL_DIR/archives-capture.jsonl" >/dev/null
+jq -c '
+  select(.agent.name=="WIN11-TARGET") |
+  (.data.win.system.eventID|tostring) as $id |
+  .data.win.eventdata as $d |
+  select(
+    ($id=="4624" and
+      (["datn_benign","datn_attack","datn_spray01","datn_spray02","datn_spray03"] |
+       index(($d.targetUserName//""|ascii_downcase))) != null) or
+    ($id=="3" and ($d.initiated|tostring|ascii_downcase)=="true" and
+       $d.sourceIp=="10.20.0.10" and $d.destinationIp=="10.40.0.10") or
+    ($id=="22" and (($d.queryName//""|ascii_downcase)|endswith(".datn.test")))
+  )' "$ENROLL_DIR/archives-capture.jsonl" > "$ENROLL_DIR/approved-enrollment.jsonl"
+test -s "$ENROLL_DIR/approved-enrollment.jsonl"
+(cd "$ENROLL_DIR" && sha256sum archives-capture.jsonl approved-enrollment.jsonl > capture.sha256)
+(cd "$ENROLL_DIR" && sha256sum --check capture.sha256)
+```
+
+Kiểm lại `approved-enrollment.jsonl` chứa đúng các thao tác vừa làm. Bản đầy đủ trước
+lọc vẫn giữ trong `archives-capture.jsonl`. Nếu thiếu user/nguồn/dịch vụ, tạo capture
+enrollment mới và thực hiện lại phần còn thiếu; không viết thêm event hoặc history bằng tay.
+
+Khi đã có baseline trước đó, không ghi đè. Chỉ chuyển bản cũ ra kho revision khi không
+có run đang hoạt động; context của run cũ vẫn nằm trong evidence đóng băng:
+
+```bash
+set -euo pipefail
+test ! -e evidence/scenario-runs/.active-run.json
+if [ -f evidence/context-baseline.json ]; then
+  OLD_SHA=$(sha256sum evidence/context-baseline.json | awk '{print $1}')
+  test ! -e "$ENROLL_DIR/prior-context-$OLD_SHA.json"
+  mv -- evidence/context-baseline.json "$ENROLL_DIR/prior-context-$OLD_SHA.json"
+fi
+.venv-ml/bin/python -m scripts.enroll_context_baseline \
+  --capture "$ENROLL_DIR/approved-enrollment.jsonl" \
+  --revision "$ENROLL_ID" --ttl-hours 24 \
+  --dns-suffix datn.test --approved-enrollment \
+  --output evidence/context-baseline.json
+jq '{version,revision,captured_at,observed_through,valid_until,source_capture_sha256,
+     accounts,destinations}' evidence/context-baseline.json
+jq -e '([.accounts[].account]|sort) ==
+ ["datn_attack","datn_benign","datn_spray01","datn_spray02","datn_spray03"]' \
+  evidence/context-baseline.json >/dev/null
+jq -e 'all(.accounts[]; (.known_sources|index("10.40.0.10")) != null and
+ ((.known_sources|index("local-console")) != null or (.known_sources|index("-")) != null))' \
+  evidence/context-baseline.json >/dev/null
+for PORT in 8080 8081 9001; do
+  jq -e --argjson port "$PORT" 'any(.destinations[];
+   .destination=="10.40.0.10" and .port==$port)' evidence/context-baseline.json >/dev/null
+done
+jq -e '[.destinations[] | select(.match=="dns_suffix" and
+ .destination=="datn.test" and .port==53)] | length>0' \
+  evidence/context-baseline.json >/dev/null
+CAPTURE_SHA=$(jq -r .source_capture_sha256 evidence/context-baseline.json)
+test "$(sha256sum "evidence/context-captures/$CAPTURE_SHA.jsonl" | awk '{print $1}')" = "$CAPTURE_SHA"
+cp -- evidence/context-baseline.json "$ENROLL_DIR/context-baseline.json"
+cmp -- evidence/context-baseline.json "$ENROLL_DIR/context-baseline.json"
+(cd "$ENROLL_DIR" && sha256sum context-baseline.json > baseline.sha256)
+(cd "$ENROLL_DIR" && sha256sum --check baseline.sha256)
+```
+
+`--dns-suffix datn.test` là inventory lab được khai báo trước, phải có truy vấn thật
+trong enrollment. Nó tránh coi mỗi run nonce trong FQDN là một đích mới. Đây không
+phải khẳng định mọi truy vấn trong domain đều lành tính; C2 vẫn có thể dùng domain quen.
+Không thêm suffix Internet rộng hoặc sửa snapshot JSON. Thiếu/stale/future history
+phải UNKNOWN/PARTIAL/REVIEW, không tự thay bằng 0 và ghi COMPLETE.
+
+TTL phải đủ cho toàn bộ buổi thu. Nếu hết hạn, dừng đợt, tạo enrollment/revision mới
+trước các run tiếp theo và gửi Thịnh đối chiếu; không sửa `valid_until`. Nếu API đang
+chạy với baseline cũ, phải deploy/restart có kiểm soát và kiểm đúng context revision.
+
+### 10.6 Pilot collector bắt buộc sau khi cài mới hoặc đổi code/config
+
+Thực hiện mục 11 với `RUN_PURPOSE=pilot`. Chạy riêng bốn pilot sau, một run một bucket:
+
+1. ACCOUNT-BENIGN-NORMAL-LOGON — console type 2, mật khẩu đúng;
+2. ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS — SMB type 3, sai rồi đúng từ Kali;
+3. C2-BENIGN-DNS — child PowerShell, nonce, DNS/EVE/final UDP flow;
+4. C2-MALICIOUS-HTTP-BEACON — ProcessGuid, network/HTTP/SID/final TCP flow.
+
+Mỗi pilot phải FINALIZED rồi VALID; context phải AVAILABLE, observation_quality
+COMPLETE và đủ nguyên liệu full-capture parity. `purpose=pilot` được đóng băng từ
+draft, auditor loại khỏi quota train mà vẫn kiểm integrity. Không đổi purpose sau
+khi xem prediction, không đổi tên thư mục pilot thành trainable.
+
+Chạy progress audit sau mỗi pilot, backup và thử restore khác root. Gửi toàn bộ
+bundle/evidence cho Thịnh kiểm G6. Nếu chỉ một pilot đạt, chưa kết luận toàn bộ hệ thống
+đạt. Canary trước đó chỉ kiểm đường log; nó không thay cho pilot collector/restore.
+
+### 10.7 Cổng G7 trước thu chính thức
+
+Tại revision pilot hiện tại, cổng này còn khóa. Chỉ thực hiện khi Thịnh đã bàn giao
+baseline thu chính thức sau khi sửa/đối chiếu catalog, cohort, taxonomy và challenge.
+Không tự nhập `136bb754`, không chọn SHA của model smoke hoặc bỏ gate để đủ 40 mẫu.
+
+Kiên cần nhận: SHA commit đầy đủ 40 ký tự; catalog/contract đã freeze; lịch scenario
+và cohort; danh sách challenge tách riêng; biên bản pilot; hướng dẫn tương ứng với
+SHA đó. Checkout release phải sạch và đúng SHA, không chỉ là descendant ngẫu nhiên.
+
+```bash
+set -euo pipefail
+cd "$HOME/datn-ai-soar-v3"
+: "${COLLECTION_BASELINE_COMMIT:?Thinh chua cung cap baseline thu chinh thuc}"
+[[ "$COLLECTION_BASELINE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+test "$(git rev-parse HEAD)" = "$COLLECTION_BASELINE_COMMIT"
+test -z "$(git status --porcelain --untracked-files=all)"
+.venv-ml/bin/python - <<'PY'
+from pathlib import Path
+import yaml
+from ml.scenario_collection import ScenarioCatalog
+catalog = ScenarioCatalog.model_validate(yaml.safe_load(Path('config/scenario-catalog.yaml').read_text()))
+config = yaml.safe_load(Path('ml/training_config.yaml').read_text())
+taxonomy = yaml.safe_load(Path('config/suspicious-process-taxonomy.yaml').read_text())
+errors = []
+if config['data']['group_key'] != 'cohort_id':
+    errors.append('Production split chua chuyen sang cohort_id')
+if any(x.purpose == 'trainable' and not x.cohort_id for x in catalog.scenarios):
+    errors.append('Trainable catalog chua co cohort day du')
+if not any(x.purpose == 'challenge' for x in catalog.scenarios):
+    errors.append('Chua co challenge doi chung duoc dong bang truoc thu')
+terms = [str(term).casefold() for rule in taxonomy['rules']
+         for term in rule.get('command_contains_any', [])]
+if any(marker in term for term in terms
+       for marker in ('/beacon','/stage.bin','beacon.datn.test','payload-benign')):
+    errors.append('Taxonomy van dung fingerprint chuoi lab lam tin hieu doc lap')
+if errors:
+    raise SystemExit('G7 CHUA MO:\n- ' + '\n- '.join(errors))
+print('G7 SOURCE CONTRACT CHECK=PASS; van can bien ban pilot thuc te')
+PY
+```
+
+Các kiểm tra trên bổ sung cho biên bản nghiệm thu, không thay thế review G01–G07.
+Nếu báo G7 CHƯA MỞ, dừng thu chính thức và gửi log cho Thịnh. Kiên vẫn có thể giữ
+lab ổn định, chạy pilot được yêu cầu và sao lưu; không tự sửa catalog/nhãn để vượt gate.
 
 ## 11. Quy trình chuẩn cho MỖI run
 
@@ -1393,18 +1964,19 @@ Thực hiện đúng thứ tự; không gộp hai kịch bản trong một cửa
 Quy ước ID:
 
 ```text
-<SCENARIO-ID>-R<01..99>-<YYYYMMDD>
+<PILOT-hoac-TRAINABLE>-<SCENARIO-ID>-R<01..99>-<YYYYMMDD>
 ```
 
 Ví dụ trên SOC-AI:
 
 ```bash
-cd "$HOME/datn-ai-soar"
+cd "$HOME/datn-ai-soar-v3"
 set -euo pipefail
 date -u --iso-8601=seconds
 timedatectl show -p NTPSynchronized --value
+RUN_PURPOSE=pilot # Chuyen thanh trainable chi sau khi G7 da dat
 RUN_DATE=$(date -u +%Y%m%d)
-RUN_ID="C2-MALICIOUS-HTTP-BEACON-R01-$RUN_DATE"
+RUN_ID="${RUN_PURPOSE^^}-C2-MALICIOUS-HTTP-BEACON-R01-$RUN_DATE"
 CLOCK_FILE="run-drafts/$RUN_ID-clock.yaml"
 
 # Nhập user thật; placeholder bị từ chối.
@@ -1416,32 +1988,67 @@ CLOCK_KEY="$HOME/.ssh/id_ed25519_datn_clock"
 test "$SENSOR_USER" != sensor-user
 test "$KALI_USER" != kali-user
 
-# Các kết nối dùng SSH key/BatchMode, không nhập mật khẩu giữa phép đo.
-CONTROLLER_UTC=$(date -u --iso-8601=seconds)
-TARGET_UTC=$(ssh -i "$CLOCK_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
+# Lưu ba thời điểm thật cho từng máy; không so sánh các lần đọc nối tiếp.
+mkdir -p run-drafts
+MEASUREMENTS="run-drafts/$RUN_ID-clock-measurements.json"
+.venv-ml/bin/python - "$MEASUREMENTS" <<'PY'
+import json, sys
+with open(sys.argv[1], 'x', encoding='utf-8') as handle:
+    json.dump({}, handle)
+PY
+measure_clock() {
+  local host="$1" before remote after
+  shift
+  before=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
+  remote=$("$@" | tr -d '\r')
+  after=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
+  .venv-ml/bin/python - "$MEASUREMENTS" "$host" "$before" "$remote" "$after" <<'PY'
+import json, sys
+from pathlib import Path
+path, host, before, remote, after = sys.argv[1:]
+data = json.loads(Path(path).read_text(encoding='utf-8'))
+if host in data:
+    raise SystemExit('Duplicate host measurement; use a new run ID')
+data[host] = dict(controller_before=before, remote_utc=remote, controller_after=after)
+Path(path).write_text(json.dumps(data, indent=2) + '\n', encoding='utf-8')
+PY
+}
+measure_clock controller date -u +%Y-%m-%dT%H:%M:%S.%NZ
+measure_clock target ssh -i "$CLOCK_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
   datn_clock@192.168.58.148 powershell.exe -NoProfile -NonInteractive -Command \
-  "[DateTimeOffset]::UtcNow.ToString('o')" | tr -d '\r')
-WAZUH_UTC=$(date -u --iso-8601=seconds)
-SENSOR_UTC=$(ssh -i "$CLOCK_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
-  "${SENSOR_USER}@192.168.58.150" date -u --iso-8601=seconds)
-ATTACKER_UTC=$(ssh -i "$CLOCK_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
-  "${KALI_USER}@192.168.58.132" date -u --iso-8601=seconds)
+  "[DateTimeOffset]::UtcNow.ToString('o')"
+measure_clock wazuh date -u +%Y-%m-%dT%H:%M:%S.%NZ
+measure_clock sensor ssh -i "$CLOCK_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
+  "${SENSOR_USER}@192.168.58.150" date -u +%Y-%m-%dT%H:%M:%S.%NZ
+measure_clock attacker ssh -i "$CLOCK_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
+  "${KALI_USER}@192.168.58.132" date -u +%Y-%m-%dT%H:%M:%S.%NZ
+cat "$MEASUREMENTS"
 .venv-ml/bin/python -m scripts.build_clock_preflight \
-  --controller "$CONTROLLER_UTC" --target "$TARGET_UTC" \
-  --wazuh "$WAZUH_UTC" --sensor "$SENSOR_UTC" --attacker "$ATTACKER_UTC" \
-  --maximum-skew-seconds 5 --output "$CLOCK_FILE"
+  --measurements "$MEASUREMENTS" --maximum-skew-seconds 5 \
+  --maximum-roundtrip-seconds 4 --output "$CLOCK_FILE"
 
 .venv-ml/bin/python -m scripts.create_run_draft \
   --scenario C2-MALICIOUS-HTTP-BEACON \
   --run-id "$RUN_ID" \
-  --operator Kien \
+  --operator Kien --purpose "$RUN_PURPOSE" \
   --clock-preflight "$CLOCK_FILE"
 sed -n '1,120p' "run-drafts/$RUN_ID.yaml"
 ```
 
-Lệnh `build_clock_preflight` từ chối file có bất kỳ máy nào lệch quá 5 giây và không
-ghi đè bằng chứng cũ. Draft đóng băng `collection_seed`, `scenario_parameters`, danh
-sách observable và toàn bộ clock evidence. Không sửa các trường này bằng tay.
+Lệnh `build_clock_preflight` kiểm khoảng trước/sau của từng lần đọc, giới hạn RTT
+4 giây và sai lệch có thể có giữa các máy tối đa 5 giây; không lấy chênh lệch giữa
+hai lần đọc nối tiếp làm clock skew. Đo local controller và Wazuh tại cùng SOC-AI.
+Không nhập mật khẩu trong phép đo. Nếu RTT/độ bất định quá lớn, xử lý mạng/giờ rồi
+tạo bộ đo mới bằng run ID mới; không tăng ngưỡng hoặc sửa timestamp cho qua gate.
+File measurements và YAML là bằng chứng thật cần lưu trong backup. YAML không bị ghi
+đè; draft đóng băng `collection_seed`, `scenario_parameters`, observable và clock
+evidence. Không sửa các trường này bằng tay. Tạo draft rồi start ngay; evidence quá
+120 giây sẽ bị từ chối. Không bước/đổi giờ hoặc resume VM giữa một run.
+
+Cho ba pilot khác, thay đồng thời `--scenario` và phần scenario trong RUN_ID bằng
+đúng ID tại 10.6; tăng R01 thành R02 nếu ID đã từng dùng, kể cả run abort. Không sửa
+family/label trực tiếp. Khi mất phiên SSH, khai báo lại RUN_ID đúng từ thư mục hiện
+có rồi dùng status, không chạy lại create/start một cách mù quáng.
 
 Không sửa `family` hoặc `label` sau khi chạy. Nếu chọn sai, chưa start thì xóa draft và
 tạo lại; đã start thì dùng lệnh `abort`, không tái sử dụng `run_id`.
@@ -1478,7 +2085,8 @@ mkdir -p evidence/operator-parameter-exports
   | tee "evidence/operator-parameter-exports/$RUN_ID.env"
 ```
 
-Với C2, copy nguyên output PowerShell vào `WIN11-TARGET`, rồi chạy block khởi tạo ở mục
+Trước `begin-action`, sign out/pre-stage account như mục 12.1; không làm việc đó
+sau receipt. Với C2, copy nguyên output PowerShell vào `WIN11-TARGET`, rồi chạy block khởi tạo ở mục
 12.2; URL/DNS nonce và toàn bộ khoảng nghỉ sẽ dùng đúng tham số đó. Với account, source
 file Bash trong shell SOC-AI để chờ `DATN_PRE_ACTION_DELAY_SECONDS` trước tín hiệu bắt
 đầu thao tác. Riêng `ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS`, source cùng file trên Kali để
@@ -1521,13 +2129,15 @@ thay kích thước hai payload cố định; SHA-256 của payload là cổng a
 
 ### Bước 4 — Đóng receipt rồi chờ pipeline chuyển log
 
-Ngay khi hoạt động và cleanup kết thúc, phải chạy `complete-action` **trước**
-`action_deadline`, rồi chờ 90 giây; không tạo traffic khác tới destination của kịch bản:
+Giữ target yên trong toàn bộ bucket: không đăng nhập quản trị mới, không tạo request
+canary hay chạy lại scenario để bù log. Ngay khi hoạt động và cleanup kết thúc, chạy
+`complete-action` **trước**
+`action_deadline`, rồi chuyển ngay sang Bước 5 **trước hạn nhận log**. Không chờ hết
+bucket mới gọi finalize. Không tạo traffic lab khác trong phần còn lại của bucket:
 
 ```bash
 set -euo pipefail
 .venv-ml/bin/python -m scripts.scenario_session complete-action --run-id "$RUN_ID"
-sleep 90
 ```
 
 Nếu quá deadline hoặc `complete-action` từ chối vì đã ra ngoài aggregation window, chạy
@@ -1548,20 +2158,48 @@ sudo tail -n 20 /var/ossec/logs/archives/archives.json | jq -c \
 
 ```bash
 set -euo pipefail
-.venv-ml/bin/python -m scripts.scenario_session finalize --run-id "$RUN_ID"
+.venv-ml/bin/python -m scripts.scenario_session finalize --run-id "$RUN_ID" --wait-for-window
 ```
 
-Collector chỉ nhận log trong cửa sổ receipt (cộng dung sai clock đã khai báo), đúng
-agent và đúng account/process/IP/port/DNS. C2 còn bắt buộc nonce trong command/URI/DNS,
-ProcessGuid thống nhất, tương quan thời gian Sysmon–Suricata, đúng số hành động và nhịp
-đã đóng băng. Thiếu một nguồn hoặc receipt thì finalize lỗi và không tạo mẫu cuối.
+Gọi lệnh ngay sau `complete-action`, trong khi vẫn còn thời gian trước cuối bucket
+UTC cộng grace 60 giây. Giữ terminal/phiên SSH chạy đến khi lệnh kết thúc. Collector
+đọc Archives tăng dần và ghi thời điểm **đọc xong** từng đoạn byte. Chỉ dòng JSON hoàn
+chỉnh đã được đọc xong không muộn hơn cutoff mới được nhận. Không chỉ ngủ hết grace
+rồi đọc tất cả log đang có.
 
-Nếu lỗi chỉ cho biết log đang đến chậm (`no Wazuh Archive bytes`, dòng JSON chưa hoàn
-chỉnh, hoặc chưa thấy nguồn dự kiến), giữ nguyên run ở trạng thái `STARTED`, không tạo
-thêm traffic và không bắt đầu run khác. Chờ 30 giây rồi **retry finalize** cùng `RUN_ID`;
-có thể lặp tối đa ba lần, tức tối đa 180 giây tính từ lúc kết thúc hoạt động. Nếu vẫn
-không đạt, dùng `abort`, sửa pipeline và thu lại với ID mới. Các lỗi attribution sai,
-checksum, rotate/truncate hoặc quality gate sai không được retry để hợp thức hóa dữ liệu.
+Nó lưu `archive_capture.jsonl` nguyên byte trước lọc và `intake_checkpoint.json`
+đóng băng phạm vi nhận, cursor nguồn, hash và thời điểm đọc. Sau đó replay toàn bộ
+bucket bằng source/taxonomy/context đóng băng. Tài khoản nền có danh tính OS xác
+định được giữ thành unknown/PARTIAL, không thêm count vào tài khoản người dùng;
+thiếu trường định danh cũng phải unknown/PARTIAL, không đoán thành benign.
+C2 bắt buộc nonce, ProcessGuid, thời gian, tuple IP/cổng/giao thức và transaction
+Suricata khớp. Final flow không có transaction hợp lệ, tuple thiếu/sai hoặc DNS
+khớp nhiều socket không được nâng thành COMPLETE. Thiếu nguồn/receipt hoặc
+vector/quality không tái hiện được thì không tạo mẫu cuối.
+
+Thời điểm collector đọc log không chứng minh thời điểm Wazuh Manager sinh log hay
+API nhận log. Replay ở đây kiểm tính nhất quán feature; nghiệm thu độ trễ/received_at
+online phải dùng bằng chứng API thực riêng. `validate` từ bản backup có thể xác minh
+checkpoint/raw đã lưu mà không truy cập Archives gốc; không chứng minh thêm log
+chưa từng được đóng băng. Khi finalize/retry còn trên SOC-AI, nguồn gốc và tail thật
+được kiểm tra lại.
+
+**Xử lý lỗi và mất phiên:**
+
+- Chưa từng chạy intake trước cutoff: finalize muộn báo thiếu checkpoint hợp lệ.
+  Giữ evidence, abort và thu run ID mới; không đổi giờ hay nới grace.
+- Mất phiên/lệnh bị ngắt khi checkpoint còn `capturing`, thiếu checkpoint hoặc có
+  dòng JSON dở: không xóa file để chạy lại; giữ evidence, abort, sửa đường log và
+  thu mới. Lệnh `status` vẫn cần dùng để xác định run đang sở hữu khóa.
+- Checkpoint đã sealed trước lỗi bước tạo feature/output: chỉ retry cùng RUN_ID
+  với nguyên evidence sau khi xử lý nguyên nhân được phép. Retry không nhận thêm
+  byte vào capture đã đóng băng. Nếu file tạm/trạng thái không rõ, dùng quarantine
+  theo Bước 6 thay vì sửa state bằng tay.
+- Có input thuộc bucket gốc xuất hiện sau cutoff, rotate/truncate, hash lệch hoặc
+  clock chạy lùi: fail closed; không retry để bổ sung log cho run cũ. Byte tới muộn
+  được giữ riêng ở `archive_capture-late.jsonl` nếu có; giữ cả file này và gửi lỗi.
+- Không sinh thêm traffic để bù event, không copy log cũ, không giảm quality gate.
+  Sau abort/quarantine, bucket cũ vẫn được giữ quyền; run mới dùng bucket mới.
 
 ### Bước 6 — Validate run
 
@@ -1573,7 +2211,8 @@ find "evidence/scenario-runs/$RUN_ID" -maxdepth 1 -type f -printf '%f\n' | sort
 ```
 
 Phải thấy `VALID`; `data/raw/$RUN_ID` có `scenario_manifest.json` và `incidents.jsonl`;
-evidence có Archives, Windows events, Suricata EVE, metadata và SHA-256. Không chỉnh
+evidence có Archives nguyên byte, intake checkpoint, Windows events, Suricata EVE,
+metadata và SHA-256. Giữ cả late capture nếu có. Không chỉnh
 tay file đã finalize. Nếu validate sai, bảo toàn dữ liệu hỏng để điều tra rồi đưa cả cặp
 raw/evidence ra khỏi dataset bằng lệnh duy nhất:
 
@@ -1584,27 +2223,49 @@ set -euo pipefail
 ```
 
 Phải thấy `QUARANTINED`, hai thư mục nguồn không còn và dữ liệu được giữ trong
-`data/quarantine/$RUN_ID` cùng `evidence/quarantine/$RUN_ID`. Sau đó mới chạy lại với ID
-mới. Không xóa một phía và không tự sửa checksum.
+`data/quarantine/$RUN_ID` cùng `evidence/quarantine/$RUN_ID`. Sau đó mới thu bằng ID
+và bucket mới. Không xóa một phía và không tự sửa checksum.
 
-### Bước 7 — Audit toàn dataset
+Nếu finalize bị ngắt ở `FINALIZING`, output tạm `.RUN_ID.tmp` cũng phải được bảo
+toàn. Lệnh quarantine chuyển nó sang `data/quarantine/.RUN_ID.tmp`, ghi
+`staged_raw_preserved`/`staged_raw_path` trong `quarantine.json`. Nếu cả output cuối
+và output tạm cùng tồn tại, giữ cả hai; không chọn/xóa một bản bằng tay. Backup cả
+`data/quarantine`, kể cả thư mục ẩn. Không để `.RUN_ID.tmp` cũ trong `data/raw` để
+tính quota hoặc tiếp tục train.
+
+Nếu execution receipt hỏng, collector chỉ phục hồi **quyền sở hữu bucket** từ state,
+start contract, metadata/checksum và reservation độc lập còn khớp. Original hỏng vẫn
+được giữ; `bucket_recovery.json` ghi nguồn phục hồi, không sửa mẫu hỏng thành VALID.
+Receipt thiếu, chứng cứ không đủ/xung đột hoặc reservation gốc mất khi receipt hỏng:
+`cannot recover collection bucket` phải dừng. Khôi phục cả bộ bằng backup đã xác
+minh, giữ nguyên bản hỏng ngoài checkout để điều tra, rồi audit trước khi thu tiếp.
+Không xóa thư mục quarantine/reservation để né lỗi. Hash kiểm tính toàn vẹn, không
+chống được người có quyền ghi thay đồng thời toàn bộ chứng cứ; gửi checksum/backup
+cho Thịnh qua kênh độc lập sau mỗi buổi.
+
+### Bước 7 — Audit tiến độ toàn dataset
+
+SOC-AI — mode progress cho phép tiếp tục khi chỉ thiếu quota; mọi lỗi integrity vẫn chặn:
 
 ```bash
 set -euo pipefail
+cd "$HOME/datn-ai-soar-v3"
 .venv-ml/bin/python -m scripts.audit_dataset \
-  --raw-dir data/raw \
-  --evidence-dir evidence/scenario-runs \
+  --raw-dir data/raw --evidence-dir evidence/scenario-runs \
   --scenario-catalog config/scenario-catalog.yaml \
-  --minimum-runs 10 \
-  --target-runs 12 \
+  --source-config config/collection-sources.yaml \
+  --taxonomy config/suspicious-process-taxonomy.yaml \
+  --minimum-runs 10 --target-runs 12 --mode progress \
   --output evidence/dataset-audit.json
+jq '{status,audit_mode,total_valid_runs,excluded_purpose_counts,invalid_run_count,
+     error_count,strata,pending_issues,issues}' evidence/dataset-audit.json
 ```
 
-Trước khi đủ 10 mỗi nhóm, exit `1` và `NOT_READY` là đúng; báo cáo phải cho biết chính
-xác thiếu nhóm nào. Không được nối `|| true` hoặc chạy tiếp sau exit `1`. Không được bỏ
-qua `RUN_INVALID`, `RUN_STATE_INVALID`, `SCENARIO_CATALOG_MISMATCH`,
-`SURICATA_MISSING`, duplicate, checksum, thiếu/sai năm scenario, phân bố lệch hoặc hơn
-12 run/nhóm.
+COLLECTING + exit 0 nghĩa là chưa đủ quota/coverage, có thể thu tiếp theo lịch. Pilot
+không tính quota, vì vậy nhiều pilot VALID vẫn có thể báo COLLECTING/0 trainable.
+`pending_issues` không phải đã vượt gate cuối. NOT_READY + exit khác 0 vì run hỏng,
+checksum/provenance sai, collision, bucket trùng hoặc vấn đề integrity phải dừng.
+Không thêm `|| true`. Final audit ở mục 14 dùng mode final và phải đạt trước build.
 
 ### Bước 8 — Cleanup và khoảng nghỉ
 
@@ -1627,8 +2288,8 @@ Sau đó cleanup, chờ pipeline yên, tạo run mới với ID mới.
 
 ### 12.1 Account scenarios
 
-Chạy tại màn hình console của `WIN11-TARGET`, không qua tài khoản thật và chỉ sau khi
-collector đã `STARTED`. Trước từng run account, PowerShell Administrator phải xác nhận
+Thao tác account tại console WIN11-TARGET. Toàn bộ chuẩn bị quản trị bên dưới phải
+xong TRƯỚC start/begin-action. Trước từng run account, PowerShell Administrator xác nhận
 policy lab chưa lockout và mở khóa các tài khoản dùng riêng cho lab:
 
 ```powershell
@@ -1663,7 +2324,12 @@ if ($invalidAccounts) {
 Block dùng thuộc tính `IADsUser.IsAccountLocked` của WinNT ADSI để mở khóa, rồi dùng
 `Win32_UserAccount` qua CIM để xác nhận. Mọi dòng phải có `Disabled=False`,
 `Lockout=False`. Nếu khác, dừng và sửa trước `start`; không mở khóa giữa cửa sổ run vì
-sẽ tạo thêm event. Sau khi collector báo `STARTED`, trên
+sẽ tạo thêm event. Với scenario console, sign out phiên quản trị trước `start`, để
+Windows sẵn ở màn hình Other user/Password; không dùng Lock, PIN, Windows Hello hoặc
+Fast User Switching thay cho đăng nhập mới. Với RUNAS, chuẩn bị CMD ở phiên quản trị
+trước start và chỉ chạy đúng runas sau tín hiệu. SMB không cần đăng nhập console mới.
+
+Sau `begin-action --wait-for-window` trả receipt STARTED (chưa phải chỉ `start`),
 SOC-AI chờ đúng pre-action delay rồi mới ra tín hiệu cho người thao tác Windows/Kali:
 
 ```bash
@@ -1696,10 +2362,14 @@ SMB thành console, WinRM, RDP hay scheduled task.
 | `ACCOUNT-MALICIOUS-PASSWORD-SPRAY` | nhập sai đúng 1 lần lần lượt cho `datn_spray01`, `02`, `03`, sau đó đăng nhập đúng đúng 1 lần vào `datn_spray03`; thứ tự này tạo mẫu spray có một credential compromise nhưng vẫn chồng lấp hợp lệ với benign ở các feature success/logon type |
 | `ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS` | trên Kali chạy đúng block SMB bên dưới: sai 1 lần, chờ delay trong draft, đúng 1 lần từ cùng nguồn; đây là mẫu low-noise nhưng có ngữ cảnh network-logon phân biệt được |
 
-Không tạo thêm lần thử ngoài bảng trong cùng cửa sổ. Kết thúc run benign/malicious có
-success thì sign out; run chỉ có failure thì quay lại desktop quản trị mà không đăng nhập
-đúng tài khoản decoy. Sau 90 giây mới finalize; quality gate sẽ đối chiếu chính xác số
-4624/4625 và thứ tự failure → success.
+Không tạo thêm lần thử ngoài bảng trong cùng cửa sổ. Scenario console có success thì
+sign out chính phiên vừa đăng nhập; failure-only giữ nguyên màn hình đăng nhập. RUNAS
+để child `cmd /c whoami` kết thúc, không chạy thêm runas. SMB đóng IPC$ sau mỗi lệnh.
+Không đăng nhập quản trị, mở Event Viewer, thử thêm mật khẩu, hoặc kiểm target bằng SSH
+trong bucket đang thu. Đợi `complete-action` rồi `finalize --wait-for-window` và VALID
+trên SOC-AI mới quay lại desktop/đọc log. Đăng nhập quản trị giữa bucket có thể gây
+full-capture parity mismatch dù collector đã lọc account kịch bản. Quality gate kiểm
+đúng số 4624/4625 và thứ tự failure → success; thiếu type 2/3 thì abort, không sửa log.
 
 Chỉ với `ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS`, trên Kali chạy block sau. Người vận hành
 nhập một mật khẩu **cố ý sai** ở prompt đầu và mật khẩu lab đúng ở prompt thứ hai. Lệnh
@@ -1962,7 +2632,57 @@ danh sách process toàn máy vì có thể nhầm PowerShell của người v�
 Đây là mô phỏng traffic an toàn trong lab, không tạo reverse shell, persistence, mã độc
 hoặc kết nối ra Internet.
 
+### 12.3 Đầu ra thật của collector — không tạo mẫu JSON bằng tay
+
+Collector tự ghi, không yêu cầu Kiên nhập từng dòng feature. Sau VALID kiểm trực tiếp
+trên SOC-AI (vẫn cùng RUN_ID):
+
+```bash
+set -euo pipefail
+cd "$HOME/datn-ai-soar-v3"
+jq . "data/raw/$RUN_ID/scenario_manifest.json"
+jq . "data/raw/$RUN_ID/incidents.jsonl"
+jq . "evidence/scenario-runs/$RUN_ID/collection_metadata.json"
+jq . "evidence/scenario-runs/$RUN_ID/execution_receipt.json"
+find "evidence/scenario-runs/$RUN_ID" -type f -printf '%P\n' | sort
+.venv-ml/bin/python -m scripts.scenario_session validate --run-id "$RUN_ID"
+```
+
+Cấu trúc chính (snapshot và tên file chi tiết do đúng revision collector quyết định):
+
+```text
+data/raw/<RUN_ID>/
+  scenario_manifest.json          # scenario/family/label/purpose, times, provenance
+  incidents.jsonl                # observation + vector features-v3 được tính từ raw
+evidence/scenario-runs/<RUN_ID>/
+  .collection_state.json          # state, không sửa/xóa tay
+  execution_receipt.json          # begin/complete cùng frozen parameters hash
+  collection_metadata.json        # origin/cursor/contract/file hashes
+  archive_capture.jsonl          # bytes đọc trước lọc để replay toàn bucket
+  intake_checkpoint.json         # phạm vi nhận đã sealed, cutoff và read ledger
+  archive_capture-late.jsonl     # nếu có: bytes muộn; không nhập vào capture đã sealed
+  checksums.sha256               # danh sách bằng chứng và checksum
+  ...                            # Archives chọn lọc, Windows/EVE và frozen snapshots
+evidence/bucket-reservations/     # quyền bucket bền vững, vẫn giữ sau abort/quarantine
+evidence/context-baseline.json   # baseline hiện hành; bản mỗi run đã freeze riêng
+evidence/context-captures/       # approved enrollment raw theo content hash
+operator-logs/enrollment/        # raw đầy đủ/cursor/identity/enrollment kiểm được
+run-drafts/                      # clock-measurements JSON, clock YAML và draft trước hành động
+```
+
+Nhãn chỉ ở manifest/record theo schema, không nhét scenario ID, username, IP, port,
+nonce hoặc nội dung URI vào vector làm đáp án. Features-v3 có 24 trường bắt buộc
+trong ml/feature_schema.json; không tự thêm/bớt cột hoặc fill missing=0. Không dùng
+JSON mẫu/fixture trong repo như data thật. `validate` và auditor là phép kiểm chính;
+`jq` chỉ giúp xem cấu trúc. Ảnh chụp output này phải ghi RUN_ID thật.
+
 ## 13. Lịch 10–12 run mỗi nhóm
+
+Chỉ áp dụng sau G7. Bốn pilot kỹ thuật ở mục 10.6 không nằm trong 40–48 run trainable.
+Lịch chính thức phải kèm cohort đã freeze; không tự chia cùng scenario thành cohort
+khác nhau để đủ fold. Challenge chạy theo catalog riêng, không tính quota/fit/train.
+Nếu catalog release thay số scenario hoặc quota, dừng đối chiếu hướng dẫn đúng SHA;
+không tự áp bảng 20 scenario của bản pilot sang release khác.
 
 Catalog có đúng năm scenario cho mỗi nhóm. Ở mốc tối thiểu 10, chạy mỗi scenario hai
 lần: phân bố `2-2-2-2-2`. Ở mốc 11, chọn một scenario để chạy thêm một lần:
@@ -1981,22 +2701,25 @@ Mỗi lần lặp phải là thực thi mới, không copy thư mục run cũ.
 
 ## 14. Kiểm tra cuối và tạo dữ liệu Colab
 
+Chỉ sau G7 và đã có đủ trainable mới chạy phần này. Bàn giao pilot không đòi READY
+hoặc build dataset; progress COLLECTING là trạng thái hợp lệ khi chỉ thiếu quota.
+
 Mốc 10 run/nhóm:
 
 ```bash
-cd "$HOME/datn-ai-soar"
+cd "$HOME/datn-ai-soar-v3"
 chmod +x scripts/verify_collection_dataset.sh
 ./scripts/verify_collection_dataset.sh
 ```
 
-Phải báo `READY`, 40 valid run, 0 invalid. Mốc 12:
+Ở mốc tối thiểu phải báo `READY`, 40 trainable hợp lệ, 0 invalid (pilot/challenge thống kê riêng). Mốc 12:
 
 ```bash
 set -euo pipefail
 REQUIRE_TARGET=1 ./scripts/verify_collection_dataset.sh
 ```
 
-Phải báo `TARGET_MET`, 48 valid run, 0 invalid. Sau đó mới build:
+Phải báo `TARGET_MET`, 48 trainable hợp lệ, 0 invalid (pilot/challenge không bù quota). Sau đó mới build:
 
 Collector lưu `suspicious_process` như một tín hiệu hành vi, nhưng không được
 gán nó trực tiếp từ nhãn scenario. Giá trị phải được suy ra từ telemetry Sysmon
@@ -2010,8 +2733,9 @@ set -euo pipefail
 jq '{dataset_hash_sha256,feature_schema_version,group_key,locked_test_status,
   partition_counts,record_counts,stratum_run_counts,collection_audit,
   split_assignment_commitment_sha256}' data/processed/dataset_manifest.json
-jq -e '.collection_audit.status == "READY" or
-  .collection_audit.status == "TARGET_MET"' data/processed/dataset_manifest.json >/dev/null
+jq -e '(.collection_audit.status == "READY" or .collection_audit.status == "TARGET_MET")
+  and .feature_schema_version=="features-v3" and .group_key=="cohort_id"
+  and .locked_test_status=="UNOPENED"' data/processed/dataset_manifest.json >/dev/null
 test -z "$(jq -r 'keys[]' data/processed/dataset_manifest.json \
   | grep '^fold_by_run$' || true)"
 wc -l data/processed/train.jsonl data/processed/validation.jsonl
@@ -2041,7 +2765,7 @@ data/processed/colab-upload.sha256
 ```
 
 Không đổi tên file hoặc tạo thêm tầng `processed/processed`. Notebook tự từ chối nếu
-thiếu file, checksum sai, `group_key` không phải `scenario_id`, scenario xuất hiện ở cả
+thiếu file, checksum sai, schema không phải features-v3, group/cohort không hợp lệ, scenario xuất hiện ở cả
 TRAIN và VALIDATION, hoặc phát hiện `locked_test.jsonl`.
 
 ## 15. Sao lưu và bàn giao dữ liệu gốc
@@ -2052,8 +2776,8 @@ không còn run `STARTED`:
 
 ```bash
 set -euo pipefail
-cd "$HOME/datn-ai-soar"
-mkdir -p data/raw evidence/scenario-runs run-drafts operator-logs
+cd "$HOME/datn-ai-soar-v3"
+mkdir -p data/raw data/quarantine evidence/scenario-runs evidence/quarantine run-drafts operator-logs
 LOCK=evidence/scenario-runs/.active-run.json
 if ! (set -o noclobber; printf '{"run_id":"BACKUP"}\n' > "$LOCK") 2>/dev/null; then
   echo 'FAIL: a collection run or another backup holds the active lock' >&2
@@ -2075,14 +2799,14 @@ BACKUP_DIR="$HOME/datn-backups/$BACKUP_ID"
 ARCHIVE="$BACKUP_DIR/collection-$BACKUP_ID.tar.gz"
 mkdir -p "$BACKUP_DIR"
 git rev-parse HEAD > "$BACKUP_DIR/git-commit.txt"
-git bundle create "$BACKUP_DIR/source.bundle" --all
+git bundle create "$BACKUP_DIR/source.bundle" --all HEAD
 git bundle verify "$BACKUP_DIR/source.bundle"
 RAW_COUNT=$(find data/raw -mindepth 2 -maxdepth 2 -name scenario_manifest.json | wc -l)
 tar --create --gzip --file "$ARCHIVE" \
   --exclude='evidence/scenario-runs/.active-run.json' \
   --exclude='evidence/operator-parameter-exports' \
   --exclude='*.env' --exclude='*.ps1' \
-  data/raw evidence run-drafts \
+  data/raw data/quarantine evidence run-drafts operator-logs \
   config/scenario-catalog.yaml config/collection-sources.yaml \
   config/suspicious-process-taxonomy.yaml ml/feature_schema.json
 (
@@ -2094,7 +2818,7 @@ tar -tzf "$ARCHIVE" > "$BACKUP_DIR/archive.list"
 grep -q '^data/raw/' "$BACKUP_DIR/archive.list"
 grep -q '^evidence/scenario-runs/' "$BACKUP_DIR/archive.list"
 ! grep -Eq '(^|/)([^/]*\.env|[^/]*\.ps1)$' "$BACKUP_DIR/archive.list"
-ARCHIVE_RUNS=$(grep -c '/scenario_manifest.json$' "$BACKUP_DIR/archive.list")
+ARCHIVE_RUNS=$(grep -Ec '^data/raw/[^/]+/scenario_manifest.json$' "$BACKUP_DIR/archive.list")
 test "$ARCHIVE_RUNS" -eq "$RAW_COUNT"
 cleanup_backup_lock
 trap - EXIT HUP INT TERM
@@ -2111,12 +2835,16 @@ ARCHIVE="$BACKUP_DIR/collection-$BACKUP_ID.tar.gz"
 test -f "$ARCHIVE"
 test -f "$BACKUP_DIR/archive.list"
 (cd "$BACKUP_DIR" && sha256sum --check checksums.sha256)
-RAW_COUNT=$(grep -c '/scenario_manifest.json$' "$BACKUP_DIR/archive.list")
+RAW_COUNT=$(grep -Ec '^data/raw/[^/]+/scenario_manifest.json$' "$BACKUP_DIR/archive.list")
 RESTORE_CHECK=$(mktemp -d)
 trap 'rm -rf -- "$RESTORE_CHECK"' EXIT
 tar -xzf "$ARCHIVE" -C "$RESTORE_CHECK"
 test -d "$RESTORE_CHECK/data/raw"
 test -d "$RESTORE_CHECK/evidence/scenario-runs"
+while IFS= read -r -d '' ENROLL_CHECKSUM; do
+  (cd "$(dirname "$ENROLL_CHECKSUM")" && sha256sum --check "$(basename "$ENROLL_CHECKSUM")")
+done < <(find "$RESTORE_CHECK/operator-logs/enrollment" \
+  -type f \( -name capture.sha256 -o -name baseline.sha256 \) -print0)
 RESTORED_RUNS=$(find "$RESTORE_CHECK/data/raw" -name scenario_manifest.json | wc -l)
 test "$RESTORED_RUNS" -eq "$RAW_COUNT"
 while IFS= read -r -d '' CHECKSUM; do
@@ -2135,14 +2863,19 @@ ARCHIVE="$BACKUP_DIR/collection-$BACKUP_ID.tar.gz"
 test -f "$ARCHIVE"
 test -f "$BACKUP_DIR/git-commit.txt"
 test -f "$BACKUP_DIR/source.bundle"
-RESTORE_ROOT="$HOME/datn-ai-soar-restored-$BACKUP_ID"
+RESTORE_ROOT="$HOME/datn-ai-soar-v3-restored-$BACKUP_ID"
 test ! -e "$RESTORE_ROOT"
 COMMIT=$(cat "$BACKUP_DIR/git-commit.txt")
 git clone "$BACKUP_DIR/source.bundle" "$RESTORE_ROOT"
 git -C "$RESTORE_ROOT" checkout --detach "$COMMIT"
 tar -xzf "$ARCHIVE" -C "$RESTORE_ROOT"
 cd "$RESTORE_ROOT"
-./scripts/bootstrap_ml.sh
+# Khong can Internet tren SOC dang collection mode. Dung wheelhouse da tai truoc.
+(cd operator-logs/wheelhouse && sha256sum --check ../wheelhouse.sha256)
+python3 -m venv .venv-ml
+.venv-ml/bin/python -m pip install --no-index --find-links operator-logs/wheelhouse \
+  --requirement requirements.lock --requirement requirements-ml.lock
+.venv-ml/bin/python -m pip check
 for RUN_PATH in data/raw/*; do
   test -d "$RUN_PATH" || continue
   .venv-ml/bin/python -m scripts.scenario_session validate \
@@ -2151,7 +2884,7 @@ done
 echo 'RESTORE_VALIDATION=PASS'
 ```
 
-Với backup giữa buổi chưa đủ 40 run, audit toàn dataset có thể vẫn `NOT_READY`; điều đó
+Với backup giữa buổi chưa đủ 40 run, audit progress có thể vẫn `COLLECTING` (final vẫn `NOT_READY`); điều đó
 không làm restore sai. Điều kiện restore là tất cả run hiện có `VALID`, checksum đúng và
 số manifest bằng bản gốc.
 
@@ -2189,8 +2922,8 @@ gửi archive, `checksums.sha256`, `git-commit.txt` và báo cáo audit cùng nh
 
 | Lỗi | Nguyên nhân thường gặp | Xử lý bắt buộc |
 |---|---|---|
-| `no Wazuh Archive bytes` | agent chưa gửi hoặc log đang đến chậm | không tạo traffic mới; chờ 30 giây và retry finalize cùng ID, tối đa ba lần; sau đó abort |
-| `does not end with a complete JSON line` | Wazuh đang ghi dở dòng cuối | không sửa Archives; chờ 30 giây rồi retry finalize cùng ID |
+| `no Wazuh Archive bytes` | chưa nhận đủ nguồn trong cutoff | giữ evidence; abort, sửa pipeline và thu mới; không bổ sung log sau cutoff |
+| partial/incomplete JSON lúc cutoff | dòng chưa được nhận trọn đúng hạn | giữ capture/checkpoint; abort và thu mới; không xóa checkpoint hoặc nối dòng bằng tay |
 | `rotated or truncated` | Archives rotate trong run | abort, tránh giờ rotate, chạy ID mới |
 | `no attributable Windows...` | sai agent/account/process/IP/port/DNS | đối chiếu draft với lệnh thật, chạy mới |
 | `no attributable Suricata...` | traffic đi tắt, sai `src_ip`, rule/interface hoặc EVE chưa forward | không retry bằng traffic mới trong cùng run; abort, sửa route/rule/ACL, chạy pilot mới |
@@ -2198,61 +2931,94 @@ gửi archive, `checksums.sha256`, `git-commit.txt` và báo cáo audit cùng nh
 | `active run...` | còn run STARTED hoặc backup đang giữ khóa | đọc owner, finalize/abort/quarantine đúng run; không xóa `.active-run.json` bằng tay |
 | `execution receipt...` | chưa `begin-action`/`complete-action`, receipt bị sửa hoặc dùng export sai run | abort nếu hành động chưa hoàn tất; không tự sửa state/receipt; tạo run ID mới nếu đã thao tác sai |
 | `frozen action count`/`interval contract` | chạy thừa/thiếu request hoặc sai khoảng nghỉ | abort và thu run mới; không thêm traffic khi run đã kết thúc |
+| `past intake deadline` / checkpoint `capturing` | chưa có bằng chứng nhận đúng hạn | abort và thu mới; gọi finalize --wait ngay sau complete-action, giữ terminal mở |
+| `late original-window input` | input của bucket cũ xuất hiện sau hạn | giữ late capture, sửa độ trễ/forwarding, thu lại; không nới grace theo run |
+| `cannot recover collection bucket` | không đủ chứng cứ để xác định quyền bucket | bảo toàn dữ liệu hỏng, restore bộ backup đã kiểm, không xóa quarantine/reservation |
 | `collection contract` | catalog/schema/taxonomy/source config khác snapshot lúc start | quarantine run, đồng bộ đúng commit, chạy lại pilot rồi thu ID mới |
 | `SCENARIO_CATALOG_MISMATCH` | draft/manifest không thuộc catalog hoặc sai family/label | quarantine run, cập nhật repo đúng commit, tạo draft mới từ CLI |
 | `SCENARIO_IMBALANCE`/`STRATUM_EXCESS` | năm scenario lệch nhau quá 1 run hoặc nhóm đã quá 12 | không copy/xóa tùy tiện; dừng thu, bàn giao audit để người phụ trách quyết định dataset version mới |
 | duplicate incident/run | tái sử dụng dữ liệu hoặc ID | quarantine bản trùng và chạy mới |
 | `FEATURE_LABEL_SEPARATION`/`JOINT_FEATURE_LABEL_SEPARATION` | feature đơn/cặp feature phân tách hoàn hảo nhãn | bổ sung/chỉnh catalog có hành vi chồng lấn rồi thu dataset version mới; không train trước khi audit đạt |
-| audit `NOT_READY` | thiếu hoặc có run invalid | đọc `ISSUES` và `shortage`, xử lý đúng nhóm |
+| audit `COLLECTING` ở progress | mới chỉ thiếu quota/coverage | tiếp tục đúng lịch; không coi là READY |
+| audit `NOT_READY` | integrity sai, hoặc final còn thiếu điều kiện | đọc issues/pending_issues, dừng bước phụ thuộc; không thêm `|| true` |
+| context MISSING/STALE/FUTURE/UNKNOWN | chưa enrollment, TTL hết, giờ sai hoặc thiếu history | giữ evidence, sửa clock/enrollment ngoài run, chạy pilot mới; không điền context bằng tay |
+| full-capture parity mismatch | có traffic/logon nền trong cùng bucket | abort/quarantine; giữ target yên, pre-stage trước begin-action; không lọc bớt raw |
+| final flow thiếu hoặc cross-window | timeout/log delay hoặc connection vượt bucket | kiểm EVE gốc và Archives, sửa timeout/path ngoài run; thu bucket mới, không zero-fill |
+| G7 CHƯA MỞ | catalog/cohort/taxonomy/challenge chưa release | chỉ bàn giao pilot; Thịnh hoàn tất code/release trước thu chính thức |
 
 Không dùng lệnh sửa trực tiếp `incidents.jsonl`, `scenario_manifest.json` hoặc
 `checksums.sha256`. Dữ liệu hỏng phải được quarantine và thu lại.
 
-## 17. Ảnh minh chứng
+## 17. Chụp ảnh minh chứng đúng yêu cầu báo cáo
 
-Chụp toàn màn hình VMware Workstation, có thanh tiêu đề, Library, toàn bộ desktop 16 inch
-và đồng hồ. Không chỉ chụp vùng terminal.
+Ảnh phải là toàn bộ màn hình laptop đang hiển thị công cụ thật. 16 inch là kích
+thước vật lý, không phải độ phân giải: giữ nguyên độ phân giải native của host,
+không ép 1920x1080, không crop hay chỉ chụp vùng terminal.
 
-Ảnh bắt buộc:
+1. Mở VMware Workstation ở chế độ cửa sổ maximized, giữ thanh tiêu đề, menu, Library,
+   guest desktop và taskbar/đồng hồ Windows host trong khung như mẫu của Thịnh.
+2. Thực hiện lệnh/chức năng thật trên Ubuntu terminal, Windows Event Viewer, Wazuh
+   Dashboard hoặc công cụ đang kiểm. Không dùng script in dòng PASS giả để chụp.
+3. Trên host Windows nhấn Print Screen. Nếu phím này mở Snipping Tool, chọn chế độ
+   Full screen và màn hình laptop; lưu PNG gốc. Có thể dùng Win+PrtScn nếu chỉ bật
+   một màn hình, rồi chép PNG từ Pictures\Screenshots. Kiểm ảnh vừa lưu có đủ mép.
+4. Lưu `D:\Tài liệu\Đồ án\Ảnh báo cáo` trên host; máy Kiên không có ổ D thì dùng
+   thư mục thực tế và gửi cả thư mục ảnh để Thịnh chép vào đường dẫn trên.
+5. Tên `W3-DATA-<nn>-<buoc>-<RUN_ID-hoac-PREFLIGHT>-<UTC>.png`. Giữ bản gốc chưa cắt;
+   ghi tên ảnh, bước, hostname, RUN_ID, SHA source và kết luận thật vào nhật ký.
+6. Ảnh lộ mật khẩu/token thì không gửi; chụp lại màn hình an toàn, giữ provenance
+   của ảnh thay thế. Chụp ảnh không thay thế raw log, receipt, checksum hoặc audit.
 
-1. sơ đồ NIC của bốn VM và `ip -br address`/`Get-NetIPConfiguration`;
-2. `tracert` Windows → Kali qua NET-SENSOR;
-3. Wazuh Dashboard có hai agent Active;
-4. Sysmon config và Event Viewer ID 1/3/22;
-5. Security Event Viewer 4624/4625;
-6. Suricata `-T` success và EVE JSON;
-7. Wazuh Archives có `WIN11-TARGET` và `NET-SENSOR`;
-8. màn hình `start`, hoạt động thật, `finalize`, `VALID` của một account run;
-9. tương tự cho một C2 run, kèm Suricata alert/flow;
-10. auditor ở mốc `READY`/`TARGET_MET` và dataset manifest.
+Các mốc cần ảnh (chụp từng bước, không chỉ ảnh cuối):
 
-Tên ảnh: `W3-DATA-<nn>-<noi-dung>-<run-id>.png`. Không chụp mật khẩu, API key, token,
-cookie hoặc nội dung `.env`.
+- VM Settings của bốn máy: CPU/RAM/disk/NIC/MAC; `ip -br address` và Windows IP.
+- Route Windows→Kali, Suricata interface; chronyc/W32Time và ngày giờ.
+- Wazuh Dashboard hai agent Active; dịch vụ thật `systemctl status`/Get-Service.
+- Sysmon cấu hình 1/3/22, Event Viewer Security 4624/4625 sau canary, trước pilot.
+- Suricata `-T`, EVE HTTP/DNS/alert/final flow; cùng event/flow_id tại Archives.
+- Enrollment riêng: các thao tác, baseline revision/TTL/history và hash thật.
+- Mỗi pilot: draft/clock, start, begin-action receipt, thao tác thật, complete-action,
+  finalize, VALID, progress audit; không mở desktop quản trị giữa bucket account.
+- Backup SHA, bản chép host, restore checkout khác root và VALID.
+- Sau G7 mới có ảnh quota READY/TARGET_MET, build manifest và bốn file upload Colab.
 
-## 18. Tiêu chí bàn giao
+## 18. Checklist bàn giao theo giai đoạn
 
-Chỉ bàn giao khi tất cả đều đúng:
+### 18.1 Bàn giao pilot ngay ở revision hiện tại
 
-- [ ] 4 VM đúng tên và traffic C2 bắt buộc qua NET-SENSOR.
-- [ ] thời gian đồng bộ; hai Wazuh Agent Active.
-- [ ] ID 1/3/22 và 4624/4625 tồn tại trong Archives.
-- [ ] EVE flow/DNS/HTTP và alert local tồn tại trong Archives.
-- [ ] mỗi run có ground truth trước hoạt động, evidence, metadata, checksum.
-- [ ] 10–12 run hợp lệ cho mỗi trong bốn nhóm.
-- [ ] đúng 5 scenario/nhóm; số run của hai scenario bất kỳ trong cùng nhóm lệch tối đa 1
-  (`2-2-2-2-2`, `3-2-2-2-2` hoặc `3-3-2-2-2`).
-- [ ] auditor báo 0 invalid; build dataset thành công.
-- [ ] dataset manifest ghi `group_key=scenario_id`, collection audit `READY`/`TARGET_MET`,
-  locked test `UNOPENED` và không chứa `fold_by_run`.
-- [ ] ảnh minh chứng không lộ bí mật.
+- [ ] 4 VM đúng tên/IP/MAC; route dữ liệu qua NET-SENSOR, collection mode cô lập.
+- [ ] Nguồn giờ nội bộ hoạt động, skew thực trong giới hạn; không có step/resume giữa run.
+- [ ] Hai agent Active; Security/Sysmon/EVE và final TCP/UDP flow mới có tại Archives.
+- [ ] Repo sạch đúng SHA pilot; cấu hình/version và hash được ghi lại.
+- [ ] Enrollment riêng có đủ local/remote history của cả năm account, ba port lab,
+      DNS suffix quan sát thật, TTL hợp lệ, raw capture và hash tồn tại.
+- [ ] Bốn pilot ở mục 10.6 đều FINALIZED/VALID, context AVAILABLE, quality COMPLETE,
+      full-capture parity; pilot không tính vào quota trainable.
+- [ ] Progress audit chỉ còn shortage/design pending, không lỗi integrity/collision.
+- [ ] Backup nguyên liệu đã chép host, SHA đúng, restore khác root validate toàn bộ.
+- [ ] Ảnh PNG gốc toàn màn hình và nhật ký có tên bước/RUN_ID/UTC/SHA thật.
+- [ ] Gửi Thịnh bundle source + tar dataset/evidence + checksums + progress report +
+      nhật ký/ảnh. Không gửi password/key; chưa đánh dấu G7 hoặc model sẵn sàng train.
 
-Mốc 10–12 run/nhóm đủ cho benchmark đồ án và kiểm thử pipeline, nhưng vẫn là dataset
-nhỏ; không được mô tả là đủ để triển khai production. Chất lượng phụ thuộc vào đa dạng
-kịch bản, tính độc lập, bằng chứng đầy đủ và việc không làm rò nhãn vào feature.
+### 18.2 Bàn giao dataset chính thức sau khi được mở G7
 
-## 19. Atomic Red Team không thuộc đợt thu v1
+- [ ] Có SHA baseline thu chính thức/biên bản pilot và catalog/cohort/challenge freeze.
+- [ ] 10–12 trainable run mới cho mỗi nhóm; năm scenario/nhóm đúng phân bố hiện hành;
+      pilot/challenge tách riêng, không reuse dataset cũ.
+- [ ] Final audit READY/TARGET_MET, 0 invalid; builder thành công, không hạ gate.
+- [ ] Manifest features-v3/group_key=cohort_id, collection audit đạt, locked test
+      UNOPENED, không đưa locked test hoặc mapping fold nhạy cảm lên Colab.
+- [ ] Chỉ đúng train.jsonl, validation.jsonl, dataset_manifest.json, colab-upload.sha256
+      tại MyDrive/DATN/week3-data/processed; kiểm hash trước/sau upload.
+- [ ] Context/provenance/receipt/raw/final flow và challenge đủ evidence kiểm lại.
 
-Không cài hoặc chạy Atomic Red Team trong 40–48 run của tài liệu này. Catalog v1 đã có
+10–12 run/nhóm là quota khởi đầu; chưa chứng minh model phân biệt intent hoặc đủ độ
+tin cậy cho phản ứng tự động. Báo cáo phải nêu số cohort độc lập, CI và vùng chưa quan
+sát được; thiếu bằng chứng giữ REVIEW/SHADOW, không biến xác suất cao thành bảo đảm.
+
+## 19. Atomic Red Team và phạm vi mở rộng
+
+Không cài hoặc chạy Atomic Red Team trong 40–48 run của tài liệu này. Catalog pilot hiện có
 20 scenario kiểm soát được; thêm Atomic giữa đợt sẽ thay đổi phân phối dữ liệu, làm mất
 tính lặp lại và có thể để lại trạng thái ngoài dự kiến trên Windows.
 
@@ -2260,7 +3026,7 @@ Nếu nhóm mở rộng ở phiên bản sau, phải lập kế hoạch thay đ�
 đọc attack/cleanup command, duyệt payload, khóa release/commit cụ thể, kiểm tra SHA-256
 trước khi chạy, snapshot riêng, ghi execution log và tạo scenario/catalog mới. Không dùng
 lệnh tải script từ nhánh `master` rồi thực thi trực tiếp, không dùng Atomic để bù số run,
-và không trộn dữ liệu mở rộng vào dataset v1.
+và không trộn dữ liệu mở rộng vào cùng đợt dataset đã freeze.
 
 ## 20. Tài liệu chính thức đã đối chiếu
 
@@ -2280,5 +3046,5 @@ và không trộn dữ liệu mở rộng vào dataset v1.
 - Suricata rule-files/default-rule-path: https://docs.suricata.io/en/latest/configuration/suricata-yaml.html
 - Atomic Red Team: https://www.atomicredteam.io/docs/invoke-atomicredteam
 
-Atomic Red Team chỉ là hướng mở rộng sau khi dataset v1 đã được đóng và bàn giao; không
+Atomic Red Team chỉ là hướng mở rộng sau khi đợt dataset đã được đóng và bàn giao; không
 phải điều kiện để hoàn thành 48 run trong catalog.

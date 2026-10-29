@@ -61,6 +61,8 @@ def render_parameters(
             "scenario_id": draft.scenario_id,
             "family": draft.family,
             "label": draft.label,
+            "purpose": draft.purpose,
+            "cohort_id": draft.cohort_id,
             "scenario_parameters": draft.scenario_parameters,
         }
     else:

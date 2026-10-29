@@ -78,13 +78,13 @@ def build_dataset(config_path: Path) -> dict[str, object]:
     number_of_folds = int(config["split"]["number_of_folds"])
     minimum_groups = int(data_config["minimum_groups_per_family_label"])
     group_key = str(data_config.get("group_key", "run_id"))
-    if group_key not in {"run_id", "scenario_id"}:
-        raise ValueError("data.group_key must be run_id or scenario_id")
+    if group_key not in {"run_id", "scenario_id", "cohort_id"}:
+        raise ValueError("data.group_key must be run_id, scenario_id or cohort_id")
     group_strata = {
-        getattr(record, group_key): f"{record.family}:{record.label}"
+        (getattr(record, group_key), f"{record.family}:{record.label}")
         for record in records
     }
-    stratum_counts = Counter(group_strata.values())
+    stratum_counts = Counter(stratum for _, stratum in group_strata)
     sparse = {name: count for name, count in stratum_counts.items() if count < minimum_groups}
     if sparse:
         raise ValueError(
@@ -118,6 +118,13 @@ def build_dataset(config_path: Path) -> dict[str, object]:
         subset = [row.as_dict() for row in records if partition_by_run[row.run_id] == partition]
         write_jsonl(output_dir / f"{partition}.jsonl", subset)
 
+    challenge = discover_records(
+        Path(data_config["raw_dir"]), data_config["manifest_name"], data_config["records_name"],
+        include_purposes=("challenge",),
+    )
+    validate_feature_contract(challenge, schema)
+    write_jsonl(output_dir / "challenge.jsonl", [row.as_dict() for row in challenge])
+
     split_dir = Path(data_config["splits_dir"])
     file_names = {"train": "train.txt", "validation": "validation.txt", "locked_test": "test.txt"}
     for partition, file_name in file_names.items():
@@ -131,6 +138,11 @@ def build_dataset(config_path: Path) -> dict[str, object]:
         "dataset_hash_sha256": dataset_hash(records),
         "feature_schema_version": schema["version"],
         "feature_schema_sha256": _sha256(Path(config["feature_schema"])),
+        "challenge": {
+            "sha256": _sha256(output_dir / "challenge.jsonl"),
+            "record_count": len(challenge),
+            "training_eligible": False,
+        },
         "partitions": {
             partition: {
                 "sha256": _sha256(output_dir / f"{partition}.jsonl"),

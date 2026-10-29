@@ -18,20 +18,34 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from api.app.contracts import IncidentRequest
+from api.app.contracts import IncidentRequest, WazuhAlert
 from ml.behavior_features import (
     AccountObservation,
     NetworkObservation,
-    SuricataObservation,
     derive_account_features,
     derive_c2_features,
     interval_features,
 )
+from ml.clock_evidence import ClockPreflight
+from ml.collection_windows import bucket_used, reserve_bucket
+from ml.context import BaselineSnapshot, context_from_events, load_baseline
 from ml.dataset import (
     DatasetRecord,
     ScenarioManifest,
     load_feature_schema,
     validate_feature_contract,
+)
+from ml.feature_pipeline import aggregate_wazuh_alerts
+from ml.intake_window import IntakeError, capture_window, verify_capture
+from ml.telemetry import (
+    account_observation_eligible,
+    flow_counter_issues,
+    linked_flow,
+    linked_transaction,
+    network_is_outbound,
+    normalize_ip,
+    suricata_observations,
+    unambiguous_transactions,
 )
 from ml.telemetry import (
     account_source as _account_source,
@@ -44,11 +58,6 @@ from ml.telemetry import (
 )
 from ml.telemetry import (
     event_time as _event_time,
-)
-from ml.telemetry import (
-    is_interactive_logon,
-    network_is_outbound,
-    normalize_ip,
 )
 from ml.telemetry import (
     parse_time as _parse_time,
@@ -112,40 +121,6 @@ class Attribution(BaseModel):
         return self
 
 
-class ClockPreflight(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    captured_at: datetime
-    controller_utc: datetime
-    target_utc: datetime
-    wazuh_utc: datetime
-    sensor_utc: datetime
-    attacker_utc: datetime
-    maximum_skew_seconds: float = Field(default=5.0, gt=0, le=10)
-    maximum_capture_age_seconds: float = Field(default=120.0, gt=0, le=300)
-
-    @model_validator(mode="after")
-    def validate_clock_skew(self) -> ClockPreflight:
-        if self.captured_at.tzinfo is None or self.captured_at.utcoffset() is None:
-            raise ValueError("captured_at must include a timezone")
-        values = [
-            self.controller_utc,
-            self.target_utc,
-            self.wazuh_utc,
-            self.sensor_utc,
-            self.attacker_utc,
-        ]
-        if any(value.tzinfo is None or value.utcoffset() is None for value in values):
-            raise ValueError("clock preflight timestamps must include a timezone")
-        span = (max(values) - min(values)).total_seconds()
-        if span > self.maximum_skew_seconds:
-            raise ValueError(f"VM clock skew {span:.3f}s exceeds {self.maximum_skew_seconds:.3f}s")
-        measurement_age = (self.captured_at - min(values)).total_seconds()
-        if measurement_age < -1 or measurement_age > self.maximum_capture_age_seconds:
-            raise ValueError("clock preflight measurements are stale or captured in the future")
-        return self
-
-
 class QualityGates(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -197,6 +172,8 @@ class RunDraft(BaseModel):
     run_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
     family: Literal["account", "c2"]
     label: Literal["benign", "malicious"]
+    purpose: Literal["trainable", "challenge", "pilot"] = "trainable"
+    cohort_id: str | None = Field(default=None, min_length=1, max_length=128)
     host: str = Field(min_length=1, max_length=128)
     expected_behavior: str = Field(min_length=1)
     operator: str = Field(min_length=1, max_length=128)
@@ -236,6 +213,11 @@ class SourceConfig(BaseModel):
     correlation_window_seconds: float = Field(default=10.0, gt=0, le=30)
     taxonomy_path: str
     scenario_catalog_path: str = Field(min_length=1)
+    context_baseline_path: str | None = None
+    require_clean_bucket: bool = False
+    require_flow_counters: bool = False
+    require_online_parity: bool = False
+    late_arrival_grace_seconds: int = Field(default=60, ge=0, le=600, strict=True)
 
 
 class ScenarioDefinition(BaseModel):
@@ -244,6 +226,8 @@ class ScenarioDefinition(BaseModel):
     scenario_id: str = Field(min_length=1, max_length=128)
     family: Literal["account", "c2"]
     label: Literal["benign", "malicious"]
+    purpose: Literal["trainable", "challenge", "pilot"] = "trainable"
+    cohort_id: str | None = Field(default=None, min_length=1, max_length=128)
     expected_behavior: str = Field(min_length=1)
     attribution: Attribution
     quality_gates: QualityGates
@@ -303,6 +287,10 @@ def _normalized_source(source: SourceConfig, project_root: Path) -> dict[str, An
     payload["scenario_catalog_path"] = str(
         _resolve(project_root, source.scenario_catalog_path).resolve()
     )
+    if source.context_baseline_path:
+        payload["context_baseline_path"] = str(
+            _resolve(project_root, source.context_baseline_path).resolve()
+        )
     return payload
 
 
@@ -335,6 +323,8 @@ def _validate_draft_against_catalog(draft: RunDraft, catalog_path: Path) -> None
     }
     if actual != expected:
         raise CollectionError(f"draft does not match scenario catalog: {draft.scenario_id}")
+    if draft.purpose not in {scenario.purpose, "pilot"} or draft.cohort_id != scenario.cohort_id:
+        raise CollectionError("draft purpose/cohort does not match the frozen scenario catalog")
 
 
 def _atomic_text(path: Path, text: str) -> None:
@@ -363,6 +353,7 @@ def create_run_draft(
     execution_log_path: str | None = None,
     collection_seed: int | None = None,
     clock_preflight: ClockPreflight,
+    purpose: Literal["trainable", "challenge", "pilot"] | None = None,
 ) -> dict[str, str]:
     if output_path.exists():
         raise CollectionError(f"draft output already exists: {output_path}")
@@ -429,6 +420,8 @@ def create_run_draft(
             run_id=run_id,
             family=scenario.family,
             label=scenario.label,
+            purpose=purpose or scenario.purpose,
+            cohort_id=scenario.cohort_id,
             host=host,
             expected_behavior=scenario.expected_behavior,
             operator=operator,
@@ -442,6 +435,7 @@ def create_run_draft(
         )
     except ValueError as exc:
         raise CollectionError(f"invalid run draft values: {exc}") from exc
+    _validate_draft_against_catalog(draft, catalog_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     _atomic_text(
         output_path,
@@ -479,12 +473,22 @@ def _cursor(path: Path) -> dict[str, int | str]:
                     "Wazuh Archives does not end with a complete newline; wait for the "
                     "current write to finish and retry start"
                 )
-        stat = path.stat()
+        stat = os.fstat(handle.fileno())
+        handle.seek(0)
+        digest = hashlib.sha256()
+        remaining = size
+        while remaining:
+            block = handle.read(min(1024 * 1024, remaining))
+            if not block:
+                raise CollectionError("archive truncated while recording start cursor")
+            digest.update(block)
+            remaining -= len(block)
     return {
         "path": str(path),
         "size": size,
         "device": stat.st_dev,
         "inode": stat.st_ino,
+        "prefix_sha256": digest.hexdigest(),
     }
 
 
@@ -596,8 +600,35 @@ def start_run(
         schema_path = Path(__file__).with_name("feature_schema.json")
     if not schema_path.is_file():
         raise CollectionError(f"feature schema does not exist: {schema_path}")
+    context_path = (
+        _resolve(project_root, source.context_baseline_path)
+        if source.context_baseline_path
+        else None
+    )
+    baseline = None
+    context_bytes = None
+    capture_bytes = None
+    if context_path:
+        try:
+            context_bytes = context_path.read_bytes()
+            baseline = BaselineSnapshot.model_validate_json(context_bytes)
+        except (OSError, ValueError) as exc:
+            raise CollectionError(
+                f"context baseline is required and must be valid; enroll a separate capture: {exc}"
+            ) from exc
+        context_capture = (
+            context_path.parent / "context-captures" / (baseline.source_capture_sha256 + ".jsonl")
+        )
+        try:
+            capture_bytes = context_capture.read_bytes()
+        except OSError as exc:
+            raise CollectionError("context enrollment capture is missing") from exc
+        if hashlib.sha256(capture_bytes).hexdigest() != baseline.source_capture_sha256:
+            raise CollectionError("context enrollment capture is missing or its hash differs")
 
     started_at = _utc(now)
+    if baseline and not baseline.captured_at <= started_at < baseline.valid_until:
+        raise CollectionError("context baseline is stale or unavailable at collection start")
     clock_age = (started_at - _utc(draft.clock_preflight.captured_at)).total_seconds()
     if clock_age < -1 or clock_age > draft.clock_preflight.maximum_capture_age_seconds:
         raise CollectionError(
@@ -617,6 +648,8 @@ def start_run(
         "scenario_id": draft.scenario_id,
         "family": draft.family,
         "label": draft.label,
+        "purpose": draft.purpose,
+        "cohort_id": draft.cohort_id,
         "scenario_parameters": draft.scenario_parameters,
     }
     frozen_parameters_sha256 = _payload_sha256(frozen_parameters)
@@ -637,6 +670,11 @@ def start_run(
         "feature_schema_sha256": _sha256(schema_path),
         "frozen_parameters_sha256": frozen_parameters_sha256,
         "execution_receipt": None,
+        "origin_project_root": str(project_root),
+        "context_baseline_sha256": (
+            hashlib.sha256(context_bytes).hexdigest() if context_bytes is not None else None
+        ),
+        "context_capture_sha256": baseline.source_capture_sha256 if baseline else None,
     }
     state["scenario_catalog_sha256"] = _sha256(catalog_path)
     state["collection_contract_sha256"] = _payload_sha256(
@@ -648,7 +686,11 @@ def start_run(
         }
     )
     start_contract = {
-        "version": "collection-start-contract-v1",
+        "version": "collection-start-contract-v2",
+        "origin_project_root": str(project_root),
+        "source_document": source.model_dump(mode="json"),
+        "context_baseline_sha256": state["context_baseline_sha256"],
+        "context_capture_sha256": state["context_capture_sha256"],
         "run_id": draft.run_id,
         "started_at": state["started_at"],
         "draft_sha256": state["draft_sha256"],
@@ -689,6 +731,9 @@ def start_run(
             )
             shutil.copyfile(catalog_path, staging_dir / "scenario-catalog.yaml")
             shutil.copyfile(schema_path, staging_dir / "feature-schema.json")
+            if context_bytes is not None and capture_bytes is not None:
+                (staging_dir / "context-baseline.json").write_bytes(context_bytes)
+                (staging_dir / "context-capture.jsonl").write_bytes(capture_bytes)
             _write_jsonl(staging_dir / "run_markers.jsonl", [start_marker])
             _write_json(staging_dir / ".collection_state.json", state)
             _append_log(staging_dir, f"RUN_STARTED run_id={draft.run_id}")
@@ -704,7 +749,10 @@ def start_run(
     }
 
 
-def _read_appended_jsonl(cursor: dict[str, Any]) -> list[dict[str, Any]]:
+def _read_appended_jsonl(
+    cursor: dict[str, Any],
+    capture_path: Path | None = None,
+) -> list[dict[str, Any]]:
     path = Path(cursor["path"])
     stat = path.stat()
     if (
@@ -741,6 +789,8 @@ def _read_appended_jsonl(cursor: dict[str, Any]) -> list[dict[str, Any]]:
         events.append(event)
     if not events:
         raise CollectionError("no complete JSON events were appended during the run")
+    if capture_path:
+        capture_path.write_bytes(payload)
     return events
 
 
@@ -750,7 +800,7 @@ def _casefold_set(values: list[str]) -> set[str]:
 
 def _is_interactive_logon(eventdata: dict[str, Any], attribution: Attribution) -> bool:
     """Keep only the logon types declared by the controlled scenario."""
-    return is_interactive_logon(eventdata, attribution.logon_types)
+    return account_observation_eligible(eventdata, attribution.logon_types)
 
 
 def _matches_network(eventdata: dict[str, Any], attribution: Attribution) -> bool:
@@ -787,7 +837,9 @@ def _matches_dns(eventdata: dict[str, Any], attribution: Attribution) -> bool:
     return not process_names or _basename(eventdata.get("image")) in process_names
 
 
-def _matches_suricata(payload: dict[str, Any], attribution: Attribution) -> bool:
+def _matches_suricata(
+    payload: dict[str, Any], attribution: Attribution, *, bound_flow: bool = False
+) -> bool:
     event_type = payload.get("event_type")
     dns = payload.get("dns")
     dns_response = _suricata_dns_is_response(dns)
@@ -807,7 +859,7 @@ def _matches_suricata(payload: dict[str, Any], attribution: Attribution) -> bool
             return False
         if port not in set(attribution.destination_ports):
             return False
-    if attribution.dns_suffixes:
+    if attribution.dns_suffixes and not (bound_flow and event_type == "flow"):
         if event_type not in {"dns", "alert"}:
             return False
         queries = _suricata_dns_names(dns)
@@ -971,12 +1023,19 @@ def _derive_c2(
             if timestamp is None:
                 continue
             windows.append(event)
-            destination = str(eventdata.get("destinationIp", "")).strip()
+            destination = normalize_ip(eventdata.get("destinationIp"))
             destination_port = None
             with suppress(TypeError, ValueError):
                 destination_port = int(eventdata.get("destinationPort"))
             network_observations.append(
-                NetworkObservation(timestamp, destination, destination_port)
+                NetworkObservation(
+                    timestamp,
+                    destination,
+                    destination_port,
+                    source=normalize_ip(eventdata.get("sourceIp")),
+                    source_port=_transport_port(eventdata.get("sourcePort")),
+                    protocol=str(eventdata.get("protocol", "")),
+                )
             )
             suspicious = suspicious or _taxonomy_match(eventdata, taxonomy)
         elif (
@@ -1028,7 +1087,7 @@ def _derive_c2(
                     f"observed={observed_intervals}, expected={expected_intervals}"
                 )
 
-    nonce_flow_ids: set[str] = set()
+    nonce_references: list[tuple[dict[str, Any], datetime]] = []
     maximum_delta = source.correlation_window_seconds
     for event in events:
         if str((event.get("agent") or {}).get("name")) != source.suricata_agent_name:
@@ -1042,11 +1101,12 @@ def _derive_c2(
             or not _suricata_correlates(payload, timestamp, network_observations, maximum_delta)
         ):
             continue
-        if _suricata_has_nonce(payload, nonce):
-            flow_id = str(payload.get("flow_id", "")).strip()
-            if flow_id:
-                nonce_flow_ids.add(flow_id)
+        if payload.get("event_type") in {"http", "dns", "tls"} and _suricata_has_nonce(
+            payload, nonce
+        ):
+            nonce_references.append((payload, timestamp))
 
+    nonce_references = unambiguous_transactions(nonce_references, maximum_delta)
     suricata: list[dict[str, Any]] = []
     seen: set[str] = set()
     signature_ids: set[int] = set()
@@ -1055,16 +1115,22 @@ def _derive_c2(
             continue
         payload = _suricata_payload(event)
         timestamp = _event_time(event)
+        bound_flow = bool(payload and linked_flow(payload, nonce_references, maximum_delta))
         if (
             payload is None
             or timestamp is None
-            or not _matches_suricata(payload, draft.attribution)
-            or not _suricata_correlates(payload, timestamp, network_observations, maximum_delta)
+            or not _matches_suricata(payload, draft.attribution, bound_flow=bound_flow)
+            or (payload.get("event_type") == "flow" and not bound_flow)
+            or (
+                not bound_flow
+                and not _suricata_correlates(
+                    payload, timestamp, network_observations, maximum_delta
+                )
+            )
         ):
             continue
-        flow_id = str(payload.get("flow_id", "")).strip()
-        if not _suricata_has_nonce(payload, nonce) and (
-            not flow_id or flow_id not in nonce_flow_ids
+        if not _suricata_has_nonce(payload, nonce) and not (
+            bound_flow or linked_transaction(payload, timestamp, nonce_references, maximum_delta)
         ):
             continue
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -1078,6 +1144,11 @@ def _derive_c2(
                 signature_ids.add(int((payload.get("alert") or {}).get("signature_id")))
     if not suricata:
         raise CollectionError("no attributable Suricata EVE evidence was collected")
+    if source.require_flow_counters:
+        start, end = _aggregation_window(min(item.timestamp for item in network_observations))
+        flow_issues = flow_counter_issues(suricata, window_start=start, window_end=end)
+        if flow_issues:
+            raise CollectionError("incomplete flow evidence: " + ",".join(flow_issues))
 
     gates = draft.quality_gates
     observed_counts = {
@@ -1109,27 +1180,9 @@ def _derive_c2(
             f"forbidden Suricata signatures were observed: {forbidden_signatures}"
         )
 
-    suricata_observations: list[SuricataObservation] = []
-    for payload in suricata:
-        flow = payload.get("flow") if isinstance(payload.get("flow"), dict) else {}
-        total_bytes = 0
-        for field in ("bytes_toserver", "bytes_toclient"):
-            with suppress(TypeError, ValueError):
-                total_bytes += max(0, int(flow.get(field, 0)))
-        severity = None
-        if payload.get("event_type") == "alert":
-            with suppress(TypeError, ValueError):
-                severity = int((payload.get("alert") or {}).get("severity"))
-        suricata_observations.append(
-            SuricataObservation(
-                is_alert=payload.get("event_type") == "alert",
-                severity=severity,
-                total_bytes=total_bytes,
-            )
-        )
     features = derive_c2_features(
         network_observations,
-        suricata_observations,
+        suricata_observations(suricata),
         suspicious_process=suspicious,
     )
     indicator = next(iter(draft.attribution.destination_ips), None)
@@ -1189,6 +1242,69 @@ def _read_evidence_rows(path: Path, *, required: bool = True) -> list[dict[str, 
     return rows
 
 
+def _verify_full_capture_parity(
+    captured: list[dict[str, Any]],
+    incident: IncidentRequest,
+    source: SourceConfig,
+    evidence_dir: Path,
+) -> None:
+    """Replay the full asset bucket without label, scenario or nonce filtering."""
+    start, end = _aggregation_window(incident.start_time)
+    alerts = []
+    for row in captured:
+        at = _event_time(row)
+        agent = row.get("agent")
+        if not isinstance(agent, dict) or agent.get("name") not in {
+            source.windows_agent_name,
+            source.suricata_agent_name,
+        }:
+            continue
+        if at is None:
+            raise CollectionError("full-capture parity requires original event timestamps")
+        if not start <= at < end:
+            continue
+        envelope = dict(row)
+        canonical = json.dumps(row, sort_keys=True, separators=(",", ":"))
+        envelope.setdefault("id", "archive-" + hashlib.sha256(canonical.encode()).hexdigest())
+        envelope.setdefault("timestamp", _iso(at))
+        envelope.setdefault("rule", {"id": "archive-raw", "level": 0})
+        try:
+            alert = WazuhAlert.model_validate(envelope)
+        except ValueError as exc:
+            raise CollectionError(f"full-capture parity envelope is invalid: {exc}") from exc
+        alerts.append(alert)
+    if not alerts:
+        raise CollectionError("full-capture parity has no replayable records")
+    batch = aggregate_wazuh_alerts(
+        alerts,
+        baseline=load_baseline(evidence_dir / "context-baseline.json"),
+        source_config=source.model_dump(mode="json"),
+        taxonomy=_load_taxonomy(evidence_dir / "suspicious-process-taxonomy.yaml"),
+        use_runtime_baseline=False,
+    )
+    candidates = [
+        item.incident
+        for item in batch.incidents
+        if item.incident.asset_id.casefold() == incident.asset_id.casefold()
+        and item.incident.family_hint == incident.family_hint
+    ]
+    if len(candidates) != 1:
+        raise CollectionError("full-capture parity requires exactly one attributable online group")
+    online = candidates[0]
+    if (
+        online.features != incident.features
+        or online.context_status != incident.context_status
+        or online.context_revision != incident.context_revision
+        or online.observation_quality != incident.observation_quality
+    ):
+        changed = sorted(
+            key
+            for key in online.features.keys() | incident.features.keys()
+            if online.features.get(key) != incident.features.get(key)
+        )
+        raise CollectionError(f"full-capture parity failed; feature differences={changed}")
+
+
 def verify_feature_provenance(
     evidence_dir: Path,
     manifest: ScenarioManifest,
@@ -1196,6 +1312,11 @@ def verify_feature_provenance(
     state: dict[str, Any],
 ) -> None:
     """Reproduce the finalized vector from its raw archives without live log access."""
+    contract = json.loads((evidence_dir / "start-contract.json").read_text(encoding="utf-8"))
+    if not isinstance(contract, dict):
+        raise CollectionError("start-contract.json must contain an object")
+    if contract.get("version") == "collection-start-contract-v2":
+        _verify_start_snapshot(evidence_dir, state, evidence_dir.parents[2])
     try:
         draft = RunDraft.model_validate(
             json.loads((evidence_dir / "ground_truth.json").read_text(encoding="utf-8"))
@@ -1227,6 +1348,46 @@ def verify_feature_provenance(
             source,
             _load_taxonomy(evidence_dir / "suspicious-process-taxonomy.yaml"),
         )
+    baseline = load_baseline(evidence_dir / "context-baseline.json")
+    context = context_from_events(
+        baseline,
+        windows,
+        at=manifest.end_time,
+        asset_id=manifest.host,
+    )
+    features.update(context.features)
+    if contract.get("version") == "collection-start-contract-v2" and (
+        incident.context_status != context.status
+        or incident.context_revision != context.revision
+        or incident.review_reasons != context.review_reasons
+    ):
+        raise CollectionError("context assessment does not reproduce the finalized incident")
+    capture_path = evidence_dir / "archive_capture.jsonl"
+    if capture_path.is_file():
+        if source.require_online_parity:
+            deadline = _aggregation_window(manifest.start_time)[1] + timedelta(
+                seconds=source.late_arrival_grace_seconds,
+            )
+            try:
+                captured = verify_capture(
+                    state["archive_cursor"],
+                    capture_path,
+                    evidence_dir / "intake_checkpoint.json",
+                    deadline=deadline,
+                    relevant=_intake_relevant(source, manifest.start_time),
+                    live_source=False,
+                )
+            except IntakeError as exc:
+                raise CollectionError(str(exc)) from exc
+        else:
+            captured = _read_evidence_rows(capture_path)
+        selected = {json.dumps(item, sort_keys=True) for item in events}
+        if not selected <= {json.dumps(item, sort_keys=True) for item in captured}:
+            raise CollectionError("selected evidence is not a subset of the original capture")
+        if source.require_online_parity:
+            _verify_full_capture_parity(captured, incident, source, evidence_dir)
+    elif source.require_online_parity:
+        raise CollectionError("full-capture parity evidence is missing")
     if features != incident.features:
         changed = sorted(
             name
@@ -1271,7 +1432,8 @@ def _verify_start_snapshot(
         raise CollectionError(f"invalid immutable start contract: {exc}") from exc
     if (
         not isinstance(start_contract, dict)
-        or start_contract.get("version") != "collection-start-contract-v1"
+        or start_contract.get("version")
+        not in {"collection-start-contract-v1", "collection-start-contract-v2"}
         or _payload_sha256(start_contract) != state.get("start_contract_sha256")
     ):
         raise CollectionError("immutable start contract digest is inconsistent")
@@ -1318,6 +1480,14 @@ def _verify_start_snapshot(
         taxonomy_snapshot_path: start_contract.get("taxonomy_sha256"),
         evidence_dir / "feature-schema.json": start_contract.get("feature_schema_sha256"),
     }
+    for name in ("context_baseline_sha256", "context_capture_sha256"):
+        if start_contract.get(name) != state.get(name):
+            raise CollectionError("runtime context differs from the immutable start contract")
+    if start_contract.get("context_baseline_sha256"):
+        protected[evidence_dir / "context-baseline.json"] = start_contract[
+            "context_baseline_sha256"
+        ]
+        protected[evidence_dir / "context-capture.jsonl"] = start_contract["context_capture_sha256"]
     if start_contract.get("scenario_catalog_sha256") is not None:
         protected[evidence_dir / "scenario-catalog.yaml"] = start_contract.get(
             "scenario_catalog_sha256"
@@ -1325,11 +1495,47 @@ def _verify_start_snapshot(
     for path, expected in protected.items():
         if not isinstance(expected, str) or not path.is_file() or _sha256(path) != expected:
             raise CollectionError(f"start snapshot changed after run start: {path.name}")
+    if start_contract.get("context_baseline_sha256"):
+        try:
+            frozen_baseline = load_baseline(evidence_dir / "context-baseline.json")
+        except (OSError, ValueError) as exc:
+            raise CollectionError("frozen context baseline is invalid") from exc
+        captured_start = _parse_time(start_contract.get("started_at"))
+        if (
+            frozen_baseline is None
+            or captured_start is None
+            or frozen_baseline.source_capture_sha256 != start_contract.get("context_capture_sha256")
+            or not frozen_baseline.captured_at <= captured_start < frozen_baseline.valid_until
+        ):
+            raise CollectionError("frozen baseline/capture/as-of contract is inconsistent")
     try:
         snapshot_source = SourceConfig.model_validate(_read_yaml(source_snapshot_path))
     except ValueError as exc:
         raise CollectionError(f"invalid start snapshot source config: {exc}") from exc
-    normalized_source = _normalized_source(snapshot_source, project_root.resolve())
+    if start_contract["version"] == "collection-start-contract-v2":
+        # Runtime paths identify the original capture, not the recovery checkout.
+        # Both the parsed document and its original resolved paths are immutable.
+        if (
+            start_contract.get("source_document") != snapshot_source.model_dump(mode="json")
+            or start_contract.get("origin_project_root") != state.get("origin_project_root")
+            or not isinstance(start_contract.get("origin_project_root"), str)
+        ):
+            raise CollectionError("portable source document differs from the start contract")
+        normalized_source = start_contract["source"]
+        path_fields = {
+            "wazuh_archives_path",
+            "taxonomy_path",
+            "scenario_catalog_path",
+            "context_baseline_path",
+        }
+        if any(
+            normalized_source.get(name) != value
+            for name, value in snapshot_source.model_dump(mode="json").items()
+            if name not in path_fields
+        ):
+            raise CollectionError("portable source values differ from runtime origin")
+    else:
+        normalized_source = _normalized_source(snapshot_source, project_root.resolve())
     if normalized_source != start_contract.get("source"):
         raise CollectionError("normalized source differs from the immutable start contract")
     cursor = start_contract.get("archive_cursor")
@@ -1476,8 +1682,25 @@ def begin_action(
         bucket_start, bucket_end = _aggregation_window(action_started_at)
         guarded_start = bucket_start + timedelta(seconds=guard)
         deadline = bucket_end - timedelta(seconds=guard)
+        try:
+            occupied = bucket_used(project_root, draft.host, bucket_start)
+        except ValueError as exc:
+            raise CollectionError(str(exc)) from exc
         if wait_for_window and action_started_at < guarded_start:
             ready_at = guarded_start
+        elif (
+            state["source"].get("require_clean_bucket")
+            and bucket_start < (_aggregation_window(collection_started_at)[1])
+        ):
+            if not wait_for_window:
+                raise CollectionError(
+                    "aggregation window contains pre-collection activity; wait for a clean bucket"
+                )
+            ready_at = _aggregation_window(collection_started_at)[1] + timedelta(seconds=guard)
+        elif occupied:
+            if not wait_for_window:
+                raise CollectionError("aggregation window already used; wait for a new bucket")
+            ready_at = bucket_end + timedelta(seconds=guard)
         elif action_started_at + timedelta(seconds=reservation) > deadline:
             if not wait_for_window:
                 raise CollectionError(
@@ -1516,6 +1739,10 @@ def begin_action(
         "reserved_action_seconds": reservation,
     }
     _validate_action_window(receipt, draft)
+    try:
+        reserve_bucket(project_root, draft.host, bucket_start, run_id)
+    except ValueError as exc:
+        raise CollectionError(str(exc)) from exc
     state["execution_receipt"] = receipt
     _write_json(state_path, state)
     _write_json(evidence_dir / "execution_receipt.json", receipt)
@@ -1562,11 +1789,50 @@ def complete_action(
     return receipt
 
 
+def _intake_relevant(source: SourceConfig, started_at: datetime):
+    bucket_start, bucket_end = _aggregation_window(started_at)
+
+    def relevant(event: dict[str, Any]) -> bool:
+        agent = event.get("agent")
+        if not isinstance(agent, dict) or agent.get("name") not in {
+            source.windows_agent_name,
+            source.suricata_agent_name,
+        }:
+            return False
+        timestamp = _event_time(event)
+        return timestamp is None or bucket_start <= timestamp < bucket_end
+
+    return relevant
+
+
+def _verify_live_intake(state: dict[str, Any], evidence_dir: Path) -> None:
+    source = SourceConfig.model_validate(state["source"])
+    if not source.require_online_parity:
+        return
+    started = _parse_time(state["execution_receipt"].get("action_started_at"))
+    if started is None:
+        raise CollectionError("invalid intake action start")
+    deadline = _aggregation_window(started)[1] + timedelta(
+        seconds=source.late_arrival_grace_seconds,
+    )
+    try:
+        verify_capture(
+            state["archive_cursor"],
+            evidence_dir / "archive_capture.jsonl",
+            evidence_dir / "intake_checkpoint.json",
+            deadline=deadline,
+            relevant=_intake_relevant(source, started),
+        )
+    except IntakeError as exc:
+        raise CollectionError(str(exc)) from exc
+
+
 def finalize_run(
     run_id: str,
     project_root: Path,
     *,
     now: datetime | None = None,
+    wait_for_window: bool = False,
 ) -> dict[str, Any]:
     project_root = project_root.resolve()
     evidence_dir = project_root / "evidence/scenario-runs" / run_id
@@ -1577,6 +1843,8 @@ def finalize_run(
     final_dir = project_root / "data/raw" / run_id
     temporary_dir = final_dir.with_name(f".{run_id}.tmp")
     if state.get("status") == "FINALIZING":
+        _verify_start_snapshot(evidence_dir, state, project_root)
+        _verify_live_intake(state, evidence_dir)
         if final_dir.exists() and temporary_dir.exists():
             raise CollectionError(
                 "finalization recovery found both staged and final output; quarantine the run"
@@ -1631,7 +1899,34 @@ def finalize_run(
         raise CollectionError("execution receipt contains an invalid action window")
     _validate_action_window(receipt, draft)
 
-    events = _read_appended_jsonl(state["archive_cursor"])
+    if source.require_online_parity:
+        capture_deadline = _aggregation_window(started_at)[1] + timedelta(
+            seconds=source.late_arrival_grace_seconds,
+        )
+        if wait_for_window and now is not None and finalized_at < capture_deadline:
+            raise CollectionError("foreground --wait requires the live collector clock")
+        try:
+            events = capture_window(
+                state["archive_cursor"],
+                evidence_dir / "archive_capture.jsonl",
+                evidence_dir / "intake_checkpoint.json",
+                deadline=capture_deadline,
+                clock=lambda: _utc(now),
+                wait=wait_for_window,
+                sleep=time.sleep,
+                relevant=_intake_relevant(source, started_at),
+            )
+        except IntakeError as exc:
+            raise CollectionError(str(exc)) from exc
+        finalized_at = _utc(now)
+        if json.loads(state_path.read_text(encoding="utf-8")) != state:
+            raise CollectionError("run state changed while capturing the full window")
+        _verify_start_snapshot(evidence_dir, state, project_root)
+    else:
+        events = _read_appended_jsonl(
+            state["archive_cursor"],
+            evidence_dir / "archive_capture.jsonl",
+        )
     tolerance = timedelta(seconds=draft.clock_preflight.maximum_skew_seconds)
     window_start = started_at - tolerance
     window_end = ended_at + tolerance
@@ -1675,8 +1970,20 @@ def finalize_run(
         evidence_sources = ["wazuh-archives", "suricata-eve"]
 
     _validate_action_window(receipt, draft, events=scoped_archive_events)
+    baseline = load_baseline(evidence_dir / "context-baseline.json")
+    context = context_from_events(
+        baseline,
+        windows_events,
+        at=ended_at,
+        asset_id=draft.host,
+    )
+    features.update(context.features)
     incident_id = f"INC-{hashlib.sha256(run_id.encode()).hexdigest()[:16].upper()}"
     incident = IncidentRequest(
+        context_status=context.status,
+        context_revision=context.revision,
+        review_reasons=context.review_reasons,
+        observation_quality="COMPLETE" if context.status == "AVAILABLE" else "PARTIAL",
         incident_id=incident_id,
         asset_id=draft.host,
         start_time=started_at,
@@ -1688,11 +1995,15 @@ def finalize_run(
         raw_refs=[f"run:{run_id}", "evidence:wazuh_archives.jsonl"],
         indicator=indicator,
     )
+    if source.require_online_parity:
+        _verify_full_capture_parity(events, incident, source, evidence_dir)
     manifest = ScenarioManifest(
         scenario_id=draft.scenario_id,
         run_id=draft.run_id,
         family=draft.family,
         label=draft.label,
+        purpose=draft.purpose,
+        cohort_id=draft.cohort_id,
         host=draft.host,
         start_time=started_at,
         end_time=ended_at,
@@ -1736,6 +2047,7 @@ def finalize_run(
         if not execution_log_source.is_file():
             raise CollectionError(f"declared execution log does not exist: {execution_log_source}")
 
+    _verify_live_intake(state, evidence_dir)
     if final_dir.exists():
         raise CollectionError(f"final output already exists: {final_dir}")
     if temporary_dir.exists():
@@ -1944,6 +2256,10 @@ def validate_run(run_id: str, project_root: Path) -> dict[str, Any]:
         raise CollectionError("manifest collection contract does not match run state")
     if (
         frozen_parameters.get("run_id") != manifest.run_id
+        or frozen_parameters.get("purpose", "trainable") != manifest.purpose
+        or frozen_parameters.get("cohort_id") != manifest.cohort_id
+        or draft.get("purpose", "trainable") != manifest.purpose
+        or draft.get("cohort_id") != manifest.cohort_id
         or frozen_parameters.get("scenario_id") != manifest.scenario_id
         or frozen_parameters.get("family") != manifest.family
         or frozen_parameters.get("label") != manifest.label
@@ -2014,33 +2330,59 @@ def quarantine_run(run_id: str, project_root: Path, reason: str) -> dict[str, An
     project_root = project_root.resolve()
     evidence_source = project_root / "evidence/scenario-runs" / run_id
     raw_source = project_root / "data/raw" / run_id
+    staged_source = raw_source.with_name(f".{run_id}.tmp")
     if not evidence_source.is_dir():
         raise CollectionError(f"unknown run_id: {run_id}")
     evidence_target = project_root / "evidence/quarantine" / run_id
     raw_target = project_root / "data/quarantine" / run_id
-    if evidence_target.exists() or raw_target.exists():
+    staged_target = raw_target.with_name(f".{run_id}.tmp")
+    if evidence_target.exists() or raw_target.exists() or staged_target.exists():
         raise CollectionError(f"quarantine target already exists: {run_id}")
     evidence_target.parent.mkdir(parents=True, exist_ok=True)
     raw_target.parent.mkdir(parents=True, exist_ok=True)
 
-    _release_active_run(evidence_source.parent, run_id)
-    raw_moved = False
+    lock_path = _active_lock_path(evidence_source.parent)
+    if lock_path.exists():
+        try:
+            owner = json.loads(lock_path.read_text(encoding="utf-8")).get("run_id")
+        except (OSError, json.JSONDecodeError) as exc:
+            raise CollectionError(f"cannot verify active run lock: {lock_path}: {exc}") from exc
+        if owner != run_id:
+            raise CollectionError(f"active run lock belongs to {owner}, not {run_id}")
+    moved = []
     try:
-        if raw_source.exists():
-            raw_source.replace(raw_target)
-            raw_moved = True
+        for source, target in ((raw_source, raw_target), (staged_source, staged_target)):
+            if source.exists():
+                source.replace(target)
+                moved.append((source, target))
         evidence_source.replace(evidence_target)
+        marker = {
+            "status": "QUARANTINED",
+            "run_id": run_id,
+            "reason": reason.strip(),
+            "quarantined_at": _iso(datetime.now(UTC)),
+            "raw_preserved": raw_target.exists(),
+            "staged_raw_preserved": staged_target.exists(),
+            "staged_raw_path": staged_target.relative_to(project_root).as_posix()
+            if staged_target.exists()
+            else None,
+        }
+        _write_json(evidence_target / "quarantine.json", marker)
     except OSError as exc:
-        if raw_moved and raw_target.exists() and not raw_source.exists():
-            raw_target.replace(raw_source)
+        if evidence_target.exists() and not evidence_source.exists():
+            (evidence_target / "quarantine.json").unlink(missing_ok=True)
+            evidence_target.replace(evidence_source)
+        for source, target in reversed(moved):
+            if target.exists() and not source.exists():
+                target.replace(source)
         raise CollectionError(f"could not quarantine run {run_id}: {exc}") from exc
-
-    marker = {
-        "status": "QUARANTINED",
-        "run_id": run_id,
-        "reason": reason.strip(),
-        "quarantined_at": _iso(datetime.now(UTC)),
-        "raw_preserved": raw_moved,
-    }
-    _write_json(evidence_target / "quarantine.json", marker)
+    _release_active_run(evidence_source.parent, run_id)
     return marker
+
+
+def _transport_port(value: object) -> int | None:
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        return None
+    return port if 0 < port <= 65535 else None

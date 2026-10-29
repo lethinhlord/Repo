@@ -24,6 +24,12 @@ set -a
 . ./.env
 set +a
 MODEL_PACKAGE_HOST_DIR="${MODEL_PACKAGE_HOST_DIR:-./ml/model-package}"
+CONTEXT_BASELINE_HOST_FILE="${CONTEXT_BASELINE_HOST_FILE:-./evidence/context-baseline.json}"
+if [ ! -f "$CONTEXT_BASELINE_HOST_FILE" ]; then
+  echo "Context baseline is missing: $CONTEXT_BASELINE_HOST_FILE" >&2
+  echo "Enroll a separate approved baseline before deploying features-v3." >&2
+  exit 1
+fi
 if [ ! -f "$MODEL_PACKAGE_HOST_DIR/FROZEN.json" ]; then
   echo "Signed model package is missing: $MODEL_PACKAGE_HOST_DIR/FROZEN.json" >&2
   echo "Prepare and freeze a model package before deployment." >&2
@@ -31,10 +37,13 @@ if [ ! -f "$MODEL_PACKAGE_HOST_DIR/FROZEN.json" ]; then
 fi
 
 docker compose config --quiet
-docker compose down --remove-orphans
 ./scripts/build_reproducible_image.sh datn-ai-soar-api:week3
 docker compose run --rm --no-deps api \
   python -m ml.freeze_model --verify-only --package-dir /app/ml/model-package
+docker compose run --rm --no-deps api python -c \
+  'from datetime import UTC,datetime; from ml.context import load_baseline; b=load_baseline("/app/context-baseline.json"); assert b is not None and b.captured_at <= datetime.now(UTC) < b.valid_until, "Context baseline is missing, future or stale"; print("Context validated:", b.revision)'
+
+docker compose down --remove-orphans
 docker compose up -d api
 
 attempt=0

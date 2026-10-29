@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://datn.local/schemas/features-v2.json",
-  "title": "DATN behavioral feature vector v2",
-  "version": "features-v2",
-  "description": "Observed, window-aggregated telemetry only; TI, asset context and labels are excluded.",
+  "$id": "https://datn.local/schemas/features-v3.json",
+  "title": "DATN behavioral feature vector v3",
+  "version": "features-v3",
+  "description": "Observed telemetry with immutable as-of history and explicit availability masks; labels, exact identities, TI and asset scores are excluded.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -15,6 +15,8 @@
     "remote_logon_ratio",
     "failure_window_seconds",
     "attempt_rate_per_minute",
+    "source_history_known",
+    "new_source_for_user",
     "suspicious_process",
     "periodicity_score",
     "connection_interval_cv",
@@ -26,29 +28,131 @@
     "destination_port_count",
     "dns_query_count",
     "dns_unique_query_ratio",
-    "flow_total_bytes_log1p"
+    "flow_total_bytes_log1p",
+    "destination_history_known",
+    "new_destination"
   ],
   "properties": {
-    "failed_login_count": {"type": "number", "minimum": 0, "maximum": 1000000},
-    "successful_login_count": {"type": "number", "minimum": 0, "maximum": 1000000},
-    "success_after_fail": {"type": "number", "minimum": 0, "maximum": 1},
-    "unique_target_account_count": {"type": "number", "minimum": 0, "maximum": 1000000},
-    "unique_source_count": {"type": "number", "minimum": 0, "maximum": 1000000},
-    "remote_logon_ratio": {"type": "number", "minimum": 0, "maximum": 1},
-    "failure_window_seconds": {"type": "number", "minimum": 0, "maximum": 86400},
-    "attempt_rate_per_minute": {"type": "number", "minimum": 0, "maximum": 1000000},
-    "suspicious_process": {"type": "number", "minimum": 0, "maximum": 1},
-    "periodicity_score": {"type": "number", "minimum": 0, "maximum": 1},
-    "connection_interval_cv": {"type": "number", "minimum": 0, "maximum": 1000000},
-    "mean_interval_seconds": {"type": "number", "minimum": 0, "maximum": 86400},
-    "suricata_alert_count": {"type": "number", "minimum": 0, "maximum": 1000000},
-    "suricata_severity_score": {"type": "number", "minimum": 0, "maximum": 1},
-    "outbound_connection_count": {"type": "number", "minimum": 0, "maximum": 1000000},
-    "unique_destination_count": {"type": "number", "minimum": 0, "maximum": 1000000},
-    "destination_port_count": {"type": "number", "minimum": 0, "maximum": 65535},
-    "dns_query_count": {"type": "number", "minimum": 0, "maximum": 1000000},
-    "dns_unique_query_ratio": {"type": "number", "minimum": 0, "maximum": 1},
-    "flow_total_bytes_log1p": {"type": "number", "minimum": 0, "maximum": 100}
+    "failed_login_count": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "successful_login_count": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "success_after_fail": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "unique_target_account_count": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "unique_source_count": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "remote_logon_ratio": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "failure_window_seconds": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 86400
+    },
+    "attempt_rate_per_minute": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "source_history_known": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "new_source_for_user": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "suspicious_process": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "periodicity_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "connection_interval_cv": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "mean_interval_seconds": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 86400
+    },
+    "suricata_alert_count": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "suricata_severity_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "outbound_connection_count": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "unique_destination_count": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "destination_port_count": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 65535
+    },
+    "dns_query_count": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "dns_unique_query_ratio": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "flow_total_bytes_log1p": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "destination_history_known": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "new_destination": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    }
   },
   "x-feature-order": [
     "failed_login_count",
@@ -59,6 +163,8 @@
     "remote_logon_ratio",
     "failure_window_seconds",
     "attempt_rate_per_minute",
+    "source_history_known",
+    "new_source_for_user",
     "suspicious_process",
     "periodicity_score",
     "connection_interval_cv",
@@ -70,7 +176,9 @@
     "destination_port_count",
     "dns_query_count",
     "dns_unique_query_ratio",
-    "flow_total_bytes_log1p"
+    "flow_total_bytes_log1p",
+    "destination_history_known",
+    "new_destination"
   ],
   "x-family-features": {
     "account": [
@@ -81,7 +189,9 @@
       "unique_source_count",
       "remote_logon_ratio",
       "failure_window_seconds",
-      "attempt_rate_per_minute"
+      "attempt_rate_per_minute",
+      "source_history_known",
+      "new_source_for_user"
     ],
     "c2": [
       "suspicious_process",
@@ -95,7 +205,9 @@
       "destination_port_count",
       "dns_query_count",
       "dns_unique_query_ratio",
-      "flow_total_bytes_log1p"
+      "flow_total_bytes_log1p",
+      "destination_history_known",
+      "new_destination"
     ]
   },
   "x-excluded-context": [
@@ -105,5 +217,12 @@
     "ground_truth",
     "account_identity",
     "exact_destination_identity"
+  ],
+  "x-context-contract": "context-baseline-v1",
+  "x-context-features": [
+    "source_history_known",
+    "new_source_for_user",
+    "destination_history_known",
+    "new_destination"
   ]
 }

@@ -58,7 +58,9 @@ def test_collection_runbook_is_portable_isolated_and_failure_safe() -> None:
     assert "OpenSSH.Server~~~~0.0.1.0" in runbook
     assert "MAX_CLOCK_SKEW_SECONDS=5" in runbook
     assert "BACKUP_ID=" in runbook
-    assert "retry finalize" in runbook
+    assert "Checkpoint đã sealed trước lỗi bước tạo feature/output" in runbook
+    assert "Chưa từng chạy intake trước cutoff" in runbook
+    assert "finalize muộn báo thiếu checkpoint hợp lệ" in runbook
     assert "Connect a host virtual adapter to this network" in runbook
     assert "/etc/suricata/rules/datn.rules" in runbook
     assert "--init-errors-fatal -T" in runbook

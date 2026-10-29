@@ -56,9 +56,13 @@ def test_dns_rejects_missing_process_identity_even_with_matching_nonce(tmp_path:
 def test_declared_remote_logon_type_is_accepted_without_accepting_service_noise() -> None:
     attribution = Attribution(account_names=["datn_attack"], logon_types=[3])
 
-    assert _is_interactive_logon({"logonType": "3"}, attribution)
-    assert not _is_interactive_logon({"logonType": "2"}, attribution)
-    assert not _is_interactive_logon({"logonType": "5"}, attribution)
+    assert _is_interactive_logon({"logonType": "3", "targetUserName": "datn_attack"}, attribution)
+    assert not _is_interactive_logon(
+        {"logonType": "2", "targetUserName": "datn_attack"}, attribution
+    )
+    assert not _is_interactive_logon(
+        {"logonType": "5", "targetUserName": "datn_attack"}, attribution
+    )
 
 
 def test_source_config_requires_a_scenario_catalog() -> None:
@@ -413,6 +417,8 @@ def windows_event(
     if event_id == 3:
         eventdata.setdefault("processGuid", TEST_PROCESS_GUID)
         eventdata.setdefault("sourceIp", "10.20.0.10")
+        eventdata.setdefault("sourcePort", "50001")
+        eventdata.setdefault("protocol", "tcp")
     if event_id == 22:
         eventdata.setdefault("processGuid", TEST_PROCESS_GUID)
         query = str(eventdata.get("queryName", ""))
@@ -437,7 +443,13 @@ def windows_event(
 def suricata_event(when: datetime, payload: dict) -> dict:
     payload = json.loads(json.dumps(payload))
     dns = payload.get("dns")
+    payload.setdefault("flow_id", 1001)
+    payload.setdefault("proto", "UDP" if isinstance(dns, dict) else "TCP")
+    reverse = isinstance(dns, dict) and dns.get("type") in {"answer", "response"}
+    payload.setdefault("src_port", 53 if reverse else 50001)
+    payload.setdefault("dest_port", 50001 if reverse else (53 if isinstance(dns, dict) else 8081))
     if isinstance(dns, dict):
+
         def add_nonce(record: dict) -> None:
             name = record.get("rrname")
             if isinstance(name, str) and TEST_NONCE.casefold() not in name.casefold():
@@ -498,6 +510,8 @@ def test_account_run_creates_strict_manifest_incident_and_checksums(tmp_path: Pa
     manifest = json.loads((run_dir / "scenario_manifest.json").read_text(encoding="utf-8"))
     assert result["status"] == "FINALIZED"
     assert set(manifest) == {
+        "purpose",
+        "cohort_id",
         "scenario_id",
         "run_id",
         "family",
@@ -753,6 +767,10 @@ def test_c2_run_requires_correlated_sysmon_and_suricata_and_calculates_features(
         "dns_query_count": 0.0,
         "dns_unique_query_ratio": 0.0,
         "flow_total_bytes_log1p": 0.0,
+        "source_history_known": 0.0,
+        "new_source_for_user": 0.0,
+        "destination_history_known": 0.0,
+        "new_destination": 0.0,
     }
     assert incident["evidence_sources"] == ["wazuh-archives", "suricata-eve"]
 
@@ -1063,6 +1081,7 @@ def test_dns_only_attribution_rejects_unrelated_non_dns_suricata_events() -> Non
         },
         attribution,
     )
+
 
 def test_suricata8_dns_queries_attribution() -> None:
     attribution = Attribution(dns_suffixes=["beacon.datn.test"])

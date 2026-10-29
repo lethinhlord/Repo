@@ -9,6 +9,7 @@ from ml.dataset_audit import audit_dataset, format_audit_report
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Audit four-stratum DATN training data")
+    parser.add_argument("--mode", choices=("progress", "final"), default="final")
     parser.add_argument("--raw-dir", type=Path, default=Path("data/raw"))
     parser.add_argument(
         "--evidence-dir", type=Path, default=Path("evidence/scenario-runs")
@@ -46,6 +47,7 @@ def main() -> int:
         scenario_catalog_path=args.scenario_catalog,
         source_config_path=args.source_config,
         taxonomy_path=args.taxonomy,
+        mode=args.mode,
     )
     print(format_audit_report(report), end="")
     if args.output:

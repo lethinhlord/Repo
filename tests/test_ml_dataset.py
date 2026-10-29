@@ -120,7 +120,7 @@ def test_scenario_grouped_split_rejects_fewer_scenarios_than_folds() -> None:
 def test_grouped_split_rejects_unknown_group_key() -> None:
     rows = [record("account-0-0", "account", 0)]
 
-    with pytest.raises(DatasetError, match="group_key must be run_id or scenario_id"):
+    with pytest.raises(DatasetError, match="group_key must be run_id, scenario_id or cohort_id"):
         assign_grouped_folds(rows, number_of_folds=5, random_seed=42, group_key="host")
 
 
