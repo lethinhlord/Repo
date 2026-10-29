@@ -12,11 +12,11 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from ml.behavior_features import AccountObservation, NetworkObservation
 from ml.telemetry import (
+    account_observation_eligible,
     account_source,
     account_user,
     basename,
     event_time,
-    is_interactive_logon,
     network_is_outbound,
     normalize_ip,
     windows_fields,
@@ -170,7 +170,7 @@ def build_baseline(
             raise ValueError("baseline capture contains missing/future source event timestamps")
         event_id, _, fields = windows_fields(event)
         asset = windows_agent_name.casefold()
-        if event_id == "4624" and is_interactive_logon(fields) and account_user(fields):
+        if event_id == "4624" and account_observation_eligible(fields):
             key = (asset, account_user(fields))
             accounts.setdefault(key, set()).add(account_source(fields))
             times.append(at)
@@ -269,7 +269,7 @@ def context_from_events(
         timestamp = event_time(event)
         if timestamp is None:
             continue
-        if event_id in {"4624", "4625"} and is_interactive_logon(fields):
+        if event_id in {"4624", "4625"} and account_observation_eligible(fields):
             accounts.append(AccountObservation(
                 timestamp, account_user(fields), account_source(fields),
                 str(fields.get("logonType", fields.get("LogonType", ""))), event_id == "4624",

@@ -92,7 +92,8 @@ def test_late_final_eve_flow_updates_original_window_before_watermark(store, mon
     process = windows_event(1, {'image':'curl.exe', 'processGuid':guid,
                                'commandLine':'curl.exe https://service.local/status'}, 5)
     network = windows_event(3, {'image':'curl.exe', 'processGuid':guid, 'initiated':'true',
-        'sourceIp':'10.20.0.10', 'destinationIp':'10.40.0.10', 'destinationPort':'8081'}, 8)
+        'sourceIp':'10.20.0.10', 'sourcePort':'50001', 'protocol':'tcp',
+        'destinationIp':'10.40.0.10', 'destinationPort':'8081'}, 8)
 
     def eve(identifier, payload):
         return WazuhAlert.model_validate({

@@ -224,8 +224,7 @@ def _c2_events(
                 {
                     "image": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
                     "commandLine": (
-                        "powershell.exe -NoProfile -Command "
-                        f"Resolve-DnsName {nonce}-0.{suffix}"
+                        f"powershell.exe -NoProfile -Command Resolve-DnsName {nonce}-0.{suffix}"
                     ),
                     "processGuid": process_guid,
                 },
@@ -252,6 +251,8 @@ def _c2_events(
             payload: dict[str, Any] = {
                 "event_type": "dns",
                 "src_ip": "10.20.0.10",
+                "src_port": 50001 + number,
+                "proto": "UDP" if scenario.quality_gates.min_dns_events else "TCP",
                 "dest_ip": "10.40.0.10",
                 "dest_port": 53,
                 "flow_id": f"{run_id}-{number}",
@@ -269,13 +270,26 @@ def _c2_events(
                     },
                 )
             )
-            events.append(_suricata_event(event_at + timedelta(seconds=60), {
-                "event_type":"flow", "src_ip":"10.20.0.10", "dest_ip":"10.40.0.10",
-                "dest_port":53, "flow_id":f"{run_id}-{number}",
-                "flow":{"start":event_at.isoformat(),
-                        "end":(event_at + timedelta(milliseconds=10)).isoformat(),
-                        "bytes_toserver":40,"bytes_toclient":60},
-            }))
+            events.append(
+                _suricata_event(
+                    event_at + timedelta(seconds=60),
+                    {
+                        "event_type": "flow",
+                        "src_ip": "10.20.0.10",
+                        "src_port": 50001 + number,
+                        "proto": "UDP" if scenario.quality_gates.min_dns_events else "TCP",
+                        "dest_ip": "10.40.0.10",
+                        "dest_port": 53,
+                        "flow_id": f"{run_id}-{number}",
+                        "flow": {
+                            "start": event_at.isoformat(),
+                            "end": (event_at + timedelta(milliseconds=10)).isoformat(),
+                            "bytes_toserver": 40,
+                            "bytes_toclient": 60,
+                        },
+                    },
+                )
+            )
             if number < len(gaps):
                 event_at += timedelta(seconds=gaps[number])
         return events, event_at
@@ -306,6 +320,8 @@ def _c2_events(
                         "image": r"C:\Windows\System32\curl.exe",
                         "processGuid": process_guid,
                         "sourceIp": "10.20.0.10",
+                        "sourcePort": str(50001 + number),
+                        "protocol": "tcp",
                         "destinationIp": "10.40.0.10",
                         "destinationPort": str(port),
                         "initiated": "true",
@@ -318,6 +334,8 @@ def _c2_events(
         payload = {
             "event_type": "http",
             "src_ip": "10.20.0.10",
+            "src_port": 50001 + number,
+            "proto": "UDP" if scenario.quality_gates.min_dns_events else "TCP",
             "dest_ip": "10.40.0.10",
             "dest_port": port,
             "flow_id": f"{run_id}-{number}",
@@ -340,13 +358,26 @@ def _c2_events(
                     },
                 )
             )
-        events.append(_suricata_event(event_at + timedelta(seconds=60), {
-            "event_type":"flow", "src_ip":"10.20.0.10", "dest_ip":"10.40.0.10",
-            "dest_port":port, "flow_id":f"{run_id}-{number}",
-            "flow":{"start":event_at.isoformat(),
-                    "end":(event_at + timedelta(milliseconds=10)).isoformat(),
-                    "bytes_toserver":40,"bytes_toclient":60},
-        }))
+        events.append(
+            _suricata_event(
+                event_at + timedelta(seconds=60),
+                {
+                    "event_type": "flow",
+                    "src_ip": "10.20.0.10",
+                    "src_port": 50001 + number,
+                    "proto": "UDP" if scenario.quality_gates.min_dns_events else "TCP",
+                    "dest_ip": "10.40.0.10",
+                    "dest_port": port,
+                    "flow_id": f"{run_id}-{number}",
+                    "flow": {
+                        "start": event_at.isoformat(),
+                        "end": (event_at + timedelta(milliseconds=10)).isoformat(),
+                        "bytes_toserver": 40,
+                        "bytes_toclient": 60,
+                    },
+                },
+            )
+        )
         if number < len(gaps):
             event_at += timedelta(seconds=gaps[number])
     return events, event_at

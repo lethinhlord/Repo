@@ -211,6 +211,8 @@ def test_data_only_eve_is_preserved_at_wazuh_boundary_and_correlated() -> None:
             "processGuid": "g1",
             "initiated": "true",
             "sourceIp": "10.20.0.10",
+            "sourcePort": "50001",
+            "protocol": "tcp",
             "destinationIp": "10.40.0.10",
             "destinationPort": "8081",
         },
@@ -226,12 +228,19 @@ def test_data_only_eve_is_preserved_at_wazuh_boundary_and_correlated() -> None:
                 "event_type": "alert",
                 "timestamp": "2026-10-27T00:00:01Z",
                 "src_ip": "10.20.0.10",
+                "src_port": 50001,
+                "proto": "TCP",
+                "sensor_instance": "sensor-boot-qa-001",
+                "flow_id": 123,
                 "dest_ip": "10.40.0.10",
                 "dest_port": 8081,
                 "alert": {"signature_id": 900001, "severity": 3},
             },
         }
     )
+    eve = WazuhAlert.model_validate(eve.model_dump(mode="json", exclude_none=True))
+    assert eve.data.proto == "TCP"
+    assert eve.data.sensor_instance == "sensor-boot-qa-001"
     result = aggregate_wazuh_alerts([process, network, eve]).incidents[0]
     assert result.quality_status == "PARTIAL"
     assert result.incident.context_status == "MISSING"
@@ -338,6 +347,8 @@ def test_offline_and_online_derive_the_same_c2_vector_for_same_raw_window(
             "sourceIp": "::ffff:10.20.0.10" if mapped_ip else "10.20.0.10",
             "destinationIp": "::ffff:10.40.0.10" if mapped_ip else "10.40.0.10",
             "destinationPort": "8081",
+            "sourcePort": "50001",
+            "protocol": "tcp",
         }
     )
     network = raw_c2_alert("PARITY-NETWORK", 22 if dns else 3, details, 1)
@@ -348,6 +359,8 @@ def test_offline_and_online_derive_the_same_c2_vector_for_same_raw_window(
         "dest_ip": "::ffff:10.40.0.10" if mapped_ip else "10.40.0.10",
         "dest_port": 53 if dns else 8081,
         "flow_id": 123,
+        "src_port": 50001,
+        "proto": "UDP" if dns else "TCP",
         "alert": {"signature_id": 900002 if dns else 900001, "severity": 3},
     }
     if dns:

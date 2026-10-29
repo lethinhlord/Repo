@@ -57,6 +57,9 @@ class NetworkObservation:
     destination: str
     destination_port: int | None
     dns_query: str | None = None
+    source: str | None = None
+    source_port: int | None = None
+    protocol: str | None = None
 
 
 @dataclass(frozen=True)
@@ -109,8 +112,9 @@ def derive_account_features(observations: list[AccountObservation]) -> dict[str,
     accounts = {item.account for item in ordered}
     remote = sum(item.logon_type.strip() in REMOTE_WINDOWS_LOGON_TYPES for item in ordered)
     failure_window = (
-        (max(item.timestamp for item in failures) - min(item.timestamp for item in failures))
-        .total_seconds()
+        (
+            max(item.timestamp for item in failures) - min(item.timestamp for item in failures)
+        ).total_seconds()
         if len(failures) > 1
         else 0.0
     )
@@ -169,9 +173,7 @@ def derive_c2_features(
             "destination_port_count": float(len(ports)),
             "dns_query_count": float(len(dns_queries)),
             "dns_unique_query_ratio": (
-                round(len(set(dns_queries)) / len(dns_queries), 6)
-                if dns_queries
-                else 0.0
+                round(len(set(dns_queries)) / len(dns_queries), 6) if dns_queries else 0.0
             ),
             "flow_total_bytes_log1p": round(math.log1p(total_bytes), 6),
         }

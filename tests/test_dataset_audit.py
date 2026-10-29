@@ -259,12 +259,15 @@ def write_run(
         raw_windows.append(win(1, .5, {"image": "curl.exe", "processGuid": "fixture-guid",
             "commandLine": f"curl.exe http://10.40.0.10:8080/status?run={nonce}"}))
         offsets = c2_offsets if c2_offsets is not None else [1+i*step for i in range(index+2)]
-        for seconds in offsets:
+        for connection, seconds in enumerate(offsets):
             raw_windows.append(win(3, seconds, {"image": "curl.exe", "processGuid": "fixture-guid",
                 "initiated": "true", "sourceIp": "10.20.0.10",
+                "sourcePort": str(50000 + connection), "protocol": "tcp",
                 "destinationIp": "10.40.0.10", "destinationPort": "8080"}))
             timestamp = (started + timedelta(seconds=seconds)).isoformat()
             payload = {"timestamp": timestamp, "event_type": "http", "src_ip": "10.20.0.10",
+                "src_port": 50000 + connection, "proto": "TCP",
+                "flow_id": f"{run_id}-{connection}",
                 "dest_ip": "10.40.0.10", "dest_port": 8080, "http": {"url": f"/status?run={nonce}"}}
             raw_suricata.append({"timestamp": timestamp, "agent": {"name": "NET-SENSOR"},
                                  "full_log": json.dumps(payload)})

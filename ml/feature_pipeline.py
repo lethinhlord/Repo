@@ -29,12 +29,12 @@ from ml.behavior_features import (
 )
 from ml.context import BaselineSnapshot, context_from_events, load_baseline
 from ml.telemetry import (
+    account_observation_eligible,
     account_source,
     account_user,
     basename,
     event_time,
     flow_counter_issues,
-    is_interactive_logon,
     linked_flow,
     network_is_outbound,
     normalize_ip,
@@ -43,6 +43,7 @@ from ml.telemetry import (
     suricata_observations,
     suricata_payload,
     taxonomy_match,
+    unambiguous_transactions,
     windows_fields,
 )
 
@@ -102,9 +103,9 @@ def window_start(alert: WazuhAlert, *, window_minutes: int = 5) -> datetime:
 
 
 def _family(alert: WazuhAlert) -> str:
-    event_id, _ = _windows_fields(alert)
+    event_id, fields = _windows_fields(alert)
     if event_id in {"4624", "4625"}:
-        return "account"
+        return "account" if account_observation_eligible(fields) else "unknown"
     if event_id in {"1", "3", "22"} or _suricata_payload(alert) is not None:
         return "c2"
     decoder = alert.decoder.name.strip().lower()
@@ -142,7 +143,8 @@ def _account_source(alert: WazuhAlert) -> str:
 
 
 def _aggregation_key(
-    alert: WazuhAlert, config: dict[str, Any] | None = None,
+    alert: WazuhAlert,
+    config: dict[str, Any] | None = None,
 ) -> tuple[str, str, str]:
     family = _family(alert)
     discriminator = _account_source(alert) if family == "account" else "behavior-window"
@@ -172,8 +174,10 @@ def _legacy_features(alert: WazuhAlert) -> tuple[dict[str, float], list[str]]:
 
 
 def _derive_raw_group(
-    alerts: list[WazuhAlert], family: str,
-    config: dict[str, Any] | None = None, taxonomy: dict[str, Any] | None = None,
+    alerts: list[WazuhAlert],
+    family: str,
+    config: dict[str, Any] | None = None,
+    taxonomy: dict[str, Any] | None = None,
 ) -> tuple[dict[str, float], list[str], list[str], str | None, list[WazuhAlert]]:
     config = _collection_config() if config is None else config
     if family == "account":
@@ -184,7 +188,7 @@ def _derive_raw_group(
             if (
                 event_id not in {"4624", "4625"}
                 or not account_user(eventdata)
-                or not is_interactive_logon(eventdata)
+                or not account_observation_eligible(eventdata)
             ):
                 continue
             attributed.append(alert)
@@ -219,9 +223,7 @@ def _derive_raw_group(
         attributed: list[WazuhAlert] = []
         processes: dict[str, tuple[dict[str, Any], datetime, WazuhAlert]] = {}
         windows_agent, sensor_agent = _collection_sources(config)
-        configured_sources = {
-            normalize_ip(value) for value in config.get("windows_source_ips", [])
-        }
+        configured_sources = {normalize_ip(value) for value in config.get("windows_source_ips", [])}
         for alert in alerts:
             if alert.agent.name != windows_agent:
                 continue
@@ -260,7 +262,16 @@ def _derive_raw_group(
                     continue
                 if not destination or not 0 < port <= 65535:
                     continue
-                network.append(NetworkObservation(timestamp, destination, port))
+                network.append(
+                    NetworkObservation(
+                        timestamp,
+                        destination,
+                        port,
+                        source=source,
+                        source_port=_transport_port(eventdata.get("sourcePort")),
+                        protocol=str(eventdata.get("protocol", "")),
+                    )
+                )
                 observed_sources.add(source)
                 indicator = indicator or destination
             else:
@@ -275,7 +286,8 @@ def _derive_raw_group(
             process, _, alert = processes[guid]
             attributed.append(alert)
             suspicious = suspicious or taxonomy_match(
-                process, _process_taxonomy() if taxonomy is None else taxonomy,
+                process,
+                _process_taxonomy() if taxonomy is None else taxonomy,
             )
 
         sources = configured_sources or observed_sources
@@ -287,10 +299,19 @@ def _derive_raw_group(
             if alert.agent.name != sensor_agent:
                 continue
             payload = _suricata_payload(alert)
-            if payload is not None and suricata_correlates(
-                payload, alert_event_time(alert), network, maximum_delta, source_ips=sources,
+            if (
+                payload is not None
+                and payload.get("event_type") in {"http", "dns", "tls"}
+                and suricata_correlates(
+                    payload,
+                    alert_event_time(alert),
+                    network,
+                    maximum_delta,
+                    source_ips=sources,
+                )
             ):
                 references.append((payload, alert_event_time(alert)))
+        references = unambiguous_transactions(references, maximum_delta)
         for alert in alerts:
             if alert.agent.name != sensor_agent:
                 continue
@@ -298,11 +319,17 @@ def _derive_raw_group(
             if (
                 payload is None
                 or not sources
-                or not (linked_flow(payload, references, maximum_delta) or suricata_correlates(
-                    payload, alert_event_time(alert), network,
-                    maximum_delta,
-                    source_ips=sources,
-                ))
+                or not (
+                    linked_flow(payload, references, maximum_delta)
+                    if payload.get("event_type") == "flow"
+                    else suricata_correlates(
+                        payload,
+                        alert_event_time(alert),
+                        network,
+                        maximum_delta,
+                        source_ips=sources,
+                    )
+                )
             ):
                 continue
             canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -352,20 +379,28 @@ def _derive_raw_group(
 
 
 def _build_response(
-    alerts: list[WazuhAlert], *, window_minutes: int = 5,
+    alerts: list[WazuhAlert],
+    *,
+    window_minutes: int = 5,
     baseline: BaselineSnapshot | None = None,
-    source_config: dict[str, Any] | None = None, taxonomy: dict[str, Any] | None = None,
+    source_config: dict[str, Any] | None = None,
+    taxonomy: dict[str, Any] | None = None,
 ) -> FeaturePipelineResponse:
     config = _collection_config() if source_config is None else source_config
     first = alerts[0]
     family = _family(first)
     features, missing, structural, indicator, attributed = _derive_raw_group(
-        alerts, family, config, taxonomy,
+        alerts,
+        family,
+        config,
+        taxonomy,
     )
     ordered_alerts = sorted(alerts, key=lambda item: (alert_event_time(item), item.id))
     context = context_from_events(
-        baseline, [item.model_dump(mode="json") for item in attributed],
-        at=alert_event_time(ordered_alerts[-1]), asset_id=_asset_id(first, config),
+        baseline,
+        [item.model_dump(mode="json") for item in attributed],
+        at=alert_event_time(ordered_alerts[-1]),
+        asset_id=_asset_id(first, config),
     )
     features.update(context.features)
     if context.status != "AVAILABLE":
@@ -377,9 +412,11 @@ def _build_response(
     if family == "c2" and config.get("require_flow_counters"):
         start = window_start(first, window_minutes=window_minutes)
         from datetime import timedelta
+
         flow_reasons = flow_counter_issues(
             [payload for item in attributed if (payload := _suricata_payload(item)) is not None],
-            window_start=start, window_end=start + timedelta(minutes=window_minutes),
+            window_start=start,
+            window_end=start + timedelta(minutes=window_minutes),
         )
         if flow_reasons:
             missing.append("flow_total_bytes_log1p")
@@ -430,9 +467,12 @@ def _build_response(
         "validated_envelope=1.000",
     ]
     incident = IncidentRequest(
-        context_status=context.status, context_revision=context.revision,
+        context_status=context.status,
+        context_revision=context.revision,
         review_reasons=[
-            *context.review_reasons, *flow_reasons, *(["telemetry:partial"] if missing else [])
+            *context.review_reasons,
+            *flow_reasons,
+            *(["telemetry:partial"] if missing else []),
         ],
         observation_quality="PARTIAL" if missing or family == "unknown" else "COMPLETE",
         incident_id=f"INC-FV3-{digest}",
@@ -469,18 +509,19 @@ def extract_wazuh_features(alert: WazuhAlert) -> FeaturePipelineResponse:
 
 
 def aggregate_wazuh_alerts(
-    alerts: list[WazuhAlert], *, window_minutes: int = 5,
+    alerts: list[WazuhAlert],
+    *,
+    window_minutes: int = 5,
     baseline: BaselineSnapshot | None = None,
-    source_config: dict[str, Any] | None = None, taxonomy: dict[str, Any] | None = None,
+    source_config: dict[str, Any] | None = None,
+    taxonomy: dict[str, Any] | None = None,
     use_runtime_baseline: bool = True,
 ) -> FeatureBatchResponse:
     config = _collection_config() if source_config is None else source_config
     if not 1 <= window_minutes <= 5:
         raise ValueError("window_minutes must be between 1 and 5")
     if baseline is None and use_runtime_baseline:
-        configured = os.getenv("CONTEXT_BASELINE_PATH") or config.get(
-            "context_baseline_path"
-        )
+        configured = os.getenv("CONTEXT_BASELINE_PATH") or config.get("context_baseline_path")
         baseline = load_baseline(ROOT / configured) if configured else None
     unique_by_id: dict[str, WazuhAlert] = {}
     for alert in alerts:
@@ -499,9 +540,20 @@ def aggregate_wazuh_alerts(
         duplicate_alert_count=len(alerts) - len(unique_by_id),
         incidents=[
             _build_response(
-                group, window_minutes=window_minutes, baseline=baseline,
-                source_config=config, taxonomy=taxonomy,
+                group,
+                window_minutes=window_minutes,
+                baseline=baseline,
+                source_config=config,
+                taxonomy=taxonomy,
             )
             for group in groups.values()
         ],
     )
+
+
+def _transport_port(value: object) -> int | None:
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        return None
+    return port if 0 < port <= 65535 else None

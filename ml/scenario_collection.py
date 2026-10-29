@@ -37,6 +37,16 @@ from ml.dataset import (
 )
 from ml.feature_pipeline import aggregate_wazuh_alerts
 from ml.telemetry import (
+    account_observation_eligible,
+    flow_counter_issues,
+    linked_flow,
+    linked_transaction,
+    network_is_outbound,
+    normalize_ip,
+    suricata_observations,
+    unambiguous_transactions,
+)
+from ml.telemetry import (
     account_source as _account_source,
 )
 from ml.telemetry import (
@@ -47,14 +57,6 @@ from ml.telemetry import (
 )
 from ml.telemetry import (
     event_time as _event_time,
-)
-from ml.telemetry import (
-    flow_counter_issues,
-    is_interactive_logon,
-    linked_flow,
-    network_is_outbound,
-    normalize_ip,
-    suricata_observations,
 )
 from ml.telemetry import (
     parse_time as _parse_time,
@@ -785,7 +787,7 @@ def _casefold_set(values: list[str]) -> set[str]:
 
 def _is_interactive_logon(eventdata: dict[str, Any], attribution: Attribution) -> bool:
     """Keep only the logon types declared by the controlled scenario."""
-    return is_interactive_logon(eventdata, attribution.logon_types)
+    return account_observation_eligible(eventdata, attribution.logon_types)
 
 
 def _matches_network(eventdata: dict[str, Any], attribution: Attribution) -> bool:
@@ -1013,7 +1015,14 @@ def _derive_c2(
             with suppress(TypeError, ValueError):
                 destination_port = int(eventdata.get("destinationPort"))
             network_observations.append(
-                NetworkObservation(timestamp, destination, destination_port)
+                NetworkObservation(
+                    timestamp,
+                    destination,
+                    destination_port,
+                    source=normalize_ip(eventdata.get("sourceIp")),
+                    source_port=_transport_port(eventdata.get("sourcePort")),
+                    protocol=str(eventdata.get("protocol", "")),
+                )
             )
             suspicious = suspicious or _taxonomy_match(eventdata, taxonomy)
         elif (
@@ -1065,7 +1074,6 @@ def _derive_c2(
                     f"observed={observed_intervals}, expected={expected_intervals}"
                 )
 
-    nonce_flow_ids: set[str] = set()
     nonce_references: list[tuple[dict[str, Any], datetime]] = []
     maximum_delta = source.correlation_window_seconds
     for event in events:
@@ -1080,12 +1088,12 @@ def _derive_c2(
             or not _suricata_correlates(payload, timestamp, network_observations, maximum_delta)
         ):
             continue
-        if _suricata_has_nonce(payload, nonce):
+        if payload.get("event_type") in {"http", "dns", "tls"} and _suricata_has_nonce(
+            payload, nonce
+        ):
             nonce_references.append((payload, timestamp))
-            flow_id = str(payload.get("flow_id", "")).strip()
-            if flow_id:
-                nonce_flow_ids.add(flow_id)
 
+    nonce_references = unambiguous_transactions(nonce_references, maximum_delta)
     suricata: list[dict[str, Any]] = []
     seen: set[str] = set()
     signature_ids: set[int] = set()
@@ -1099,14 +1107,18 @@ def _derive_c2(
             payload is None
             or timestamp is None
             or not _matches_suricata(payload, draft.attribution, bound_flow=bound_flow)
-            or (not bound_flow and not _suricata_correlates(
-                payload, timestamp, network_observations, maximum_delta
-            ))
+            or (payload.get("event_type") == "flow" and not bound_flow)
+            or (
+                not bound_flow
+                and not _suricata_correlates(
+                    payload, timestamp, network_observations, maximum_delta
+                )
+            )
         ):
             continue
-        flow_id = str(payload.get("flow_id", "")).strip()
-        if not _suricata_has_nonce(payload, nonce) and (
-            not flow_id or flow_id not in nonce_flow_ids
+        if not _suricata_has_nonce(payload, nonce) and not (
+            bound_flow
+            or linked_transaction(payload, timestamp, nonce_references, maximum_delta)
         ):
             continue
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -2252,3 +2264,12 @@ def quarantine_run(run_id: str, project_root: Path, reason: str) -> dict[str, An
     }
     _write_json(evidence_target / "quarantine.json", marker)
     return marker
+
+
+def _transport_port(value: object) -> int | None:
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        return None
+    return port if 0 < port <= 65535 else None
+

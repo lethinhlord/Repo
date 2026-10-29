@@ -93,6 +93,8 @@ class WazuhAlertData(ExternalModel):
     src_port: int | None = Field(default=None, ge=0, le=65535)
     dest_port: int | None = Field(default=None, ge=0, le=65535)
     flow_id: int | str | None = None
+    proto: str | None = Field(default=None, max_length=32)
+    sensor_instance: str | None = Field(default=None, max_length=128)
     dns: dict[str, object] | None = None
     http: dict[str, object] | None = None
     tls: dict[str, object] | None = None

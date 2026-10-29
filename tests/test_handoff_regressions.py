@@ -251,6 +251,8 @@ def test_real_eve_flow_counters_count_each_direction_once(
         action_event = {
             "image": image,
             "sourceIp": "10.20.0.10",
+            "sourcePort": str(selected[0]["src_port"]),
+            "protocol": str(selected[0]["proto"]),
             "destinationIp": "10.40.0.10",
             "destinationPort": "8081",
             "initiated": "true",
