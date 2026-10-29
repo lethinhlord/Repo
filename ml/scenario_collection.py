@@ -36,6 +36,7 @@ from ml.dataset import (
     validate_feature_contract,
 )
 from ml.feature_pipeline import aggregate_wazuh_alerts
+from ml.intake_window import IntakeError, capture_window, verify_capture
 from ml.telemetry import (
     account_observation_eligible,
     flow_counter_issues,
@@ -472,12 +473,22 @@ def _cursor(path: Path) -> dict[str, int | str]:
                     "Wazuh Archives does not end with a complete newline; wait for the "
                     "current write to finish and retry start"
                 )
-        stat = path.stat()
+        stat = os.fstat(handle.fileno())
+        handle.seek(0)
+        digest = hashlib.sha256()
+        remaining = size
+        while remaining:
+            block = handle.read(min(1024 * 1024, remaining))
+            if not block:
+                raise CollectionError("archive truncated while recording start cursor")
+            digest.update(block)
+            remaining -= len(block)
     return {
         "path": str(path),
         "size": size,
         "device": stat.st_dev,
         "inode": stat.st_ino,
+        "prefix_sha256": digest.hexdigest(),
     }
 
 
@@ -591,7 +602,8 @@ def start_run(
         raise CollectionError(f"feature schema does not exist: {schema_path}")
     context_path = (
         _resolve(project_root, source.context_baseline_path)
-        if source.context_baseline_path else None
+        if source.context_baseline_path
+        else None
     )
     baseline = None
     context_bytes = None
@@ -604,8 +616,8 @@ def start_run(
             raise CollectionError(
                 f"context baseline is required and must be valid; enroll a separate capture: {exc}"
             ) from exc
-        context_capture = context_path.parent / "context-captures" / (
-            baseline.source_capture_sha256 + ".jsonl"
+        context_capture = (
+            context_path.parent / "context-captures" / (baseline.source_capture_sha256 + ".jsonl")
         )
         try:
             capture_bytes = context_capture.read_bytes()
@@ -738,7 +750,8 @@ def start_run(
 
 
 def _read_appended_jsonl(
-    cursor: dict[str, Any], capture_path: Path | None = None,
+    cursor: dict[str, Any],
+    capture_path: Path | None = None,
 ) -> list[dict[str, Any]]:
     path = Path(cursor["path"])
     stat = path.stat()
@@ -1117,8 +1130,7 @@ def _derive_c2(
         ):
             continue
         if not _suricata_has_nonce(payload, nonce) and not (
-            bound_flow
-            or linked_transaction(payload, timestamp, nonce_references, maximum_delta)
+            bound_flow or linked_transaction(payload, timestamp, nonce_references, maximum_delta)
         ):
             continue
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -1231,7 +1243,9 @@ def _read_evidence_rows(path: Path, *, required: bool = True) -> list[dict[str, 
 
 
 def _verify_full_capture_parity(
-    captured: list[dict[str, Any]], incident: IncidentRequest, source: SourceConfig,
+    captured: list[dict[str, Any]],
+    incident: IncidentRequest,
+    source: SourceConfig,
     evidence_dir: Path,
 ) -> None:
     """Replay the full asset bucket without label, scenario or nonce filtering."""
@@ -1241,7 +1255,8 @@ def _verify_full_capture_parity(
         at = _event_time(row)
         agent = row.get("agent")
         if not isinstance(agent, dict) or agent.get("name") not in {
-            source.windows_agent_name, source.suricata_agent_name,
+            source.windows_agent_name,
+            source.suricata_agent_name,
         }:
             continue
         if at is None:
@@ -1261,13 +1276,15 @@ def _verify_full_capture_parity(
     if not alerts:
         raise CollectionError("full-capture parity has no replayable records")
     batch = aggregate_wazuh_alerts(
-        alerts, baseline=load_baseline(evidence_dir / "context-baseline.json"),
+        alerts,
+        baseline=load_baseline(evidence_dir / "context-baseline.json"),
         source_config=source.model_dump(mode="json"),
         taxonomy=_load_taxonomy(evidence_dir / "suspicious-process-taxonomy.yaml"),
         use_runtime_baseline=False,
     )
     candidates = [
-        item.incident for item in batch.incidents
+        item.incident
+        for item in batch.incidents
         if item.incident.asset_id.casefold() == incident.asset_id.casefold()
         and item.incident.family_hint == incident.family_hint
     ]
@@ -1281,7 +1298,8 @@ def _verify_full_capture_parity(
         or online.observation_quality != incident.observation_quality
     ):
         changed = sorted(
-            key for key in online.features.keys() | incident.features.keys()
+            key
+            for key in online.features.keys() | incident.features.keys()
             if online.features.get(key) != incident.features.get(key)
         )
         raise CollectionError(f"full-capture parity failed; feature differences={changed}")
@@ -1332,7 +1350,10 @@ def verify_feature_provenance(
         )
     baseline = load_baseline(evidence_dir / "context-baseline.json")
     context = context_from_events(
-        baseline, windows, at=manifest.end_time, asset_id=manifest.host,
+        baseline,
+        windows,
+        at=manifest.end_time,
+        asset_id=manifest.host,
     )
     features.update(context.features)
     if contract.get("version") == "collection-start-contract-v2" and (
@@ -1343,7 +1364,23 @@ def verify_feature_provenance(
         raise CollectionError("context assessment does not reproduce the finalized incident")
     capture_path = evidence_dir / "archive_capture.jsonl"
     if capture_path.is_file():
-        captured = _read_evidence_rows(capture_path)
+        if source.require_online_parity:
+            deadline = _aggregation_window(manifest.start_time)[1] + timedelta(
+                seconds=source.late_arrival_grace_seconds,
+            )
+            try:
+                captured = verify_capture(
+                    state["archive_cursor"],
+                    capture_path,
+                    evidence_dir / "intake_checkpoint.json",
+                    deadline=deadline,
+                    relevant=_intake_relevant(source, manifest.start_time),
+                    live_source=False,
+                )
+            except IntakeError as exc:
+                raise CollectionError(str(exc)) from exc
+        else:
+            captured = _read_evidence_rows(capture_path)
         selected = {json.dumps(item, sort_keys=True) for item in events}
         if not selected <= {json.dumps(item, sort_keys=True) for item in captured}:
             raise CollectionError("selected evidence is not a subset of the original capture")
@@ -1395,9 +1432,8 @@ def _verify_start_snapshot(
         raise CollectionError(f"invalid immutable start contract: {exc}") from exc
     if (
         not isinstance(start_contract, dict)
-        or start_contract.get("version") not in {
-            "collection-start-contract-v1", "collection-start-contract-v2"
-        }
+        or start_contract.get("version")
+        not in {"collection-start-contract-v1", "collection-start-contract-v2"}
         or _payload_sha256(start_contract) != state.get("start_contract_sha256")
     ):
         raise CollectionError("immutable start contract digest is inconsistent")
@@ -1466,7 +1502,8 @@ def _verify_start_snapshot(
             raise CollectionError("frozen context baseline is invalid") from exc
         captured_start = _parse_time(start_contract.get("started_at"))
         if (
-            frozen_baseline is None or captured_start is None
+            frozen_baseline is None
+            or captured_start is None
             or frozen_baseline.source_capture_sha256 != start_contract.get("context_capture_sha256")
             or not frozen_baseline.captured_at <= captured_start < frozen_baseline.valid_until
         ):
@@ -1486,7 +1523,10 @@ def _verify_start_snapshot(
             raise CollectionError("portable source document differs from the start contract")
         normalized_source = start_contract["source"]
         path_fields = {
-            "wazuh_archives_path", "taxonomy_path", "scenario_catalog_path", "context_baseline_path"
+            "wazuh_archives_path",
+            "taxonomy_path",
+            "scenario_catalog_path",
+            "context_baseline_path",
         }
         if any(
             normalized_source.get(name) != value
@@ -1648,8 +1688,9 @@ def begin_action(
             raise CollectionError(str(exc)) from exc
         if wait_for_window and action_started_at < guarded_start:
             ready_at = guarded_start
-        elif state["source"].get("require_clean_bucket") and bucket_start < (
-            _aggregation_window(collection_started_at)[1]
+        elif (
+            state["source"].get("require_clean_bucket")
+            and bucket_start < (_aggregation_window(collection_started_at)[1])
         ):
             if not wait_for_window:
                 raise CollectionError(
@@ -1748,6 +1789,44 @@ def complete_action(
     return receipt
 
 
+def _intake_relevant(source: SourceConfig, started_at: datetime):
+    bucket_start, bucket_end = _aggregation_window(started_at)
+
+    def relevant(event: dict[str, Any]) -> bool:
+        agent = event.get("agent")
+        if not isinstance(agent, dict) or agent.get("name") not in {
+            source.windows_agent_name,
+            source.suricata_agent_name,
+        }:
+            return False
+        timestamp = _event_time(event)
+        return timestamp is None or bucket_start <= timestamp < bucket_end
+
+    return relevant
+
+
+def _verify_live_intake(state: dict[str, Any], evidence_dir: Path) -> None:
+    source = SourceConfig.model_validate(state["source"])
+    if not source.require_online_parity:
+        return
+    started = _parse_time(state["execution_receipt"].get("action_started_at"))
+    if started is None:
+        raise CollectionError("invalid intake action start")
+    deadline = _aggregation_window(started)[1] + timedelta(
+        seconds=source.late_arrival_grace_seconds,
+    )
+    try:
+        verify_capture(
+            state["archive_cursor"],
+            evidence_dir / "archive_capture.jsonl",
+            evidence_dir / "intake_checkpoint.json",
+            deadline=deadline,
+            relevant=_intake_relevant(source, started),
+        )
+    except IntakeError as exc:
+        raise CollectionError(str(exc)) from exc
+
+
 def finalize_run(
     run_id: str,
     project_root: Path,
@@ -1764,6 +1843,8 @@ def finalize_run(
     final_dir = project_root / "data/raw" / run_id
     temporary_dir = final_dir.with_name(f".{run_id}.tmp")
     if state.get("status") == "FINALIZING":
+        _verify_start_snapshot(evidence_dir, state, project_root)
+        _verify_live_intake(state, evidence_dir)
         if final_dir.exists() and temporary_dir.exists():
             raise CollectionError(
                 "finalization recovery found both staged and final output; quarantine the run"
@@ -1822,20 +1903,30 @@ def finalize_run(
         capture_deadline = _aggregation_window(started_at)[1] + timedelta(
             seconds=source.late_arrival_grace_seconds,
         )
-        if wait_for_window and now is None:
-            while finalized_at < capture_deadline:
-                _LOGGER.info("Waiting for full capture until %s", _iso(capture_deadline))
-                time.sleep(min(30.0, (capture_deadline - finalized_at).total_seconds()))
-                finalized_at = _utc(None)
-            if json.loads(state_path.read_text(encoding="utf-8")) != state:
-                raise CollectionError("run state changed while waiting for full capture")
-            _verify_start_snapshot(evidence_dir, state, project_root)
-        if finalized_at < capture_deadline:
-            raise CollectionError(
-                "full-capture parity requires a closed bucket plus grace; "
-                f"retry after {_iso(capture_deadline)}"
+        if wait_for_window and now is not None and finalized_at < capture_deadline:
+            raise CollectionError("foreground --wait requires the live collector clock")
+        try:
+            events = capture_window(
+                state["archive_cursor"],
+                evidence_dir / "archive_capture.jsonl",
+                evidence_dir / "intake_checkpoint.json",
+                deadline=capture_deadline,
+                clock=lambda: _utc(now),
+                wait=wait_for_window,
+                sleep=time.sleep,
+                relevant=_intake_relevant(source, started_at),
             )
-    events = _read_appended_jsonl(state["archive_cursor"], evidence_dir / "archive_capture.jsonl")
+        except IntakeError as exc:
+            raise CollectionError(str(exc)) from exc
+        finalized_at = _utc(now)
+        if json.loads(state_path.read_text(encoding="utf-8")) != state:
+            raise CollectionError("run state changed while capturing the full window")
+        _verify_start_snapshot(evidence_dir, state, project_root)
+    else:
+        events = _read_appended_jsonl(
+            state["archive_cursor"],
+            evidence_dir / "archive_capture.jsonl",
+        )
     tolerance = timedelta(seconds=draft.clock_preflight.maximum_skew_seconds)
     window_start = started_at - tolerance
     window_end = ended_at + tolerance
@@ -1881,12 +1972,16 @@ def finalize_run(
     _validate_action_window(receipt, draft, events=scoped_archive_events)
     baseline = load_baseline(evidence_dir / "context-baseline.json")
     context = context_from_events(
-        baseline, windows_events, at=ended_at, asset_id=draft.host,
+        baseline,
+        windows_events,
+        at=ended_at,
+        asset_id=draft.host,
     )
     features.update(context.features)
     incident_id = f"INC-{hashlib.sha256(run_id.encode()).hexdigest()[:16].upper()}"
     incident = IncidentRequest(
-        context_status=context.status, context_revision=context.revision,
+        context_status=context.status,
+        context_revision=context.revision,
         review_reasons=context.review_reasons,
         observation_quality="COMPLETE" if context.status == "AVAILABLE" else "PARTIAL",
         incident_id=incident_id,
@@ -1952,6 +2047,7 @@ def finalize_run(
         if not execution_log_source.is_file():
             raise CollectionError(f"declared execution log does not exist: {execution_log_source}")
 
+    _verify_live_intake(state, evidence_dir)
     if final_dir.exists():
         raise CollectionError(f"final output already exists: {final_dir}")
     if temporary_dir.exists():
@@ -2234,35 +2330,53 @@ def quarantine_run(run_id: str, project_root: Path, reason: str) -> dict[str, An
     project_root = project_root.resolve()
     evidence_source = project_root / "evidence/scenario-runs" / run_id
     raw_source = project_root / "data/raw" / run_id
+    staged_source = raw_source.with_name(f".{run_id}.tmp")
     if not evidence_source.is_dir():
         raise CollectionError(f"unknown run_id: {run_id}")
     evidence_target = project_root / "evidence/quarantine" / run_id
     raw_target = project_root / "data/quarantine" / run_id
-    if evidence_target.exists() or raw_target.exists():
+    staged_target = raw_target.with_name(f".{run_id}.tmp")
+    if evidence_target.exists() or raw_target.exists() or staged_target.exists():
         raise CollectionError(f"quarantine target already exists: {run_id}")
     evidence_target.parent.mkdir(parents=True, exist_ok=True)
     raw_target.parent.mkdir(parents=True, exist_ok=True)
 
-    _release_active_run(evidence_source.parent, run_id)
-    raw_moved = False
+    lock_path = _active_lock_path(evidence_source.parent)
+    if lock_path.exists():
+        try:
+            owner = json.loads(lock_path.read_text(encoding="utf-8")).get("run_id")
+        except (OSError, json.JSONDecodeError) as exc:
+            raise CollectionError(f"cannot verify active run lock: {lock_path}: {exc}") from exc
+        if owner != run_id:
+            raise CollectionError(f"active run lock belongs to {owner}, not {run_id}")
+    moved = []
     try:
-        if raw_source.exists():
-            raw_source.replace(raw_target)
-            raw_moved = True
+        for source, target in ((raw_source, raw_target), (staged_source, staged_target)):
+            if source.exists():
+                source.replace(target)
+                moved.append((source, target))
         evidence_source.replace(evidence_target)
+        marker = {
+            "status": "QUARANTINED",
+            "run_id": run_id,
+            "reason": reason.strip(),
+            "quarantined_at": _iso(datetime.now(UTC)),
+            "raw_preserved": raw_target.exists(),
+            "staged_raw_preserved": staged_target.exists(),
+            "staged_raw_path": staged_target.relative_to(project_root).as_posix()
+            if staged_target.exists()
+            else None,
+        }
+        _write_json(evidence_target / "quarantine.json", marker)
     except OSError as exc:
-        if raw_moved and raw_target.exists() and not raw_source.exists():
-            raw_target.replace(raw_source)
+        if evidence_target.exists() and not evidence_source.exists():
+            (evidence_target / "quarantine.json").unlink(missing_ok=True)
+            evidence_target.replace(evidence_source)
+        for source, target in reversed(moved):
+            if target.exists() and not source.exists():
+                target.replace(source)
         raise CollectionError(f"could not quarantine run {run_id}: {exc}") from exc
-
-    marker = {
-        "status": "QUARANTINED",
-        "run_id": run_id,
-        "reason": reason.strip(),
-        "quarantined_at": _iso(datetime.now(UTC)),
-        "raw_preserved": raw_moved,
-    }
-    _write_json(evidence_target / "quarantine.json", marker)
+    _release_active_run(evidence_source.parent, run_id)
     return marker
 
 
@@ -2272,4 +2386,3 @@ def _transport_port(value: object) -> int | None:
     except (TypeError, ValueError):
         return None
     return port if 0 < port <= 65535 else None
-

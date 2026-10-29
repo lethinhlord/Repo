@@ -68,6 +68,50 @@ def test_damaged_quarantined_receipt_allows_later_bucket_preserving_original(dam
     assert (directory / "execution_receipt.json").read_text() == "{broken-receipt"
 
 
+@pytest.mark.parametrize("intact", [True, False])
+def test_quarantined_finalizing_run_keeps_bucket_and_allows_later_run(damaged, intact):
+    from datetime import datetime
+
+    root, directory, host, receipt = damaged
+    state_path = directory / ".collection_state.json"
+    state = json.loads(state_path.read_text())
+    state["status"] = "FINALIZING"
+    state["pending_ended_at"] = state.pop("ended_at")
+    state_path.write_text(json.dumps(state))
+    if intact:
+        (directory / "execution_receipt.json").write_text(
+            json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    assert not bucket_used(root, host, COLLECTION_BASE + timedelta(hours=1))
+    assert bucket_used(root, host, datetime.fromisoformat(receipt["aggregation_window_start"]))
+
+
+@pytest.mark.parametrize("both", [False, True])
+def test_quarantine_preserves_interrupted_finalizing_output(tmp_path, both):
+    import shutil
+
+    archive, sources, catalog = _prepare_collection_root(tmp_path)
+    scenario = next(s for s in catalog.scenarios if s.scenario_id == "ACCOUNT-BENIGN-NORMAL-LOGON")
+    run_id = _collect_run(tmp_path, archive, sources, scenario, sequence=0, repeat=0)
+    raw = tmp_path / "data/raw" / run_id
+    staged = raw.with_name(f".{run_id}.tmp")
+    if both:
+        shutil.copytree(raw, staged)
+    else:
+        raw.replace(staged)
+    state_path = tmp_path / "evidence/scenario-runs" / run_id / ".collection_state.json"
+    state = json.loads(state_path.read_text())
+    state["status"] = "FINALIZING"
+    state["pending_ended_at"] = state.pop("ended_at")
+    state_path.write_text(json.dumps(state))
+    marker = quarantine_run(run_id, tmp_path, "interrupted finalization")
+    assert marker["staged_raw_preserved"]
+    assert marker["staged_raw_path"] == f"data/quarantine/.{run_id}.tmp"
+    assert (tmp_path / marker["staged_raw_path"] / "scenario_manifest.json").is_file()
+    assert (tmp_path / "data/quarantine" / run_id).exists() == both
+    assert not raw.exists() and not staged.exists()
+
+
 @pytest.mark.parametrize(
     "source", ["collection_metadata.json", "start-contract.json", ".collection_state.json"]
 )

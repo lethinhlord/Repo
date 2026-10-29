@@ -6,11 +6,13 @@ import sqlite3
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 from api.app.contracts import FeatureStateResponse, WazuhAlert
 from ml.behavior_features import FEATURE_SCHEMA_VERSION
 from ml.feature_pipeline import aggregate_wazuh_alerts, alert_event_time, window_start
+from ml.intake_window import receipt_timely
 
 
 class FeatureStateConflictError(ValueError):
@@ -171,7 +173,9 @@ class FeatureStateStore:
             if feature is None:  # pragma: no cover - invariant guard
                 raise RuntimeError("stored alert was not present in its aggregation result")
             close_at = bucket_start + horizon + self.late_arrival_grace_seconds
-            reason = "window:open" if now < close_at else "window:late_arrival"
+            reason = "window:open" if receipt_timely(
+                datetime.fromtimestamp(now, UTC), datetime.fromtimestamp(close_at, UTC),
+            ) else "window:late_arrival"
             # Ingest responses are provisional, not a window-close watermark.
             # A later explicit close/reconciliation must approve a final decision.
             feature = feature.model_copy(update={
@@ -234,7 +238,10 @@ class FeatureStateStore:
             )
             references = set(feature.incident.raw_refs)
             members = [row for row in rows if f"wazuh-alert:{row['alert_id']}" in references]
-            if any(row['received_at'] > close_at for row in members):
+            if any(not receipt_timely(
+                datetime.fromtimestamp(row['received_at'], UTC),
+                datetime.fromtimestamp(close_at, UTC),
+            ) for row in members):
                 raise FeatureStateConflictError("late input changed the window after its watermark")
             if any(row['received_at'] < now - self.retention_seconds for row in members):
                 raise FeatureStateConflictError("window close exceeds raw retention; recollect")

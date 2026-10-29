@@ -101,20 +101,36 @@ def test_lost_reservation_index_is_recovered_from_receipt(tmp_path: Path) -> Non
     assert not bucket_used(tmp_path, ASSET, BUCKET + timedelta(minutes=5))
 
 
-@pytest.mark.parametrize(
-    ("state", "relative"),
-    [
-        ("ABORTED", "evidence/scenario-runs"),
-        ("QUARANTINED", "evidence/quarantine"),
-    ],
-)
-def test_aborted_and_quarantined_runs_still_burn_their_bucket(
-    tmp_path: Path, state: str, relative: str,
-) -> None:
-    receipt_folder(tmp_path, relative=relative, state=state)
+def test_aborted_run_still_burns_its_bucket(tmp_path: Path) -> None:
+    receipt_folder(tmp_path, state="ABORTED")
 
     assert bucket_used(tmp_path, ASSET, BUCKET)
     assert not bucket_used(tmp_path, "ANOTHER-TARGET", BUCKET)
+
+
+def test_quarantined_run_still_burns_its_bucket_after_index_loss(tmp_path: Path) -> None:
+    from test_collection_acceptance import _collect_run, _prepare_collection_root
+
+    from ml.scenario_collection import quarantine_run
+
+    archive, sources, catalog = _prepare_collection_root(tmp_path)
+    scenario = next(s for s in catalog.scenarios if s.scenario_id == "ACCOUNT-BENIGN-NORMAL-LOGON")
+    run_id = _collect_run(tmp_path, archive, sources, scenario, sequence=0, repeat=0)
+    directory = tmp_path / "evidence/scenario-runs" / run_id
+    receipt = json.loads((directory / "execution_receipt.json").read_text())
+    host = json.loads((directory / "ground_truth.json").read_text())["host"]
+    bucket = datetime.fromisoformat(receipt["aggregation_window_start"])
+    quarantine_run(run_id, tmp_path, "synthetic test")
+    for path in (tmp_path / "evidence/bucket-reservations").glob("*.json"):
+        path.unlink()
+    assert bucket_used(tmp_path, host, bucket)
+    assert not bucket_used(tmp_path, "ANOTHER-TARGET", bucket)
+
+
+def test_incomplete_quarantine_fails_closed(tmp_path: Path) -> None:
+    receipt_folder(tmp_path, relative="evidence/quarantine", state="QUARANTINED")
+    with pytest.raises(ValueError, match="cannot recover collection bucket"):
+        bucket_used(tmp_path, ASSET, BUCKET)
 
 
 def test_other_asset_and_next_bucket_can_be_reserved(tmp_path: Path) -> None:

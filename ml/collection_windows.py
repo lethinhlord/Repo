@@ -59,7 +59,9 @@ def _recover_quarantined_receipt(root: Path, directory: Path) -> dict | None:
         raise ValueError(str(exc)) from exc
     receipt = state.get("execution_receipt")
     receipt_path = directory / "execution_receipt.json"
-    finalized = state.get("status") == "FINALIZED"
+    # FINALIZING is written only after finalized metadata and checksums exist.
+    # This recovers bucket ownership, not the interrupted run's validity.
+    finalized = state.get("status") in {"FINALIZING", "FINALIZED"}
     if not finalized:
         if state.get("status") not in {"STARTED", "ABORTED"}:
             raise ValueError("unsupported quarantined collection state")
