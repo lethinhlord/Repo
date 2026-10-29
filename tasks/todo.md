@@ -197,6 +197,17 @@ thêm trước khi thực hiện; không gom thay đổi lớn để né checkpo
   - [ ] Kiên có thể bắt đầu từ VM sạch, thu/validate, xử lý lỗi, backup/restore và xuất
     gói Colab theo hướng dẫn mà không đoán lệnh hoặc sửa hash bằng tay.
 
+## Nhật ký 29/10 — sửa blocker kiểm chéo và bàn giao 3.1
+
+- R01–R05 có RED/GREEN và kiểm chéo Sol/Terra/Astra. Có thêm regression OS-only,
+  metadata C2, nonce sai socket, chunk/tail cutoff và quarantine FINALIZING.
+- Full suite: 552 passed/1 Windows symlink skip; Linux 69 passed/0 skip gồm case đó.
+  Ruff, pip check, hai OpenAPI export và native Bash/PowerShell parser đạt.
+- Kiên.txt 3.1 cùng hash với runbook, pin source d06d0403, có backup bản 3.0.
+  Chi tiết: docs/collection-blocker-validation-20261029.md và
+  docs/handoff-guide-validation-v3-20261028.md. Trạng thái merge cuối xem trên PR.
+- G7 vẫn đóng, không dùng dataset cũ và không coi QA là nghiệm thu lab Kiên.
+
 ## Nhật ký 28/10 — checkpoint nền thu
 
 - Hồi quy toàn repo: 347 test đạt; JUnit ngoài repo `outputs/handoff-implementation-20261028/foundation-full-suite.xml`.

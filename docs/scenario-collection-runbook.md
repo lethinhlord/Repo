@@ -1,6 +1,6 @@
 # HƯỚNG DẪN BÀN GIAO KIÊN — LAB 4 VM VÀ THU DỮ LIỆU V3
 
-Phiên bản tài liệu: 3.0 — ngày 28/10/2026.
+Phiên bản tài liệu: 3.1 — ngày 29/10/2026.
 Máy thực hiện: máy của Kiên có VMware; các thao tác bên dưới không yêu cầu Thịnh
 truy cập trực tiếp vào máy đó. Người thực hiện ghi kết quả thật, không đánh dấu đạt sẵn.
 
@@ -18,7 +18,7 @@ TRẠNG THÁI BÀN GIAO HIỆN TẠI
 
 Nguồn pilot đã rà soát: nhánh `fix/handoff-context-v3` của
 https://github.com/lethinhlord/Repo.
-Dùng bản Kiên.txt 3.0 này làm hướng dẫn thao tác. Hướng dẫn có revision tài liệu riêng;
+Dùng bản Kiên.txt 3.1 này làm hướng dẫn thao tác. Hướng dẫn có revision tài liệu riêng;
 checkout mã pilot có thể chứa bản runbook lịch sử, không dùng bản lịch sử đó để thực hiện.
 `REVIEWED_SOURCE_COMMIT` được ghi bằng SHA đầy đủ ở mục 6.2. Đây là revision pilot,
 không phải tag/commit baseline thu train. Không dùng lại tag `data-collection-v2.0.0`
@@ -549,7 +549,7 @@ set -euo pipefail
 test "$(id -u)" -ne 0 # Repo dung user thuong co sudo, khong dung root
 LAB_USER="$(id -un)"
 PROJECT_ROOT="$HOME/datn-ai-soar-v3"
-REVIEWED_SOURCE_COMMIT=24d98c3b20f8a9668a25a03c97b2b026c7ce07b5
+REVIEWED_SOURCE_COMMIT=d06d04034f0d1c996907365841f21cdb874e4d5a
 if [ ! -e "$PROJECT_ROOT" ]; then
   git clone --branch fix/handoff-context-v3 --single-branch \
     https://github.com/lethinhlord/Repo.git "$PROJECT_ROOT"
@@ -1484,7 +1484,7 @@ cd "$HOME/datn-ai-soar-v3"
 test -z "$(git status --porcelain)"
 COLLECTION_MODE=pilot # Chi dung trainable sau khi G7 duoc nghiem thu
 if [ "$COLLECTION_MODE" = pilot ]; then
-  EXPECTED_SOURCE_COMMIT=24d98c3b20f8a9668a25a03c97b2b026c7ce07b5
+  EXPECTED_SOURCE_COMMIT=d06d04034f0d1c996907365841f21cdb874e4d5a
 elif [ "$COLLECTION_MODE" = trainable ]; then
   : "${COLLECTION_BASELINE_COMMIT:?Can baseline thu chinh thuc do Thinh cung cap}"
   EXPECTED_SOURCE_COMMIT="$COLLECTION_BASELINE_COMMIT"
@@ -1988,20 +1988,44 @@ CLOCK_KEY="$HOME/.ssh/id_ed25519_datn_clock"
 test "$SENSOR_USER" != sensor-user
 test "$KALI_USER" != kali-user
 
-# Các kết nối dùng SSH key/BatchMode, không nhập mật khẩu giữa phép đo.
-CONTROLLER_UTC=$(date -u --iso-8601=seconds)
-TARGET_UTC=$(ssh -i "$CLOCK_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
+# Lưu ba thời điểm thật cho từng máy; không so sánh các lần đọc nối tiếp.
+mkdir -p run-drafts
+MEASUREMENTS="run-drafts/$RUN_ID-clock-measurements.json"
+.venv-ml/bin/python - "$MEASUREMENTS" <<'PY'
+import json, sys
+with open(sys.argv[1], 'x', encoding='utf-8') as handle:
+    json.dump({}, handle)
+PY
+measure_clock() {
+  local host="$1" before remote after
+  shift
+  before=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
+  remote=$("$@" | tr -d '\r')
+  after=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
+  .venv-ml/bin/python - "$MEASUREMENTS" "$host" "$before" "$remote" "$after" <<'PY'
+import json, sys
+from pathlib import Path
+path, host, before, remote, after = sys.argv[1:]
+data = json.loads(Path(path).read_text(encoding='utf-8'))
+if host in data:
+    raise SystemExit('Duplicate host measurement; use a new run ID')
+data[host] = dict(controller_before=before, remote_utc=remote, controller_after=after)
+Path(path).write_text(json.dumps(data, indent=2) + '\n', encoding='utf-8')
+PY
+}
+measure_clock controller date -u +%Y-%m-%dT%H:%M:%S.%NZ
+measure_clock target ssh -i "$CLOCK_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
   datn_clock@192.168.58.148 powershell.exe -NoProfile -NonInteractive -Command \
-  "[DateTimeOffset]::UtcNow.ToString('o')" | tr -d '\r')
-WAZUH_UTC=$(date -u --iso-8601=seconds)
-SENSOR_UTC=$(ssh -i "$CLOCK_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
-  "${SENSOR_USER}@192.168.58.150" date -u --iso-8601=seconds)
-ATTACKER_UTC=$(ssh -i "$CLOCK_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
-  "${KALI_USER}@192.168.58.132" date -u --iso-8601=seconds)
+  "[DateTimeOffset]::UtcNow.ToString('o')"
+measure_clock wazuh date -u +%Y-%m-%dT%H:%M:%S.%NZ
+measure_clock sensor ssh -i "$CLOCK_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
+  "${SENSOR_USER}@192.168.58.150" date -u +%Y-%m-%dT%H:%M:%S.%NZ
+measure_clock attacker ssh -i "$CLOCK_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
+  "${KALI_USER}@192.168.58.132" date -u +%Y-%m-%dT%H:%M:%S.%NZ
+cat "$MEASUREMENTS"
 .venv-ml/bin/python -m scripts.build_clock_preflight \
-  --controller "$CONTROLLER_UTC" --target "$TARGET_UTC" \
-  --wazuh "$WAZUH_UTC" --sensor "$SENSOR_UTC" --attacker "$ATTACKER_UTC" \
-  --maximum-skew-seconds 5 --output "$CLOCK_FILE"
+  --measurements "$MEASUREMENTS" --maximum-skew-seconds 5 \
+  --maximum-roundtrip-seconds 4 --output "$CLOCK_FILE"
 
 .venv-ml/bin/python -m scripts.create_run_draft \
   --scenario C2-MALICIOUS-HTTP-BEACON \
@@ -2011,9 +2035,15 @@ ATTACKER_UTC=$(ssh -i "$CLOCK_KEY" -o BatchMode=yes -o ConnectTimeout=5 \
 sed -n '1,120p' "run-drafts/$RUN_ID.yaml"
 ```
 
-Lệnh `build_clock_preflight` từ chối file có bất kỳ máy nào lệch quá 5 giây và không
-ghi đè bằng chứng cũ. Draft đóng băng `collection_seed`, `scenario_parameters`, danh
-sách observable và toàn bộ clock evidence. Không sửa các trường này bằng tay.
+Lệnh `build_clock_preflight` kiểm khoảng trước/sau của từng lần đọc, giới hạn RTT
+4 giây và sai lệch có thể có giữa các máy tối đa 5 giây; không lấy chênh lệch giữa
+hai lần đọc nối tiếp làm clock skew. Đo local controller và Wazuh tại cùng SOC-AI.
+Không nhập mật khẩu trong phép đo. Nếu RTT/độ bất định quá lớn, xử lý mạng/giờ rồi
+tạo bộ đo mới bằng run ID mới; không tăng ngưỡng hoặc sửa timestamp cho qua gate.
+File measurements và YAML là bằng chứng thật cần lưu trong backup. YAML không bị ghi
+đè; draft đóng băng `collection_seed`, `scenario_parameters`, observable và clock
+evidence. Không sửa các trường này bằng tay. Tạo draft rồi start ngay; evidence quá
+120 giây sẽ bị từ chối. Không bước/đổi giờ hoặc resume VM giữa một run.
 
 Cho ba pilot khác, thay đồng thời `--scenario` và phần scenario trong RUN_ID bằng
 đúng ID tại 10.6; tăng R01 thành R02 nếu ID đã từng dùng, kể cả run abort. Không sửa
@@ -2102,7 +2132,8 @@ thay kích thước hai payload cố định; SHA-256 của payload là cổng a
 Giữ target yên trong toàn bộ bucket: không đăng nhập quản trị mới, không tạo request
 canary hay chạy lại scenario để bù log. Ngay khi hoạt động và cleanup kết thúc, chạy
 `complete-action` **trước**
-`action_deadline`, rồi chờ đóng bucket và grace; không tạo traffic lab khác trong phần còn lại của bucket:
+`action_deadline`, rồi chuyển ngay sang Bước 5 **trước hạn nhận log**. Không chờ hết
+bucket mới gọi finalize. Không tạo traffic lab khác trong phần còn lại của bucket:
 
 ```bash
 set -euo pipefail
@@ -2130,20 +2161,45 @@ set -euo pipefail
 .venv-ml/bin/python -m scripts.scenario_session finalize --run-id "$RUN_ID" --wait-for-window
 ```
 
-Finalize đợi hết bucket UTC cộng grace 60 giây theo cấu hình, không chỉ ngủ 90 giây.
-Nó giữ archive_capture.jsonl trước lọc và replay toàn bộ bucket bằng source/taxonomy/context
-đóng băng. Traffic nền làm vector/quality khác online sẽ bị chặn. Collector nhận đúng
-agent và đúng account/process/IP/port/DNS. C2 còn bắt buộc nonce trong command/URI/DNS,
-ProcessGuid thống nhất, tương quan thời gian Sysmon–Suricata, đúng số hành động và nhịp
-đã đóng băng. Thiếu một nguồn hoặc receipt thì finalize lỗi và không tạo mẫu cuối.
+Gọi lệnh ngay sau `complete-action`, trong khi vẫn còn thời gian trước cuối bucket
+UTC cộng grace 60 giây. Giữ terminal/phiên SSH chạy đến khi lệnh kết thúc. Collector
+đọc Archives tăng dần và ghi thời điểm **đọc xong** từng đoạn byte. Chỉ dòng JSON hoàn
+chỉnh đã được đọc xong không muộn hơn cutoff mới được nhận. Không chỉ ngủ hết grace
+rồi đọc tất cả log đang có.
 
-Nếu lỗi chỉ cho biết log đang đến chậm (`no Wazuh Archive bytes`, dòng JSON chưa hoàn
-chỉnh, hoặc chưa thấy nguồn dự kiến), giữ nguyên run ở trạng thái `STARTED`, không tạo
-thêm traffic và không bắt đầu run khác. Chờ 30 giây rồi **retry finalize** cùng `RUN_ID`;
-có thể lặp tối đa ba lần sau hạn đóng bucket + grace. Nếu event thật tới sau grace,
-đánh giá lại đường log và thu lại; không nới hạn riêng cho run đó. Nếu vẫn
-không đạt, dùng `abort`, sửa pipeline và thu lại với ID mới. Các lỗi attribution sai,
-checksum, rotate/truncate hoặc quality gate sai không được retry để hợp thức hóa dữ liệu.
+Nó lưu `archive_capture.jsonl` nguyên byte trước lọc và `intake_checkpoint.json`
+đóng băng phạm vi nhận, cursor nguồn, hash và thời điểm đọc. Sau đó replay toàn bộ
+bucket bằng source/taxonomy/context đóng băng. Tài khoản nền có danh tính OS xác
+định được giữ thành unknown/PARTIAL, không thêm count vào tài khoản người dùng;
+thiếu trường định danh cũng phải unknown/PARTIAL, không đoán thành benign.
+C2 bắt buộc nonce, ProcessGuid, thời gian, tuple IP/cổng/giao thức và transaction
+Suricata khớp. Final flow không có transaction hợp lệ, tuple thiếu/sai hoặc DNS
+khớp nhiều socket không được nâng thành COMPLETE. Thiếu nguồn/receipt hoặc
+vector/quality không tái hiện được thì không tạo mẫu cuối.
+
+Thời điểm collector đọc log không chứng minh thời điểm Wazuh Manager sinh log hay
+API nhận log. Replay ở đây kiểm tính nhất quán feature; nghiệm thu độ trễ/received_at
+online phải dùng bằng chứng API thực riêng. `validate` từ bản backup có thể xác minh
+checkpoint/raw đã lưu mà không truy cập Archives gốc; không chứng minh thêm log
+chưa từng được đóng băng. Khi finalize/retry còn trên SOC-AI, nguồn gốc và tail thật
+được kiểm tra lại.
+
+**Xử lý lỗi và mất phiên:**
+
+- Chưa từng chạy intake trước cutoff: finalize muộn báo thiếu checkpoint hợp lệ.
+  Giữ evidence, abort và thu run ID mới; không đổi giờ hay nới grace.
+- Mất phiên/lệnh bị ngắt khi checkpoint còn `capturing`, thiếu checkpoint hoặc có
+  dòng JSON dở: không xóa file để chạy lại; giữ evidence, abort, sửa đường log và
+  thu mới. Lệnh `status` vẫn cần dùng để xác định run đang sở hữu khóa.
+- Checkpoint đã sealed trước lỗi bước tạo feature/output: chỉ retry cùng RUN_ID
+  với nguyên evidence sau khi xử lý nguyên nhân được phép. Retry không nhận thêm
+  byte vào capture đã đóng băng. Nếu file tạm/trạng thái không rõ, dùng quarantine
+  theo Bước 6 thay vì sửa state bằng tay.
+- Có input thuộc bucket gốc xuất hiện sau cutoff, rotate/truncate, hash lệch hoặc
+  clock chạy lùi: fail closed; không retry để bổ sung log cho run cũ. Byte tới muộn
+  được giữ riêng ở `archive_capture-late.jsonl` nếu có; giữ cả file này và gửi lỗi.
+- Không sinh thêm traffic để bù event, không copy log cũ, không giảm quality gate.
+  Sau abort/quarantine, bucket cũ vẫn được giữ quyền; run mới dùng bucket mới.
 
 ### Bước 6 — Validate run
 
@@ -2155,7 +2211,8 @@ find "evidence/scenario-runs/$RUN_ID" -maxdepth 1 -type f -printf '%f\n' | sort
 ```
 
 Phải thấy `VALID`; `data/raw/$RUN_ID` có `scenario_manifest.json` và `incidents.jsonl`;
-evidence có Archives, Windows events, Suricata EVE, metadata và SHA-256. Không chỉnh
+evidence có Archives nguyên byte, intake checkpoint, Windows events, Suricata EVE,
+metadata và SHA-256. Giữ cả late capture nếu có. Không chỉnh
 tay file đã finalize. Nếu validate sai, bảo toàn dữ liệu hỏng để điều tra rồi đưa cả cặp
 raw/evidence ra khỏi dataset bằng lệnh duy nhất:
 
@@ -2166,8 +2223,25 @@ set -euo pipefail
 ```
 
 Phải thấy `QUARANTINED`, hai thư mục nguồn không còn và dữ liệu được giữ trong
-`data/quarantine/$RUN_ID` cùng `evidence/quarantine/$RUN_ID`. Sau đó mới chạy lại với ID
-mới. Không xóa một phía và không tự sửa checksum.
+`data/quarantine/$RUN_ID` cùng `evidence/quarantine/$RUN_ID`. Sau đó mới thu bằng ID
+và bucket mới. Không xóa một phía và không tự sửa checksum.
+
+Nếu finalize bị ngắt ở `FINALIZING`, output tạm `.RUN_ID.tmp` cũng phải được bảo
+toàn. Lệnh quarantine chuyển nó sang `data/quarantine/.RUN_ID.tmp`, ghi
+`staged_raw_preserved`/`staged_raw_path` trong `quarantine.json`. Nếu cả output cuối
+và output tạm cùng tồn tại, giữ cả hai; không chọn/xóa một bản bằng tay. Backup cả
+`data/quarantine`, kể cả thư mục ẩn. Không để `.RUN_ID.tmp` cũ trong `data/raw` để
+tính quota hoặc tiếp tục train.
+
+Nếu execution receipt hỏng, collector chỉ phục hồi **quyền sở hữu bucket** từ state,
+start contract, metadata/checksum và reservation độc lập còn khớp. Original hỏng vẫn
+được giữ; `bucket_recovery.json` ghi nguồn phục hồi, không sửa mẫu hỏng thành VALID.
+Receipt thiếu, chứng cứ không đủ/xung đột hoặc reservation gốc mất khi receipt hỏng:
+`cannot recover collection bucket` phải dừng. Khôi phục cả bộ bằng backup đã xác
+minh, giữ nguyên bản hỏng ngoài checkout để điều tra, rồi audit trước khi thu tiếp.
+Không xóa thư mục quarantine/reservation để né lỗi. Hash kiểm tính toàn vẹn, không
+chống được người có quyền ghi thay đồng thời toàn bộ chứng cứ; gửi checksum/backup
+cho Thịnh qua kênh độc lập sau mỗi buổi.
 
 ### Bước 7 — Audit tiến độ toàn dataset
 
@@ -2585,13 +2659,15 @@ evidence/scenario-runs/<RUN_ID>/
   execution_receipt.json          # begin/complete cùng frozen parameters hash
   collection_metadata.json        # origin/cursor/contract/file hashes
   archive_capture.jsonl          # bytes đọc trước lọc để replay toàn bucket
+  intake_checkpoint.json         # phạm vi nhận đã sealed, cutoff và read ledger
+  archive_capture-late.jsonl     # nếu có: bytes muộn; không nhập vào capture đã sealed
   checksums.sha256               # danh sách bằng chứng và checksum
   ...                            # Archives chọn lọc, Windows/EVE và frozen snapshots
 evidence/bucket-reservations/     # quyền bucket bền vững, vẫn giữ sau abort/quarantine
 evidence/context-baseline.json   # baseline hiện hành; bản mỗi run đã freeze riêng
 evidence/context-captures/       # approved enrollment raw theo content hash
 operator-logs/enrollment/        # raw đầy đủ/cursor/identity/enrollment kiểm được
-run-drafts/                      # clock YAML và draft từ CLI trước hành động
+run-drafts/                      # clock-measurements JSON, clock YAML và draft trước hành động
 ```
 
 Nhãn chỉ ở manifest/record theo schema, không nhét scenario ID, username, IP, port,
@@ -2846,8 +2922,8 @@ gửi archive, `checksums.sha256`, `git-commit.txt` và báo cáo audit cùng nh
 
 | Lỗi | Nguyên nhân thường gặp | Xử lý bắt buộc |
 |---|---|---|
-| `no Wazuh Archive bytes` | agent chưa gửi hoặc log đang đến chậm | không tạo traffic mới; chờ 30 giây và retry finalize cùng ID, tối đa ba lần; sau đó abort |
-| `does not end with a complete JSON line` | Wazuh đang ghi dở dòng cuối | không sửa Archives; chờ 30 giây rồi retry finalize cùng ID |
+| `no Wazuh Archive bytes` | chưa nhận đủ nguồn trong cutoff | giữ evidence; abort, sửa pipeline và thu mới; không bổ sung log sau cutoff |
+| partial/incomplete JSON lúc cutoff | dòng chưa được nhận trọn đúng hạn | giữ capture/checkpoint; abort và thu mới; không xóa checkpoint hoặc nối dòng bằng tay |
 | `rotated or truncated` | Archives rotate trong run | abort, tránh giờ rotate, chạy ID mới |
 | `no attributable Windows...` | sai agent/account/process/IP/port/DNS | đối chiếu draft với lệnh thật, chạy mới |
 | `no attributable Suricata...` | traffic đi tắt, sai `src_ip`, rule/interface hoặc EVE chưa forward | không retry bằng traffic mới trong cùng run; abort, sửa route/rule/ACL, chạy pilot mới |
@@ -2855,6 +2931,9 @@ gửi archive, `checksums.sha256`, `git-commit.txt` và báo cáo audit cùng nh
 | `active run...` | còn run STARTED hoặc backup đang giữ khóa | đọc owner, finalize/abort/quarantine đúng run; không xóa `.active-run.json` bằng tay |
 | `execution receipt...` | chưa `begin-action`/`complete-action`, receipt bị sửa hoặc dùng export sai run | abort nếu hành động chưa hoàn tất; không tự sửa state/receipt; tạo run ID mới nếu đã thao tác sai |
 | `frozen action count`/`interval contract` | chạy thừa/thiếu request hoặc sai khoảng nghỉ | abort và thu run mới; không thêm traffic khi run đã kết thúc |
+| `past intake deadline` / checkpoint `capturing` | chưa có bằng chứng nhận đúng hạn | abort và thu mới; gọi finalize --wait ngay sau complete-action, giữ terminal mở |
+| `late original-window input` | input của bucket cũ xuất hiện sau hạn | giữ late capture, sửa độ trễ/forwarding, thu lại; không nới grace theo run |
+| `cannot recover collection bucket` | không đủ chứng cứ để xác định quyền bucket | bảo toàn dữ liệu hỏng, restore bộ backup đã kiểm, không xóa quarantine/reservation |
 | `collection contract` | catalog/schema/taxonomy/source config khác snapshot lúc start | quarantine run, đồng bộ đúng commit, chạy lại pilot rồi thu ID mới |
 | `SCENARIO_CATALOG_MISMATCH` | draft/manifest không thuộc catalog hoặc sai family/label | quarantine run, cập nhật repo đúng commit, tạo draft mới từ CLI |
 | `SCENARIO_IMBALANCE`/`STRATUM_EXCESS` | năm scenario lệch nhau quá 1 run hoặc nhóm đã quá 12 | không copy/xóa tùy tiện; dừng thu, bàn giao audit để người phụ trách quyết định dataset version mới |

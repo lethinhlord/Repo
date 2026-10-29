@@ -4,6 +4,12 @@ Ngày: 28/10/2026. Nhánh: `fix/handoff-context-v3`.
 Đây là hợp đồng kỹ thuật đang triển khai, chưa phải biên bản nghiệm thu bốn VM hoặc
 hướng dẫn bàn giao cuối cùng cho Kiên. Chưa đổi COLLECTION_BASELINE_COMMIT.
 
+Checkpoint 29/10: R01–R05 và các regression kiểm chéo đã sửa; full suite 552
+passed/1 Windows symlink skip, Linux bổ sung 69 passed/0 skip. Kiên.txt 3.1 pin
+`d06d04034f0d1c996907365841f21cdb874e4d5a`, giữ G7 đóng. Xem
+collection-blocker-validation-20261029.md và handoff-guide-validation-v3-20261028.md.
+Foreground intake phải bắt đầu trước cutoff; không finalize muộn để nhận thêm log.
+
 ## Hợp đồng đã triển khai
 
 - `features-v3` gồm 24 giá trị: 10 account và 14 C2. Bốn trường mới là

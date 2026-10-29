@@ -1,4 +1,42 @@
-# Hướng dẫn Kiên v3 — phạm vi bàn giao và kiểm tra
+# Hướng dẫn Kiên v3.1 — kiểm chứng ngày 29/10/2026
+
+Lab 4 VM thuộc máy Kiên. Bản hiện hành kiểm phần mềm/câu lệnh và chuẩn bị pilot;
+không thay cho nghiệm thu telemetry hoặc dataset thật ở lab đó. G7 vẫn đóng.
+
+- Kiên.txt 3.1 và runbook cùng byte: 148815 byte UTF-8, SHA-256
+  `63aacb26788a86bb1a8d86dc5053abcb107db9eec791a2f46dfc744bbb05597e`.
+- File gửi: `D:\Tài liệu\Đồ án\Kiên.txt`; bản repo:
+  `docs/scenario-collection-runbook.md`.
+- Source pilot mới được pin: `d06d04034f0d1c996907365841f21cdb874e4d5a`.
+  Revision tài liệu phát hành sau source; dùng Kiên.txt 3.1 đi kèm.
+- Bản 3.0 giữ tại `D:\Tài liệu\Đồ án\Bản lưu hướng dẫn\Kiên_3_0_truoc_3_1_a3fe9a9aa0f2.txt`.
+- Full suite Windows: **552 passed, 1 skipped**, không failure/error. Case skip là
+  quyền tạo symlink trên Windows; Linux bổ sung **69 passed, 0 skipped**, gồm case đó.
+- Ruff/pip check đạt; OpenAPI xuất lại cho proto/sensor_instance. Feature vector
+  24 trường không đổi. Hai snapshot OpenAPI v1/week2 đã xuất lại bằng CLI; không thay thuật toán sau test.
+- Native 3.1: 74 block Bash qua bash -n, 37 block PowerShell qua parser 5.1;
+  inline Python/XML và đường dẫn CLI/module được đối chiếu source. Block measured
+  clock chạy trong Linux với UTC thật/SSH transport mô phỏng có độ trễ: raw span
+  >5 giây nhưng measured gate PASS đúng; không phải đo clock của VM Kiên.
+
+JUnit final-full.xml có SHA-256
+`4bf9a3c2d73d5bfbe47cc055afc055f29c8e9ecf40dc55e7c53fc14f3ab2d086`.
+Evidence RED/GREEN/review và published-guide.json hiện hành nằm tại
+`D:\DataCodex\2026-10-05\c\outputs\handoff-fixes-20261028`.
+Các finding kiểm chéo và giới hạn được ghi tại
+[collection-blocker-validation-20261029.md](collection-blocker-validation-20261029.md).
+
+3.1 dùng measured clock, foreground intake trước cutoff, sealed-only retry và giữ
+late evidence. Quarantine giữ cả raw cuối/output tạm; phục hồi chỉ quyền bucket,
+không biến run hỏng thành VALID. Offline validation kiểm saved evidence; replay
+feature không chứng minh API received_at. Hash kiểm toàn vẹn, không xác thực người
+có quyền sửa đồng thời toàn bộ chứng cứ. Bản mới không mở G7 hoặc dùng lại dataset cũ.
+
+## Lịch sử kiểm bản 3.0 — thông tin dưới đây không phải revision hiện hành
+
+Các kết quả native enrollment/jq/chrony/Suricata/wheelhouse/backup cũ được giữ để
+truy vết; block cấu hình tương ứng không đổi ở 3.1. Mã, hash và số test bên dưới chỉ
+áp dụng bản 3.0, không thay các kết quả mới ở đầu tài liệu.
 
 Ngày 28/10/2026. Theo xác nhận của Thịnh, máy đang làm việc không có lab 4 VM;
 lab thuộc máy Kiên. Tài liệu này ghi bằng chứng kiểm phần mềm/câu lệnh, không thay

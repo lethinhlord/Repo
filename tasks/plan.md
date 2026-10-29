@@ -9,6 +9,12 @@ Task list: `tasks/todo.md` trong cùng thư mục này. Kế hoạch tổng hợ
 Theo yêu cầu mới của Thịnh khi xác nhận lab ở máy Kiên, đã phát hành riêng Kiên.txt
 3.0 cho setup/enrollment/pilot, giữ G7 đóng; đây chưa phải baseline thu chính thức.
 
+Checkpoint 29/10 thay bản gửi bằng Kiên.txt 3.1, pin source
+`d06d04034f0d1c996907365841f21cdb874e4d5a`. Các blocker R01–R05 và regression
+kiểm chéo được ghi trong docs/collection-blocker-validation-20261029.md; full suite
+552 passed, Linux bổ sung 69 passed. G7 và nghiệm thu thật ở Kiên vẫn là điều kiện
+thu chính thức; merge code không tự đổi trạng thái đó.
+
 ## 1. Kết quả cần đạt
 
 Có 7 lỗi kỹ thuật H01–H07 đã xác nhận và 7 khoảng thiếu/giới hạn G01–G07 trong thiết
