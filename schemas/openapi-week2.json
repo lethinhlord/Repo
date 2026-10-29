@@ -2686,6 +2686,30 @@
             ],
             "title": "Flow Id"
           },
+          "proto": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proto"
+          },
+          "sensor_instance": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sensor Instance"
+          },
           "dns": {
             "anyOf": [
               {
