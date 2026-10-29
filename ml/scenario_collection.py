@@ -26,6 +26,7 @@ from ml.behavior_features import (
     derive_c2_features,
     interval_features,
 )
+from ml.clock_evidence import ClockPreflight
 from ml.collection_windows import bucket_used, reserve_bucket
 from ml.context import BaselineSnapshot, context_from_events, load_baseline
 from ml.dataset import (
@@ -114,40 +115,6 @@ class Attribution(BaseModel):
             raise ValueError("logon_types must contain only interactive/network/RDP types")
         if len(set(self.logon_types)) != len(self.logon_types):
             raise ValueError("logon_types must be unique")
-        return self
-
-
-class ClockPreflight(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    captured_at: datetime
-    controller_utc: datetime
-    target_utc: datetime
-    wazuh_utc: datetime
-    sensor_utc: datetime
-    attacker_utc: datetime
-    maximum_skew_seconds: float = Field(default=5.0, gt=0, le=10)
-    maximum_capture_age_seconds: float = Field(default=120.0, gt=0, le=300)
-
-    @model_validator(mode="after")
-    def validate_clock_skew(self) -> ClockPreflight:
-        if self.captured_at.tzinfo is None or self.captured_at.utcoffset() is None:
-            raise ValueError("captured_at must include a timezone")
-        values = [
-            self.controller_utc,
-            self.target_utc,
-            self.wazuh_utc,
-            self.sensor_utc,
-            self.attacker_utc,
-        ]
-        if any(value.tzinfo is None or value.utcoffset() is None for value in values):
-            raise ValueError("clock preflight timestamps must include a timezone")
-        span = (max(values) - min(values)).total_seconds()
-        if span > self.maximum_skew_seconds:
-            raise ValueError(f"VM clock skew {span:.3f}s exceeds {self.maximum_skew_seconds:.3f}s")
-        measurement_age = (self.captured_at - min(values)).total_seconds()
-        if measurement_age < -1 or measurement_age > self.maximum_capture_age_seconds:
-            raise ValueError("clock preflight measurements are stale or captured in the future")
         return self
 
 
