@@ -1,5 +1,9 @@
 # Hướng dẫn Kiên v3.1 — kiểm chứng ngày 29/10/2026
 
+Bản bàn giao hiện hành đã được thay bằng 3.2 ngày 30/10/2026. Xem
+[biên bản 3.2](handoff-guide-validation-v3.2-20261030.md); nội dung dưới đây được
+giữ để truy vết 3.1 và các lần kiểm trước.
+
 Lab 4 VM thuộc máy Kiên. Bản hiện hành kiểm phần mềm/câu lệnh và chuẩn bị pilot;
 không thay cho nghiệm thu telemetry hoặc dataset thật ở lab đó. G7 vẫn đóng.
 
