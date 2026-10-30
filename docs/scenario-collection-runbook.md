@@ -1,6 +1,6 @@
 # HƯỚNG DẪN BÀN GIAO KIÊN — LAB 4 VM VÀ THU DỮ LIỆU V3
 
-Phiên bản tài liệu: 3.1 — ngày 29/10/2026.
+Phiên bản tài liệu: 3.2 — ngày 29/10/2026.
 Máy thực hiện: máy của Kiên có VMware; các thao tác bên dưới không yêu cầu Thịnh
 truy cập trực tiếp vào máy đó. Người thực hiện ghi kết quả thật, không đánh dấu đạt sẵn.
 
@@ -16,9 +16,9 @@ TRẠNG THÁI BÀN GIAO HIỆN TẠI
 - 10–12 run/nhóm là quota thu ban đầu, không bảo đảm accuracy hoặc đủ điều kiện
   phản ứng tự động. Model/policy thiếu bằng chứng phải REVIEW; hệ thống giữ SHADOW.
 
-Nguồn pilot đã rà soát: nhánh `fix/handoff-context-v3` của
+Nguồn pilot đã rà soát đã được merge vào nhánh `main` của
 https://github.com/lethinhlord/Repo.
-Dùng bản Kiên.txt 3.1 này làm hướng dẫn thao tác. Hướng dẫn có revision tài liệu riêng;
+Dùng bản Kiên.txt 3.2 này làm hướng dẫn thao tác. Hướng dẫn có revision tài liệu riêng;
 checkout mã pilot có thể chứa bản runbook lịch sử, không dùng bản lịch sử đó để thực hiện.
 `REVIEWED_SOURCE_COMMIT` được ghi bằng SHA đầy đủ ở mục 6.2. Đây là revision pilot,
 không phải tag/commit baseline thu train. Không dùng lại tag `data-collection-v2.0.0`
@@ -55,6 +55,32 @@ Sản phẩm Kiên gửi sau pilot: source SHA, cấu hình/phiên bản thực 
 raw/evidence của các pilot, báo cáo progress, backup đã restore kiểm tra và ảnh nguyên
 màn hình. Mục 15/18 quy định chi tiết. Không chỉ gửi ảnh hoặc một file CSV đã tách log.
 
+
+## 0.1 Lộ trình thao tác để không thu thiếu
+
+Đọc bảng này trước khi cài/chạy. Các cổng G0–G9 là thứ tự kiểm tra của tài liệu,
+không phải chứng nhận tự động về chất lượng model.
+
+| Thứ tự | Ai/máy | Thực hiện | Chỉ chuyển bước khi |
+|---|---|---|---|
+| 1 | Kiên, 4 VM | mục 4–9: cài phần mềm, mạng, nguồn giờ; giữ snapshot | đúng IP/agent, đúng source SHA, dịch vụ chạy |
+| 2 | Kiên, Windows/SOC-AI | 10.1–10.4: canary có ID riêng, kiểm hai thời gian Sysmon và toàn bộ final flow | mọi phép kiểm đạt; còn thiếu thì tiếp tục chờ trong vòng polling, không chuyển pilot |
+| 3 | Kiên, SOC-AI | 10.5: enrollment riêng và xác minh baseline/capture hash | đủ lịch sử account/đích, context còn hạn |
+| 4 | Kiên, 4 VM | 10.6 và 11–12: bốn pilot, mỗi run trong một bucket | từng run VALID, kiểm bổ sung ở Bước 6 đạt, backup restore đúng |
+| 5 | Thịnh | 10.7: chốt thiết kế đối chứng/cohort/challenge và phát hành release | có SHA baseline chính thức và biên bản nghiệm thu, không chỉ source gate PASS |
+| 6 | Kiên | 13: thu 10–12 run mới mỗi nhóm theo release | kiểm sau TỪNG run và audit progress không có lỗi integrity |
+| 7 | Thịnh/Kiên | 14–15: final audit, build, kiểm bốn file Colab và backup | READY/TARGET_MET, split/hash đúng, locked test UNOPENED |
+
+Hiện bản mã pin ở mục 6.2 phục vụ setup/enrollment/pilot. Phần thiết kế release ở
+Bước 5 chưa hoàn tất; Thịnh phải làm phần đó trước khi Kiên chạy Bước 6. Không cần
+Kiên tự sửa Python, catalog, cohort hay taxonomy để mở cổng. Khi nhận release mới,
+Thịnh phải cung cấp hướng dẫn/source tương ứng và chạy lại các pilot sau cập nhật.
+
+**Bộ D:\DATN_SOC_20_VALID_RUNS ngày 28/10 không phải mẫu chuẩn để copy.** Nó còn
+features-v2, thiếu snapshot context/intake và có bất nhất thời gian/final flow.
+Giữ nguyên để đối chiếu lỗi, không chép vào checkout v3, không thêm history=0,
+không đổi nhãn/timestamp/hash. Thư mục có tên VALID hoặc một lệnh VALID của bản cũ
+không thay thế các cổng của bản hiện hành.
 
 ## 1. Kết quả bắt buộc
 
@@ -435,12 +461,12 @@ if nmcli -t -f NAME connection show | grep -qx 'ATTACK-LAB'; then
     connection.interface-name "$DATA_IF" ipv4.method manual \
     ipv4.addresses 10.40.0.10/24 \
     ipv4.routes "10.20.0.0/24 10.40.0.1" ipv4.gateway "" \
-+    ipv4.never-default yes ipv4.ignore-auto-dns yes ipv6.method disabled
+    ipv4.never-default yes ipv4.ignore-auto-dns yes ipv6.method disabled
 else
   sudo nmcli connection add type ethernet ifname "$DATA_IF" con-name ATTACK-LAB \
     ipv4.method manual ipv4.addresses 10.40.0.10/24 \
     ipv4.routes "10.20.0.0/24 10.40.0.1" ipv4.gateway "" \
-+    ipv4.never-default yes ipv4.ignore-auto-dns yes ipv6.method disabled
+    ipv4.never-default yes ipv4.ignore-auto-dns yes ipv6.method disabled
 fi
 sudo nmcli connection up ATTACK-LAB
 ip route get 10.20.0.10
@@ -551,7 +577,7 @@ LAB_USER="$(id -un)"
 PROJECT_ROOT="$HOME/datn-ai-soar-v3"
 REVIEWED_SOURCE_COMMIT=d06d04034f0d1c996907365841f21cdb874e4d5a
 if [ ! -e "$PROJECT_ROOT" ]; then
-  git clone --branch fix/handoff-context-v3 --single-branch \
+  git clone --branch main --single-branch \
     https://github.com/lethinhlord/Repo.git "$PROJECT_ROOT"
 fi
 test -d "$PROJECT_ROOT/.git"
@@ -560,7 +586,7 @@ test -z "$(git status --porcelain --untracked-files=all)" || {
   echo 'STOP: checkout has local changes; preserve them and resolve before collection' >&2
   exit 1
 }
-git fetch origin fix/handoff-context-v3
+git fetch origin main
 git cat-file -e "$REVIEWED_SOURCE_COMMIT^{commit}"
 git checkout --detach "$REVIEWED_SOURCE_COMMIT"
 test "$(git rev-parse HEAD)" = "$REVIEWED_SOURCE_COMMIT"
@@ -573,6 +599,17 @@ mkdir -p operator-logs/wheelhouse
 .venv-ml/bin/python -m pip download --only-binary=:all: --dest operator-logs/wheelhouse \
   --requirement requirements.lock --requirement requirements-ml.lock
 (cd operator-logs/wheelhouse && sha256sum ./* > ../wheelhouse.sha256)
+sha256sum requirements.lock requirements-ml.lock > operator-logs/wheelhouse-locks.sha256
+sha256sum --check operator-logs/wheelhouse-locks.sha256
+WHEEL_QA=$(mktemp -d)
+trap 'rm -rf -- "$WHEEL_QA"' EXIT
+python3 -m venv "$WHEEL_QA"
+"$WHEEL_QA/bin/python" -m pip install --no-index --find-links "$PWD/operator-logs/wheelhouse" \
+  --requirement requirements.lock --requirement requirements-ml.lock
+"$WHEEL_QA/bin/python" -m pip check
+"$WHEEL_QA/bin/python" -c 'import sklearn,xgboost; print(sklearn.__version__,xgboost.__version__)'
+rm -rf -- "$WHEEL_QA"
+trap - EXIT
 .venv-ml/bin/python -m pytest -q \
   tests/test_scenario_collection.py tests/test_dataset_audit.py \
   tests/test_collection_configuration.py tests/test_collection_windows.py \
@@ -1502,6 +1539,21 @@ done < <(find evidence/scenario-runs -mindepth 2 \
   -name .collection_state.json -print0)
 .venv-ml/bin/python -m scripts.scenario_session --help >/dev/null
 .venv-ml/bin/python -m scripts.audit_dataset --help >/dev/null
+.venv-ml/bin/python - <<'PY'
+import json
+from pathlib import Path
+import yaml
+source = yaml.safe_load(Path('config/collection-sources.yaml').read_text())
+schema = json.loads(Path('ml/feature_schema.json').read_text())
+for key in ('require_clean_bucket','require_flow_counters','require_online_parity'):
+    if source.get(key) is not True:
+        raise SystemExit('Source gate disabled: ' + key)
+if source.get('late_arrival_grace_seconds') != 60:
+    raise SystemExit('Unexpected grace; use the reviewed release')
+if schema.get('version') != 'features-v3' or len(schema.get('required',[])) != 24:
+    raise SystemExit('Wrong feature schema; do not collect with features-v2')
+print('SOURCE_CAPTURE_CONTRACT=PASS')
+PY
 echo 'SOC_PREFLIGHT=PASS'
 ```
 
@@ -1621,6 +1673,12 @@ Trên SOC-AI, ghi byte cursor tại đúng ranh giới dòng:
 
 ```bash
 set -euo pipefail
+cd "$HOME/datn-ai-soar-v3"
+test ! -e evidence/scenario-runs/.active-run.json
+CANARY_ID="pf$(date -u +%s)${RANDOM}"
+printf '%s\n' "$CANARY_ID" | tee /tmp/datn-preflight.id
+date -u --iso-8601=seconds > /tmp/datn-preflight.start-utc
+mkdir -p "operator-logs/preflight/$CANARY_ID"
 ARCHIVE=/var/ossec/logs/archives/archives.json
 CURSOR=$(sudo stat -c %s "$ARCHIVE")
 test "$CURSOR" -gt 0
@@ -1633,16 +1691,104 @@ Ngay sau đó trên Windows PowerShell chạy canary an toàn và bắt mọi l�
 
 ```powershell
 $ErrorActionPreference = 'Stop'
+if ($env:COMPUTERNAME -ne 'WIN11-TARGET') { throw 'Run only on WIN11-TARGET VM' }
+$CanaryId = Read-Host 'Paste exact CANARY_ID printed by SOC-AI'
+if ($CanaryId -notmatch '^pf[0-9]{11,20}$') { throw 'Invalid canary ID' }
+New-Item -ItemType Directory -Path C:\DATN\logs -Force | Out-Null
+$canaryStartUtc = [DateTimeOffset]::UtcNow
+$canaryStartRecord = (Get-WinEvent -LogName 'Microsoft-Windows-Sysmon/Operational' -MaxEvents 1).RecordId
 foreach ($uri in @(
-  'http://10.40.0.10:8080/health?preflight=1',
-  'http://10.40.0.10:8081/beacon?preflight=1',
-  'http://10.40.0.10:9001/stage.bin'
+  "http://10.40.0.10:8080/health?preflight=$CanaryId",
+  "http://10.40.0.10:8081/beacon?preflight=$CanaryId",
+  "http://10.40.0.10:9001/stage.bin?preflight=$CanaryId"
 )) {
   curl.exe --fail --silent --show-error --output NUL $uri
   if ($LASTEXITCODE -ne 0) { throw "Canary failed: $uri" }
 }
-Resolve-DnsName preflight.www.datn.test -Server 10.40.0.10 | Out-Null
-Resolve-DnsName preflight.beacon.datn.test -Server 10.40.0.10 | Out-Null
+$dnsScript = 'C:\DATN\run_dns_scenario.ps1'
+$expectedHash = (Get-Content -LiteralPath "$dnsScript.sha256.txt" -Raw).Trim()
+if ($expectedHash -notmatch '^[0-9a-f]{64}$' -or
+    (Get-FileHash -LiteralPath $dnsScript -Algorithm SHA256).Hash.ToLower() -ne $expectedHash) {
+  throw 'Pinned DNS script is missing or changed; return to 7.2'
+}
+foreach ($suffix in 'www.datn.test','beacon.datn.test') {
+  & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+    -NoLogo -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File $dnsScript `
+    -RunNonce $CanaryId -DomainSuffix $suffix -Count 2 -GapsCsv '1' `
+    -VariantIndex 0 -DnsServer 10.40.0.10
+  if ($LASTEXITCODE -ne 0) { throw "DNS canary failed: $suffix" }
+}
+Start-Sleep -Seconds 3
+$canaryEndRecord = (Get-WinEvent -LogName 'Microsoft-Windows-Sysmon/Operational' -MaxEvents 1).RecordId
+$canaryEndUtc = [DateTimeOffset]::UtcNow
+# Read by record number as well as time: an old/stale SystemTime must not make
+# a newly written bad event disappear from the diagnostic query.
+$events = @(Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Sysmon/Operational'; Id=1,3,22} |
+    Where-Object { $_.RecordId -gt $canaryStartRecord -and $_.RecordId -le $canaryEndRecord })
+$clockXml = "C:\DATN\logs\$CanaryId-sysmon-raw.xml.txt"
+$events | ForEach-Object { $_.ToXml() } | Set-Content -LiteralPath $clockXml -Encoding UTF8
+Get-Date -Format o
+Get-Service W32Time,Sysmon64,WazuhSvc | Format-Table Name,Status,StartType
+& w32tm.exe /query /status /verbose
+if ($LASTEXITCODE -ne 0) { throw 'Cannot read W32Time status' }
+& w32tm.exe /query /source
+if ($LASTEXITCODE -ne 0) { throw 'Cannot read W32Time source' }
+$rows = @($events | ForEach-Object {
+    [xml]$xml = $_.ToXml()
+    $systemRaw = [string]$xml.Event.System.TimeCreated.SystemTime
+    $utcNodes = @($xml.Event.EventData.Data | Where-Object { $_.Name -eq 'UtcTime' })
+    if ([string]::IsNullOrWhiteSpace($systemRaw) -or $utcNodes.Count -ne 1) { throw "Missing/duplicate time field in record $($_.RecordId)" }
+    $utcRaw = [string]$utcNodes[0].InnerText
+    if ([string]::IsNullOrWhiteSpace($utcRaw)) { throw "Missing UtcTime in record $($_.RecordId)" }
+    if ($systemRaw -notmatch '(Z|[+-]\d{2}:\d{2})$') { throw 'SystemTime lacks an explicit timezone' }
+    $styles = [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal
+    $systemUtc = [DateTimeOffset]::Parse($systemRaw,[Globalization.CultureInfo]::InvariantCulture,$styles)
+    $eventUtc = [DateTimeOffset]::Parse($utcRaw,[Globalization.CultureInfo]::InvariantCulture,$styles)
+    [pscustomobject]@{Id=$_.Id; RecordId=$_.RecordId; SystemTime=$systemRaw; UtcTime=$utcRaw;
+        DeltaSeconds=[Math]::Abs(($systemUtc-$eventUtc).TotalSeconds);
+        Fresh=($systemUtc -ge $canaryStartUtc -and $systemUtc -le $canaryEndUtc -and $eventUtc -ge $canaryStartUtc -and $eventUtc -le $canaryEndUtc)}
+})
+$rows | Sort-Object RecordId | Format-Table -AutoSize
+$clockCsv = "C:\DATN\logs\$CanaryId-sysmon-time.csv"
+$rows | Export-Csv -LiteralPath $clockCsv -NoTypeInformation -Encoding UTF8
+foreach ($id in 1,3,22) { if (@($rows | Where-Object {$_.Id -eq $id}).Count -eq 0) { throw "FAIL: missing canary Event ID $id" } }
+if (@($rows | Where-Object { $_.DeltaSeconds -gt 5 -or -not $_.Fresh }).Count -gt 0) { throw 'FAIL: time mismatch or event outside this canary window' }
+'PASS: fresh Event IDs 1/3/22 present; all checked deltas <= 5 seconds'
+# Save real console output/transcript outside any frozen dataset/checksum tree.
+# No successful output is supplied here: the displayed rows come from this host.
+
+```
+
+Phải có đủ Event 1/3/22 mới trong khoảng RecordId vừa ghi. Bảng phải có cả
+SystemTime/UtcTime và độ lệch không quá 5 giây. Đọc bằng RecordId để một SystemTime
+cũ bất thường không bị loại khỏi phép kiểm chỉ vì lọc theo StartTime. Hai file CSV/XML
+là output thật, cần giữ cùng ảnh toàn màn hình. Microsoft mô tả Sysmon ghi thời gian
+UTC: https://learn.microsoft.com/sysinternals/downloads/sysmon ; lệnh đọc event:
+https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.diagnostics/get-winevent?view=powershell-5.1
+
+Nếu lệch lớn như 107 phút của bộ 20 run: dừng ngay, lưu XML và output W32Time,
+kiểm đúng NTP SOC-AI, VMware time sync/snapshot/resume và đường xuất log. Raw XML
+được lưu trước khi parse; nếu field hỏng thì CSV có thể chưa tạo, vẫn giữ XML và
+log lỗi. Không chạy bước copy CSV/PASS khi bước kiểm trước đã lỗi. Sau khi
+sửa nguồn giờ, có thể reboot **WIN11-TARGET** ngoài mọi run rồi đo lại; reboot/resync
+không tự chứng minh lỗi đã hết. Chỉ canary mới với cả hai trường thời gian đúng mới
+cho phép tiếp tục. Không clear Event Log, chỉnh raw hoặc trừ một offset để qua gate.
+Sau reboot phải quay lại 10.1, tạo CANARY_ID/cursor mới; không dùng lại capture cũ.
+
+Trước khi sign out, chép CSV/XML thật sang SOC-AI (chỉ quản trị, ngoài mọi run):
+
+```powershell
+$SocUser = Read-Host 'SOC-AI SSH username'
+if ($SocUser -notmatch '^[a-z_][a-z0-9_-]*$') { throw 'Invalid SOC username' }
+$SocHome = (ssh "$SocUser@192.168.58.147" 'printf %s "$HOME"').Trim()
+if ($LASTEXITCODE -ne 0 -or $SocHome -notmatch '^(/home/[a-z_][a-z0-9_-]*|/root)$') {
+  throw 'Cannot determine SOC home'
+}
+$SocEvidence = "$SocHome/datn-ai-soar-v3/operator-logs/preflight/$CanaryId"
+ssh "$SocUser@192.168.58.147" "mkdir -p '$SocEvidence'"
+if ($LASTEXITCODE -ne 0) { throw 'Cannot prepare SOC evidence directory' }
+scp $clockCsv $clockXml "${SocUser}@192.168.58.147:${SocEvidence}/"
+if ($LASTEXITCODE -ne 0) { throw 'Cannot copy native time evidence' }
 ```
 
 Tại console Windows, **đăng xuất (Sign out)** phiên hiện tại. Thực hiện **đăng nhập mới**
@@ -1670,72 +1816,161 @@ Trở lại SOC-AI; vòng lặp chỉ PASS khi **event mới sau cursor** có c�
 
 ```bash
 set -euo pipefail
+cd "$HOME/datn-ai-soar-v3"
 ARCHIVE=/var/ossec/logs/archives/archives.json
 CURSOR=$(cat /tmp/datn-preflight.cursor)
-FRESH=/tmp/datn-preflight-fresh.jsonl
+CANARY_ID=$(cat /tmp/datn-preflight.id)
+CANARY_SINCE=$(cat /tmp/datn-preflight.start-utc)
+FRESH="operator-logs/preflight/$CANARY_ID/archives-fresh.jsonl"
+CHECK_LOG="operator-logs/preflight/$CANARY_ID/channel-check.txt"
+mkdir -p "$(dirname "$FRESH")"
+check_canary_channels() {
+  for EVENT_ID in 1 3 22; do
+    jq -e --arg id "$EVENT_ID" 'select(.agent.name=="WIN11-TARGET" and
+      ((.data.win.system.eventID//"")|tostring)==$id)' "$FRESH" >/dev/null || { echo "Missing Sysmon Event $EVENT_ID" >&2; return 1; }
+  done
+  for ACCOUNT_NAME in datn_benign datn_attack; do
+    TYPE=2; [ "$ACCOUNT_NAME" != datn_attack ] || TYPE=3
+    for EVENT_ID in 4624 4625; do
+      jq -e --arg user "$ACCOUNT_NAME" --arg type "$TYPE" --arg id "$EVENT_ID" '
+        select(.agent.name=="WIN11-TARGET" and
+        ((.data.win.system.eventID//"")|tostring)==$id and
+        ((.data.win.eventdata.targetUserName//"")|ascii_downcase)==$user and
+        ((.data.win.eventdata.logonType//"")|tostring)==$type)' "$FRESH" >/dev/null || { echo "Missing Security event=$EVENT_ID account=$ACCOUNT_NAME logonType=$TYPE" >&2; return 1; }
+    done
+  done
+  jq -e 'select(.agent.name=="WIN11-TARGET" and
+    ((.data.win.system.eventID//"")|tostring)=="4624" and
+    ((.data.win.eventdata.targetUserName//"")|ascii_downcase)=="datn_attack" and
+    ((.data.win.eventdata.ipAddress//"")|endswith("10.40.0.10")))' "$FRESH" >/dev/null || { echo "Missing SMB success from Kali data IP" >&2; return 1; }
+  for SID in 900001 900002 900004; do
+    jq -e --argjson sid "$SID" 'select(.agent.name=="NET-SENSOR") |
+      (.full_log|fromjson?) | select(.event_type=="alert" and .alert.signature_id==$sid)' \
+      "$FRESH" >/dev/null || { echo "Missing Suricata SID $SID" >&2; return 1; }
+  done
+  .venv-ml/bin/python - "$FRESH" "$CANARY_ID" "$CANARY_SINCE" <<'PY'
+"""Guide-inline verifier: checks real fresh Archives, never creates telemetry."""
+import json
+import re
+import sys
+from decimal import Decimal
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+from ml.telemetry import (
+    flow_connection_key, flow_counter_issues, parse_time,
+    suricata_dns_names, suricata_dns_is_response, suricata_payload,
+    windows_fields, process_guid,
+)
+
+capture, nonce, since = sys.argv[1:]
+started = parse_time(since)
+if started is None:
+    raise SystemExit('Invalid canary start UTC')
+payloads, windows = [], []
+for line in Path(capture).read_text(encoding='utf-8').splitlines():
+    row = json.loads(line)
+    if row.get('agent', {}).get('name') == 'WIN11-TARGET':
+        windows.append(windows_fields(row))
+    if row.get('agent', {}).get('name') == 'NET-SENSOR':
+        payload = suricata_payload(row)
+        if payload:
+            payloads.append(payload)
+guids = {process_guid(fields) for event_id, _, fields in windows
+         if event_id == '1' and nonce in str(fields.get('commandLine','')).casefold()}
+guids.discard('')
+
+def precise(value, naive_utc=False):
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError('missing timestamp')
+    dt = datetime.fromisoformat(value.replace('Z','+00:00'))
+    if dt.tzinfo is None:
+        if not naive_utc:
+            raise ValueError('SystemTime must include timezone')
+        dt = dt.replace(tzinfo=UTC)
+    whole = dt.astimezone(UTC).replace(microsecond=0) - datetime(1970,1,1,tzinfo=UTC)
+    fraction = re.search(r'\d{2}:\d{2}:\d{2}[.,](\d+)', value)
+    return Decimal(whole.days*86400+whole.seconds) + (Decimal('0.'+fraction[1]) if fraction else 0)
+
+clock_ids, clock_rows = set(), 0
+for event_id, system, fields in windows:
+    if event_id not in {'1','3','22'} or process_guid(fields) not in guids:
+        continue
+    system_value = precise(system.get('systemTime'))
+    event_value = precise(fields.get('utcTime'), True)
+    delta = abs(system_value - event_value)
+    lower, upper = precise(since)-5, precise(datetime.now(UTC).isoformat())+5
+    if not lower <= system_value <= upper or not lower <= event_value <= upper:
+        raise SystemExit('Canary exported timestamp is outside the fresh capture interval')
+    if delta > 5:
+        raise SystemExit(f'Canary Sysmon time mismatch record={system.get("eventRecordID")} delta={delta}s')
+    clock_ids.add(event_id)
+    clock_rows += 1
+if clock_ids != {'1','3','22'}:
+    raise SystemExit('Missing nonce-bound Sysmon process/network/DNS time evidence')
+transactions = []
+http_ports, queries, responses = set(), set(), set()
+for payload in payloads:
+    event_type = payload.get('event_type')
+    url = str((payload.get('http') or {}).get('url', ''))
+    names = {n.casefold() for n in suricata_dns_names(payload.get('dns')) if nonce in n}
+    if event_type == 'http' and f'preflight={nonce}' in url:
+        if payload.get('src_ip') != '10.20.0.10' or payload.get('dest_ip') != '10.40.0.10':
+            raise SystemExit('Canary HTTP uses wrong data network')
+        http_ports.add(payload.get('dest_port'))
+        transactions.append(payload)
+    elif event_type == 'dns' and names:
+        reverse = suricata_dns_is_response(payload.get('dns'))
+        expected_ips = ('10.40.0.10','10.20.0.10') if reverse else ('10.20.0.10','10.40.0.10')
+        if (payload.get('src_ip'), payload.get('dest_ip')) != expected_ips:
+            raise SystemExit('Canary DNS uses wrong data network')
+        (responses if reverse else queries).update(names)
+        transactions.append(payload)
+expected = {f'{nonce}-{marker}0-{n:02d}.{domain}'
+            for marker, domain in [('b','www.datn.test'),('r','beacon.datn.test')]
+            for n in (1,2)}
+if http_ports != {8080,8081,9001} or not expected <= queries or not expected <= responses:
+    raise SystemExit('Waiting for all three HTTP ports and four DNS request/response pairs')
+keys = {flow_connection_key(row) for row in transactions}
+if not keys or None in keys:
+    raise SystemExit('Missing/invalid full tuple, protocol or flow_id in transaction')
+finals = [row for row in payloads if row.get('event_type') == 'flow'
+          and flow_connection_key(row) in keys]
+issues = flow_counter_issues(transactions + finals, window_start=started-timedelta(seconds=5),
+                             window_end=datetime.now(UTC)+timedelta(seconds=5))
+if issues:
+    raise SystemExit('Canary final-flow check: ' + ','.join(issues))
+print(json.dumps({'canary_id':nonce,'http_ports':sorted(http_ports),
+                  'dns_queries':sorted(queries),'dns_responses':sorted(responses),
+                  'transaction_connections':len(keys),
+                  'sysmon_time_rows':clock_rows,
+                  'final_connections':len({flow_connection_key(row) for row in finals}),
+                  'flow_issues':issues}, indent=2))
+PY
+}
 PASS=0
-for attempt in $(seq 1 18); do
+for attempt in $(seq 1 36); do
   test "$(sudo stat -c '%d:%i' "$ARCHIVE")" = "$(cat /tmp/datn-preflight.identity)"
   test "$(sudo stat -c %s "$ARCHIVE")" -ge "$CURSOR"
   sudo tail -c "+$((CURSOR + 1))" "$ARCHIVE" > "$FRESH"
-  if jq -e 'select(.agent.name=="WIN11-TARGET" and
-      ((.data.win.system.eventID//"")|tostring)=="1")' "$FRESH" >/dev/null 2>&1 \
-    && jq -e 'select(.agent.name=="WIN11-TARGET" and
-      ((.data.win.system.eventID//"")|tostring)=="3")' "$FRESH" >/dev/null 2>&1 \
-    && jq -e 'select(.agent.name=="WIN11-TARGET" and
-      ((.data.win.system.eventID//"")|tostring)=="22")' "$FRESH" >/dev/null 2>&1 \
-    && jq -e 'select(.agent.name=="NET-SENSOR") |
-      (.full_log|fromjson?) | select(.src_ip=="10.20.0.10" and
-      .dest_ip=="10.40.0.10")' "$FRESH" >/dev/null 2>&1 \
-    && jq -e 'select(.agent.name=="NET-SENSOR") |
-      (.full_log|fromjson?) |
-      select(.event_type=="alert" and
-      (.alert.signature_id==900001 or .alert.signature_id==900002 or
-       .alert.signature_id==900004))' "$FRESH" >/dev/null 2>&1 \
-    && jq -e 'select(.agent.name=="WIN11-TARGET" and
-      ((.data.win.system.eventID//"")|tostring)=="4624" and
-      ((.data.win.eventdata.targetUserName//"")|ascii_downcase)=="datn_attack" and
-      ((.data.win.eventdata.logonType//"")|tostring)=="3" and
-      ((.data.win.eventdata.ipAddress//"")|endswith("10.40.0.10")))' \
-      "$FRESH" >/dev/null 2>&1; then
+  if check_canary_channels >"$CHECK_LOG" 2>&1; then
     PASS=1; break
   fi
+  printf 'Canary attempt %s/36: pending or failed; inspect %s\n' "$attempt" "$CHECK_LOG"
   sleep 5
 done
+cat "$CHECK_LOG"
 test "$PASS" -eq 1
-for EVENT_ID in 4624 4625; do
-  jq -e --arg id "$EVENT_ID" 'select(.agent.name=="WIN11-TARGET" and
-    ((.data.win.system.eventID//"")|tostring)==$id and
-    ((.data.win.eventdata.targetUserName//"")|ascii_downcase)=="datn_benign" and
-    ((.data.win.eventdata.logonType//"")|tostring)=="2")' \
-    "$FRESH" >/dev/null
-  jq -e --arg id "$EVENT_ID" 'select(.agent.name=="WIN11-TARGET" and
-    ((.data.win.system.eventID//"")|tostring)==$id and
-    ((.data.win.eventdata.targetUserName//"")|ascii_downcase)=="datn_attack" and
-    ((.data.win.eventdata.logonType//"")|tostring)=="3")' \
-    "$FRESH" >/dev/null
-done
-for SID in 900001 900002 900004; do
-  jq -e --argjson sid "$SID" 'select(.agent.name=="NET-SENSOR") |
-    (.full_log|fromjson?) |
-    select(.event_type=="alert" and .alert.signature_id==$sid)' \
-    "$FRESH" >/dev/null
-done
-for TYPE in dns http; do
-  jq -e --arg type "$TYPE" 'select(.agent.name=="NET-SENSOR") |
-    (.full_log|fromjson?) | select(.event_type==$type and
-    .src_ip=="10.20.0.10" and .dest_ip=="10.40.0.10")' "$FRESH" >/dev/null
-done
-for PROTO in TCP UDP; do
-  jq -e --arg proto "$PROTO" 'select(.agent.name=="NET-SENSOR") |
-    (.full_log|fromjson?) | select(.event_type=="flow" and .proto==$proto and
-    .src_ip=="10.20.0.10" and .dest_ip=="10.40.0.10" and
-    .flow.start!=null and .flow.end!=null and
-    (.flow.bytes_toserver|type)=="number" and
-    (.flow.bytes_toclient|type)=="number")' "$FRESH" >/dev/null
-done
+sha256sum "$FRESH" "$CHECK_LOG" > "operator-logs/preflight/$CANARY_ID/capture.sha256"
 echo 'END_TO_END_PREFLIGHT=PASS'
 ```
+
+Vòng kiểm refresh Archives tối đa 36 lần, cách nhau 5 giây (khoảng ba phút cộng
+thời gian đọc/kiểm), kiểm
+cả Security, nonce-bound Sysmon/time, ba HTTP port, bốn DNS request/response và final
+counters của **mọi connection key**. Cùng flow_id nhưng khác IP/port/protocol không
+được dùng bù. Một TCP/UDP final bất kỳ không đủ. Log pending chỉ có nghĩa đang chờ;
+hết vòng mà chưa PASS thì dừng, không chạy lại canary để bù vào cùng capture.
 
 Nếu bất kỳ block nào không in `PASS`, không bắt đầu run. Sửa nguyên nhân rồi chạy lại
 từ 10.1; không dùng event cũ, không tạo file Archives giả và không hạ ngưỡng kiểm tra.
@@ -1915,6 +2150,96 @@ Tại revision pilot hiện tại, cổng này còn khóa. Chỉ thực hiện k
 baseline thu chính thức sau khi sửa/đối chiếu catalog, cohort, taxonomy và challenge.
 Không tự nhập `136bb754`, không chọn SHA của model smoke hoặc bỏ gate để đủ 40 mẫu.
 
+**Checklist release do Thịnh chuẩn bị, Kiên không tự điền cho đủ:**
+
+- Source SHA 40 ký tự và guide/config/schema/runner cùng revision; không chọn tag v2.
+- Đối chứng benign/malicious đủ ngữ cảnh, purpose/cohort khai báo trước, taxonomy
+  không dùng tên URL/domain/file riêng của nhãn làm tín hiệu ý định.
+- Với cấu hình năm fold hiện hành: ít nhất năm cohort độc lập cho **từng** cặp
+  family/label; mọi fold phải có đủ cả bốn nhóm. Một scenario không tách vào nhiều
+  cohort. Lặp cùng scenario/run không tạo cohort độc lập. Thịnh kiểm tính khả thi
+  phân fold từ metadata thiết kế bằng helper hiện hành trước release, không tạo
+  run giả để chứng minh quota hoặc nghiệm thu.
+- Challenge được freeze trước thu, tách khỏi quota/train/validation; có các trường
+  hợp không đủ quan sát phải REVIEW. Pilot thật và backup/restore đã được nghiệm thu.
+- Có biên bản xác nhận riêng; source gate ở dưới chỉ kiểm cấu trúc, không tự chứng
+  minh đối chứng hợp lý, cohort độc lập hay accuracy của model.
+
+**Khi đổi release/catalog:** không trộn pilot của source cũ vào data/raw của release
+mới. Auditor đối chiếu contract/hash trước khi loại pilot khỏi quota. Trước khi đổi
+source, làm backup/restore mục 15 bằng mã cũ; giữ bundle/source/checksum và biên bản.
+Không có active run. Liệt kê run cũ, rồi cách ly từng pilot bằng CLI hiện hành:
+
+```bash
+set -euo pipefail
+cd "$HOME/datn-ai-soar-v3"
+test ! -e evidence/scenario-runs/.active-run.json
+find data/raw -mindepth 2 -maxdepth 2 -name scenario_manifest.json -exec \
+  jq -r '[.run_id,.purpose,.collection_contract_sha256]|@tsv' {} +
+read -rp 'Paste one OLD pilot run ID from the listing: ' OLD_PILOT_ID
+[[ "$OLD_PILOT_ID" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{3,127}$ ]]
+test "$(jq -r .run_id "data/raw/$OLD_PILOT_ID/scenario_manifest.json")" = "$OLD_PILOT_ID"
+test "$(jq -r .purpose "data/raw/$OLD_PILOT_ID/scenario_manifest.json")" = pilot
+.venv-ml/bin/python -m scripts.scenario_session quarantine \
+  --run-id "$OLD_PILOT_ID" --reason 'Archive pilot of previous source before release change'
+```
+
+Lặp block cho từng pilot cũ; không xử lý mù các run purpose khác. Đây là cách ly
+phiên bản, không kết luận pilot hỏng; raw/evidence vẫn được giữ trong quarantine.
+Sau đó chỉ cập nhật source theo hướng dẫn pin SHA do Thịnh gửi, cài lại resource
+đúng hash và chạy preflight/enrollment/bốn pilot của candidate mới. Hướng dẫn cũ
+pin d06d040 không tự áp dụng cho code/catalog khác. Candidate đã nghiệm thu mới
+được Thịnh xác nhận thành COLLECTION_BASELINE_COMMIT; không tự đổi SHA để né kiểm.
+Pilot cùng contract với release cuối có thể giữ lại để audit nhưng không tính quota.
+
+Nếu lab đã cô lập Internet, Thịnh phải gửi gói local gồm source.bundle đầy đủ lịch
+sử, checksums.sha256, wheelhouse Linux x86_64/Python 3.12, wheelhouse.sha256 và
+wheelhouse-locks.sha256 khớp hai lockfile của candidate. Không lấy wheel Windows
+hoặc wheelhouse của release trước khi lockfile đã đổi. SHA candidate lấy từ hướng
+dẫn mới do Thịnh cung cấp, không tự chọn commit khác. Sau backup/cách ly pilot cũ:
+
+```bash
+set -euo pipefail
+cd "$HOME/datn-ai-soar-v3"
+test ! -e evidence/scenario-runs/.active-run.json
+test -z "$(git status --porcelain --untracked-files=all)"
+read -rp 'Absolute path of owner-provided local release package: ' RELEASE_DIR
+[[ "$RELEASE_DIR" = /* ]]
+(cd "$RELEASE_DIR" && sha256sum --check checksums.sha256)
+read -rp 'Candidate SHA from the matching new guide: ' CANDIDATE_SOURCE_COMMIT
+[[ "$CANDIDATE_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+git bundle verify "$RELEASE_DIR/source.bundle"
+git fetch "$RELEASE_DIR/source.bundle" HEAD
+git cat-file -e "$CANDIDATE_SOURCE_COMMIT^{commit}"
+git checkout --detach "$CANDIDATE_SOURCE_COMMIT"
+test "$(git rev-parse HEAD)" = "$CANDIDATE_SOURCE_COMMIT"
+RELEASE_LOG="operator-logs/release-$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$RELEASE_LOG"
+if [ -e operator-logs/wheelhouse ]; then
+  mv -- operator-logs/wheelhouse "$RELEASE_LOG/previous-wheelhouse"
+fi
+cp -a "$RELEASE_DIR/wheelhouse" operator-logs/wheelhouse
+cp -- "$RELEASE_DIR/wheelhouse.sha256" operator-logs/wheelhouse.sha256
+cp -- "$RELEASE_DIR/wheelhouse-locks.sha256" operator-logs/wheelhouse-locks.sha256
+sha256sum --check operator-logs/wheelhouse-locks.sha256
+(cd operator-logs/wheelhouse && sha256sum --check ../wheelhouse.sha256)
+.venv-ml/bin/python -m pip install --no-index --find-links operator-logs/wheelhouse \
+  --requirement requirements.lock --requirement requirements-ml.lock
+.venv-ml/bin/python -m pip check
+```
+
+Gói checksums.sha256 phải bao phủ source.bundle, hai manifest wheelhouse và mọi
+wheel trong wheelhouse/; wheelhouse-locks.sha256 chứa hash requirements.lock và
+requirements-ml.lock tính tại root source candidate. Wheelhouse không chỉ là gói
+để cài được vào venv đang chạy: trước G7 phải kiểm một venv sạch với --no-index
+như khối WHEEL_QA ở 6.2, lưu output và bảo đảm backup có wheelhouse mới. Khi còn
+Internet trước 10.1, có thể tạo wheelhouse bằng lệnh pip download ở 6.2 sau checkout
+candidate; nếu đã cô lập thì nhận gói đúng môi trường từ Thịnh. Không chạy bootstrap
+có pip --upgrade qua Internet trong collection mode. Không mở run trong lúc đổi source,
+venv, rule, đồng hồ hoặc import package. Dùng RUN_ID mới cho pilot candidate, kể cả
+pilot cùng ngày đã bị quarantine trước đó.
+
+
 Kiên cần nhận: SHA commit đầy đủ 40 ký tự; catalog/contract đã freeze; lịch scenario
 và cohort; danh sách challenge tách riêng; biên bản pilot; hướng dẫn tương ứng với
 SHA đó. Checkout release phải sạch và đúng SHA, không chỉ là descendant ngẫu nhiên.
@@ -1922,6 +2247,8 @@ SHA đó. Checkout release phải sạch và đúng SHA, không chỉ là descen
 ```bash
 set -euo pipefail
 cd "$HOME/datn-ai-soar-v3"
+read -rp 'Paste official 40-character source SHA received from Thinh: ' COLLECTION_BASELINE_COMMIT
+export COLLECTION_BASELINE_COMMIT
 : "${COLLECTION_BASELINE_COMMIT:?Thinh chua cung cap baseline thu chinh thuc}"
 [[ "$COLLECTION_BASELINE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
 test "$(git rev-parse HEAD)" = "$COLLECTION_BASELINE_COMMIT"
@@ -1938,6 +2265,27 @@ if config['data']['group_key'] != 'cohort_id':
     errors.append('Production split chua chuyen sang cohort_id')
 if any(x.purpose == 'trainable' and not x.cohort_id for x in catalog.scenarios):
     errors.append('Trainable catalog chua co cohort day du')
+from collections import defaultdict
+from types import SimpleNamespace
+from ml.dataset import _assign_cohort_folds, DatasetError
+planned = [x for x in catalog.scenarios if x.purpose == 'trainable']
+expected = {('account',0),('account',1),('c2',0),('c2',1)}
+members = defaultdict(set)
+for item in planned:
+    members[(item.family, int(item.label == 'malicious'))].add(item.cohort_id)
+folds = config['split']['number_of_folds']
+minimum = max(folds, config['data']['minimum_groups_per_family_label'])
+if set(members) != expected or any(len(v - {None,''}) < minimum for v in members.values()):
+    errors.append('Chua du cohort doc lap cho moi family/label theo so fold/config')
+if planned and all(x.cohort_id for x in planned):
+    # Project catalog metadata only: no execution, raw record, feature or split file created.
+    design = {x.scenario_id: SimpleNamespace(scenario_id=x.scenario_id,
+              cohort_id=x.cohort_id, family=x.family, label=int(x.label == 'malicious'))
+              for x in planned}
+    try:
+        _assign_cohort_folds(design, folds, config['random_seed'])
+    except DatasetError as exc:
+        errors.append('Thiet ke cohort khong chia duoc fold: ' + str(exc))
 if not any(x.purpose == 'challenge' for x in catalog.scenarios):
     errors.append('Chua co challenge doi chung duoc dong bang truoc thu')
 terms = [str(term).casefold() for rule in taxonomy['rules']
@@ -1950,6 +2298,11 @@ if errors:
 print('G7 SOURCE CONTRACT CHECK=PASS; van can bien ban pilot thuc te')
 PY
 ```
+
+Sau khi G7 được xác nhận, đặt COLLECTION_MODE=trainable tại 10.1 để kiểm đúng
+COLLECTION_BASELINE_COMMIT và RUN_PURPOSE=trainable ở Bước 1 mục 11. Đây là hai
+biến cho hai việc khác nhau: kiểm source và khai báo loại run. Trong giai đoạn
+pilot, giữ cả hai ở pilot; không đổi biến để tự mở thu chính thức.
 
 Các kiểm tra trên bổ sung cho biên bản nghiệm thu, không thay thế review G01–G07.
 Nếu báo G7 CHƯA MỞ, dừng thu chính thức và gửi log cho Thịnh. Kiên vẫn có thể giữ
@@ -2127,6 +2480,13 @@ file export của run khác.
 malicious. Không thay tham số theo cảm tính, không sử dụng giá trị của run trước và không
 thay kích thước hai payload cố định; SHA-256 của payload là cổng an toàn bắt buộc.
 
+**Mốc thời gian để thao tác:** ví dụ bucket UTC 12:00:00–12:05:00,
+guard 5 giây: begin-action có thể bắt đầu từ 12:00:05, complete-action phải trước
+12:04:55, rồi gọi finalize --wait ngay, không chờ 12:05. Intake đóng ở 12:06:00
+(grace 60 giây). Lịch dài có thể không vừa bucket hiện tại; CLI đợi bucket kế trước
+khi tạo receipt. Không lấy ví dụ này để tự nhập timestamp; đọc action_deadline thực
+trong receipt. Mất thời gian chuẩn bị giữa hành động không được bù bằng đổi deadline.
+
 ### Bước 4 — Đóng receipt rồi chờ pipeline chuyển log
 
 Giữ target yên trong toàn bộ bucket: không đăng nhập quản trị mới, không tạo request
@@ -2210,6 +2570,101 @@ find "data/raw/$RUN_ID" -maxdepth 1 -type f -printf '%f\n' | sort
 find "evidence/scenario-runs/$RUN_ID" -maxdepth 1 -type f -printf '%f\n' | sort
 ```
 
+Ngay sau VALID, chạy phép kiểm bổ sung trên **đúng RUN_ID**, trước khi tính run
+vào tiến độ. Kết quả ghi ngoài cây evidence đã đóng checksum, không sửa raw/snapshot:
+
+```bash
+set -euo pipefail
+mkdir -p operator-logs/run-checks
+.venv-ml/bin/python - "$RUN_ID" 2> >(tee "operator-logs/run-checks/$RUN_ID.error.txt" >&2) <<'PY' | tee "operator-logs/run-checks/$RUN_ID.json"
+"""Read-only per-run guide check, supplementary to scenario_session validate."""
+import json
+import re
+import sys
+from datetime import UTC, datetime
+from decimal import Decimal
+from pathlib import Path
+import yaml
+from ml.telemetry import flow_connection_key
+
+run_id = sys.argv[1]
+evidence = Path('evidence/scenario-runs') / run_id
+raw = Path('data/raw') / run_id
+manifest = json.loads((raw/'scenario_manifest.json').read_text())
+if manifest.get('family') not in {'account','c2'}:
+    raise SystemExit('Unknown family; zero Sysmon rows are allowed only for account')
+metadata = json.loads((evidence/'collection_metadata.json').read_text())
+incident = json.loads((raw/'incidents.jsonl').read_text())
+schema = json.loads((evidence/'feature-schema.json').read_text())
+source = yaml.safe_load((evidence/'collection-sources.yaml').read_text())
+for name in ('archive_capture.jsonl','intake_checkpoint.json','context-baseline.json',
+             'context-capture.jsonl','execution_receipt.json','checksums.sha256'):
+    if not (evidence/name).is_file() or not (evidence/name).stat().st_size:
+        raise SystemExit(f'Missing/empty required evidence: {name}')
+if metadata.get('feature_schema_version') != 'features-v3' or schema.get('version') != 'features-v3':
+    raise SystemExit('Wrong feature schema; recollect using the frozen release')
+if set(incident['features']) != set(schema['required']) or len(schema['required']) != 24:
+    raise SystemExit('Wrong feature fields; never fill missing history with zero')
+if incident.get('context_status') != 'AVAILABLE' or incident.get('observation_quality') != 'COMPLETE':
+    raise SystemExit('Missing context or incomplete observation')
+if any(source.get(key) is not True for key in
+       ('require_clean_bucket','require_flow_counters','require_online_parity')):
+    raise SystemExit('Run used a relaxed source contract')
+
+def precise(value, naive_utc=False):
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError('missing timestamp')
+    dt = datetime.fromisoformat(value.replace('Z','+00:00'))
+    if dt.tzinfo is None:
+        if not naive_utc:
+            raise ValueError('SystemTime must include timezone')
+        dt = dt.replace(tzinfo=UTC)
+    whole = dt.astimezone(UTC).replace(microsecond=0) - datetime(1970,1,1,tzinfo=UTC)
+    fraction = re.search(r'\d{2}:\d{2}:\d{2}[.,](\d+)', value)
+    return Decimal(whole.days*86400+whole.seconds) + (Decimal('0.'+fraction[1]) if fraction else 0)
+
+checked, maximum_delta = 0, Decimal(0)
+for number, line in enumerate((evidence/'windows_events.jsonl').read_text().splitlines(),1):
+    row = json.loads(line)
+    win = row['data']['win']
+    system, fields = win['system'], win['eventdata']
+    if str(system.get('eventID')) not in {'1','3','22'}:
+        continue
+    delta = abs(precise(system.get('systemTime')) - precise(fields.get('utcTime'), True))
+    if delta > 5:
+        raise SystemExit(f'Sysmon UTC mismatch line={number} record={system.get("eventRecordID")} delta={delta}s')
+    checked += 1
+    maximum_delta = max(maximum_delta,delta)
+connections, finals = set(), set()
+if manifest['family'] == 'c2':
+    if not checked:
+        raise SystemExit('C2 has no Sysmon timestamp evidence')
+    for line in (evidence/'suricata_eve.jsonl').read_text().splitlines():
+        row = json.loads(line)
+        if row.get('event_type') in {'http','dns','tls'}:
+            connections.add(flow_connection_key(row))
+        elif row.get('event_type') == 'flow':
+            finals.add(flow_connection_key(row))
+    if not connections or None in connections or not connections <= finals:
+        raise SystemExit('Missing final-flow coverage for a selected connection')
+print(json.dumps({'run_id':run_id,'family':manifest['family'],
+                  'purpose':manifest['purpose'],'sysmon_time_rows':checked,
+                  'max_sysmon_delta_seconds':str(maximum_delta),
+                  'transaction_connections':len(connections),'final_connections':len(finals),
+                  'status':'RUN_EVIDENCE_CHECK_PASS'}, indent=2))
+PY
+```
+
+Phải thấy RUN_EVIDENCE_CHECK_PASS cùng run ID, schema/context đủ, hai trường thời
+gian Sysmon không lệch quá 5 giây và số connection có final phủ đủ transaction.
+Account không bắt buộc event Sysmon trong raw đã chọn; điều kiện Security/count/source
+do validate kiểm. Với C2, DNS phải có event1 trong child process trước event22 theo
+12.2; HEALTH-POLL cần tám lượt, không dùng năm lượt như export cũ. Không ghép record
+từ run khác để đủ số. Nếu kiểm bổ sung lỗi, dùng quarantine ở block ngay dưới,
+không tiếp tục run kế hoặc tính quota dù validate trước đó in VALID. Chi tiết lỗi
+được giữ trong operator-logs/run-checks/RUN_ID.error.txt; JSON kết quả có thể rỗng
+khi lỗi, không dùng sự tồn tại của file JSON để tính run đạt.
+
 Phải thấy `VALID`; `data/raw/$RUN_ID` có `scenario_manifest.json` và `incidents.jsonl`;
 evidence có Archives nguyên byte, intake checkpoint, Windows events, Suricata EVE,
 metadata và SHA-256. Giữ cả late capture nếu có. Không chỉnh
@@ -2244,6 +2699,10 @@ chống được người có quyền ghi thay đồng thời toàn bộ chứng
 cho Thịnh qua kênh độc lập sau mỗi buổi.
 
 ### Bước 7 — Audit tiến độ toàn dataset
+
+Chỉ kiểm tiếp khi cả validate và RUN_EVIDENCE_CHECK_PASS đã đạt. Quota tính theo
+run hợp lệ, không theo dòng log, request hay thư mục có tên VALID. Thu sau release G7
+mới dùng purpose=trainable; pilot/challenge không tính quota và không đổi nhãn sau thu.
 
 SOC-AI — mode progress cho phép tiếp tục khi chỉ thiếu quota; mọi lỗi integrity vẫn chặn:
 
@@ -2768,6 +3227,49 @@ Không đổi tên file hoặc tạo thêm tầng `processed/processed`. Noteboo
 thiếu file, checksum sai, schema không phải features-v3, group/cohort không hợp lệ, scenario xuất hiện ở cả
 TRAIN và VALIDATION, hoặc phát hiện `locked_test.jsonl`.
 
+### 14.1 Gắn đúng source khi chuyển sang Colab
+
+Phần này do Thịnh/người phụ trách ML thực hiện sau G7/build. Kiên bàn giao bốn file
+ở trên cùng SHA source build và tên nhánh train release đã xác nhận. Notebook hiện
+có mặc định BRANCH=feature/week3-model-training; không chạy nguyên mặc định cũ với
+bộ v3 mới. Mở notebook từ đúng release và thay cấu hình BRANCH/PROJECT_DIR bằng:
+
+```python
+from pathlib import Path
+import re
+BRANCH = input("Nhanh train release do Thinh ban giao: ").strip()
+EXPECTED_TRAINING_COMMIT = input("SHA 40 ky tu cua source build dataset: ").strip().lower()
+assert BRANCH and not BRANCH.startswith('-')
+assert re.fullmatch(r'[0-9a-f]{40}', EXPECTED_TRAINING_COMMIT)
+PROJECT_DIR = Path('/content/datn-ai-soar-' + EXPECTED_TRAINING_COMMIT[:12])
+```
+
+BRANCH phải là nhánh tồn tại trỏ đúng commit, không điền SHA/tag vào biến nhánh vì
+cell lấy source dùng git clone --branch và kiểm branch. Đường dẫn có hậu tố SHA
+tránh dùng lại checkout --single-branch của phiên bản trước. Giữ REPO_URL, bốn tên
+file và đường dẫn Drive như cấu hình notebook. Trước EDA/tuning/training, sau khi
+Drive đã mount và bốn file được kiểm checksum, thêm cell kiểm source:
+
+```python
+import hashlib
+import json
+import subprocess
+from pathlib import Path
+training_commit = subprocess.check_output(
+    ['git','-C',str(PROJECT_DIR),'rev-parse','HEAD'], text=True).strip()
+manifest = json.loads((DRIVE_DATA_DIR/'dataset_manifest.json').read_text())
+assert training_commit == EXPECTED_TRAINING_COMMIT, 'Sai source Colab'
+assert manifest['provenance']['builder_git_commit'] == training_commit, 'Source build/train khac nhau'
+config_sha = hashlib.sha256((PROJECT_DIR/'ml/training_config.yaml').read_bytes()).hexdigest()
+assert manifest['provenance']['builder_config_sha256'] == config_sha, 'Training config khac source build'
+print('SOURCE_BINDING_PASS', training_commit)
+```
+
+Nếu sai, dừng và lấy lại đúng source/nhánh hoặc gói dataset theo release; không
+sửa provenance hay checksum. Không mở locked_test hoặc mapping fold. Đây chỉ là
+cổng nguồn đầu vào, không phải kết quả model/accuracy và không thay các kiểm
+leakage/cohort/threshold của notebook.
+
 ## 15. Sao lưu và bàn giao dữ liệu gốc
 
 `data/raw/` và `evidence/scenario-runs/` bị Git bỏ qua có chủ đích; `git push` **không
@@ -2871,6 +3373,7 @@ git -C "$RESTORE_ROOT" checkout --detach "$COMMIT"
 tar -xzf "$ARCHIVE" -C "$RESTORE_ROOT"
 cd "$RESTORE_ROOT"
 # Khong can Internet tren SOC dang collection mode. Dung wheelhouse da tai truoc.
+sha256sum --check operator-logs/wheelhouse-locks.sha256
 (cd operator-logs/wheelhouse && sha256sum --check ../wheelhouse.sha256)
 python3 -m venv .venv-ml
 .venv-ml/bin/python -m pip install --no-index --find-links operator-logs/wheelhouse \
@@ -2883,6 +3386,9 @@ for RUN_PATH in data/raw/*; do
 done
 echo 'RESTORE_VALIDATION=PASS'
 ```
+
+Backup cũ không có wheelhouse-locks.sha256 phải được kiểm bằng hướng dẫn/source
+đúng revision của backup; không tự tạo manifest ngược ngày để gọi là đạt 3.2.
 
 Với backup giữa buổi chưa đủ 40 run, audit progress có thể vẫn `COLLECTING` (final vẫn `NOT_READY`); điều đó
 không làm restore sai. Điều kiện restore là tất cả run hiện có `VALID`, checksum đúng và
@@ -2944,6 +3450,9 @@ gửi archive, `checksums.sha256`, `git-commit.txt` và báo cáo audit cùng nh
 | context MISSING/STALE/FUTURE/UNKNOWN | chưa enrollment, TTL hết, giờ sai hoặc thiếu history | giữ evidence, sửa clock/enrollment ngoài run, chạy pilot mới; không điền context bằng tay |
 | full-capture parity mismatch | có traffic/logon nền trong cùng bucket | abort/quarantine; giữ target yên, pre-stage trước begin-action; không lọc bớt raw |
 | final flow thiếu hoặc cross-window | timeout/log delay hoặc connection vượt bucket | kiểm EVE gốc và Archives, sửa timeout/path ngoài run; thu bucket mới, không zero-fill |
+| Sysmon SystemTime/UtcTime lệch >5 giây | thời gian/đường xuất event chưa nhất quán | dừng, giữ XML/Archives, kiểm W32Time/VMware ngoài run; canary mới phải đạt, không sửa timestamp |
+| Pending final flow ở canary | chưa hết timeout hoặc forwarding thiếu | vòng polling phải refresh tới đủ từng connection; hết vòng 36 lần thì điều tra Suricata/ACL/nguồn log, canary mới |
+| Bước 6 thoát khác 0/thiếu history/capture/checkpoint | đang dùng source cũ, context thiếu hoặc chứng cứ chưa đủ | quarantine run, đồng bộ đúng source, enrollment/preflight lại, thu ID mới |
 | G7 CHƯA MỞ | catalog/cohort/taxonomy/challenge chưa release | chỉ bàn giao pilot; Thịnh hoàn tất code/release trước thu chính thức |
 
 Không dùng lệnh sửa trực tiếp `incidents.jsonl`, `scenario_manifest.json` hoặc
@@ -2978,7 +3487,7 @@ Các mốc cần ảnh (chụp từng bước, không chỉ ảnh cuối):
 - Suricata `-T`, EVE HTTP/DNS/alert/final flow; cùng event/flow_id tại Archives.
 - Enrollment riêng: các thao tác, baseline revision/TTL/history và hash thật.
 - Mỗi pilot: draft/clock, start, begin-action receipt, thao tác thật, complete-action,
-  finalize, VALID, progress audit; không mở desktop quản trị giữa bucket account.
+  finalize, VALID, RUN_EVIDENCE_CHECK_PASS, progress audit; không mở desktop quản trị giữa bucket account.
 - Backup SHA, bản chép host, restore checkout khác root và VALID.
 - Sau G7 mới có ảnh quota READY/TARGET_MET, build manifest và bốn file upload Colab.
 
