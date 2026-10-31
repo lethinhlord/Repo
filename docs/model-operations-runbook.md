@@ -8,8 +8,11 @@ account disablement, process termination or network blocking.
 
 Every deployed package must:
 
-- use the active `features-v2` schema;
-- contain all files listed by `ml.freeze_model.PACKAGE_FILES`;
+- use the active `features-v3` schema;
+- contain all nine files listed by `ml.freeze_model.PACKAGE_FILES`: `model.joblib`,
+  `thresholds.json`, `metadata.json`, `metrics_validation.json`, `eda_train.json`,
+  `leakage_audit.json`, `calibration_validation.json`, `feature_profile.json`, and
+  `feature_schema.json`, plus the signed `FROZEN.json`;
 - have `locked_test_status: UNOPENED` at the pre-deployment gate;
 - have a valid HMAC-signed `FROZEN.json` and unchanged SHA-256 file hashes;
 - pass calibration, stability and OOD safeguards before automation eligibility can be
@@ -92,7 +95,7 @@ curl -fsS http://127.0.0.1:8000/ready | python3 -m json.tool
 ```
 
 Stop if either endpoint is degraded, the reported version differs from
-`MODEL_VERSION`, the schema is not `features-v2`, or signed-package verification fails.
+`MODEL_VERSION`, the schema is not `features-v3`, or signed-package verification fails.
 The API container healthcheck intentionally fails in those states, so n8n cannot start
 against an absent or invalid model.
 
@@ -169,7 +172,10 @@ reviewed. Never append production predictions directly to TRAIN.
 1. Export accepted feedback and map it back to immutable raw evidence by incident ID.
 2. Correct ground truth only through a new, reviewed scenario manifest revision.
 3. Run `scripts/verify_collection_dataset.sh` and require no blocking audit findings.
-4. Rebuild grouped splits by `scenario_id`; do not preserve a favorable old split.
+4. Require the G7-approved cohort/challenge design and frozen split contract before
+   official collection or retraining. Use `cohort_id` only with that approved design;
+   the current `scenario_id` default is pilot configuration. Preserve the approved
+   grouping/partition policy; do not reshuffle or rename runs to improve results.
 5. Run inner grouped cross-validation, calibration and validation threshold selection.
 6. Compare calibration, PR-AUC, FPR/FNR, threshold stability and OOD profiles against
    the active version. Accuracy alone is never an acceptance criterion.
