@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from api.app.contracts import IncidentRequest
+from ml.behavior_features import ACCOUNT_FEATURES
 from ml.inference import ModelRuntime
 
 
@@ -19,6 +20,10 @@ def main() -> None:
     runtime = ModelRuntime(arguments.package_dir)
     now = datetime.now(UTC)
     incident = IncidentRequest(
+        # Synthetic independent enrollment; this smoke is not model-quality evidence.
+        context_status="AVAILABLE",
+        context_revision="synthetic-smoke-enrollment-v1",
+        observation_quality="COMPLETE",
         incident_id="SMOKE-INFERENCE-01",
         asset_id="SMOKE-ACCOUNT-HOST",
         start_time=now,
@@ -33,10 +38,14 @@ def main() -> None:
             "remote_logon_ratio": 0.75,
             "failure_window_seconds": 180.0,
             "attempt_rate_per_minute": 12.0,
+            "source_history_known": 1.0,
+            "new_source_for_user": 0.0,
         },
         evidence_sources=["smoke-verification"],
         base_severity=12,
     )
+    if set(incident.features) != set(ACCOUNT_FEATURES):
+        raise RuntimeError("synthetic smoke fixture differs from active account schema")
     result = runtime.predict(incident)
     if result.predicted_class != "malicious":
         raise RuntimeError("smoke model did not classify the malicious account fixture")

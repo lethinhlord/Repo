@@ -1,5 +1,7 @@
 # Kiên.txt 3.2 — biên bản kiểm trước bàn giao 30/10/2026
 
+> Hồ sơ lịch sử, không dùng làm hướng dẫn hiện hành. Xem [hướng dẫn thu dữ liệu](../scenario-collection-runbook.md) và [trạng thái hiện tại](../current-status.md).
+
 Bản hướng dẫn được soạn/kiểm từ 29/10 và bàn giao ngày 30/10. Mục tiêu là chặn các
 thiếu sót đã thấy trong DATN_SOC_20_VALID_RUNS ngay ở preflight và sau từng run,
 trước khi tính quota hoặc chuyển sang train. Không sửa hoặc dùng lại dataset đó.

@@ -1,5 +1,10 @@
 # Week 2 Runbook — Thịnh (AI/SOAR)
 
+> Historical Week 2 snapshot. Its original PASS claims apply only to that
+> revision and evidence; they are not acceptance of the current release. For the
+> active `features-v3` contract and pilot gates, use the collection runbook and
+> model operations runbook. `dataset-manifest-v2` is a separate manifest version.
+
 ## Scope and boundary
 
 Week 2 completes the feature pipeline on controlled Wazuh fixtures, the
@@ -76,7 +81,7 @@ curl -sS -H 'Content-Type: application/json' \
 
 Checkpoint W2-03: `/health` proves Week 1 compatibility. `/ready` proves the
 Week 2 policy revisions, feature schema, mock TI mode and disabled strong
-actions. The feature response must show `features-v2`, `COMPLETE`, one Wazuh
+actions. The feature response must show `features-v3`, conservative `PARTIAL` for the fixture, one Wazuh
 evidence source and no TI/asset/label field inside the ML vector. Repeating the
 stateful request must report `duplicate`; changing a payload while retaining the
 same alert ID must return HTTP 409.

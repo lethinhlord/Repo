@@ -1,7 +1,8 @@
 # Week 3 ML data contract
 
-Implementation status (28 October 2026): features-v3 is being integrated. Collection
-must wait for the catalog/cohort and four-VM acceptance gates in `tasks/todo.md`.
+Implementation status (31 October 2026): features-v3 is implemented. Official collection
+must wait for the catalog/cohort and four-VM acceptance gates in
+[current status](current-status.md).
 This specification does not certify the existing datasets or a trained model.
 
 ## Scope
@@ -80,7 +81,15 @@ comes from a separate approved enrollment capture, not from scenario labels. The
 baseline, original capture and their hashes are frozen at START. Missing, stale,
 future or unknown history requires REVIEW. Collector and online replay must agree
 on the complete feature vector and observation quality. See
-[context implementation contract](context-v3-implementation.md).
+[current collection runbook](scenario-collection-runbook.md).
+
+The context time policy is `last-relevant-source-v1`: history TTL is evaluated at the
+last attributed source observation, shared by collector and online aggregation. Raw
+source timestamps are not rewritten. The offline as-of must not exceed controller
+finalization time; baseline capture must still precede the earliest observation.
+Checksummed metadata records policy and as-of and replay verifies both. This is an
+observation-context policy, not current response authorization. Evidence without the
+policy must be recollected; do not retrofit metadata onto an older dataset.
 
 The dataset auditor compares every run's source-config and taxonomy hashes, as well as
 its catalog and feature-schema hashes, with the canonical files in the checked-out

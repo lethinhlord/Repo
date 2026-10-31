@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from ml.context import context_observation_as_of
 from ml.dataset_audit import audit_dataset
 from ml.scenario_collection import (
     RunDraft,
@@ -289,6 +290,11 @@ def write_run(
             {
                 "status": "FINALIZED",
                 "run_id": run_id,
+                "finalized_at": ended.isoformat(),
+                "context_time_policy": "last-relevant-source-v1",
+                "context_observation_as_of": context_observation_as_of(
+                    raw_windows + raw_suricata, fallback=ended,
+                ).astimezone(UTC).isoformat().replace("+00:00", "Z"),
                 "scenario_manifest_sha256": manifest_hash,
                 "incidents_sha256": incidents_hash,
                 "collection_seed": index,

@@ -1,5 +1,7 @@
 # Kiểm chứng bản sửa collector và hướng dẫn Kiên — 29/10/2026
 
+> Hồ sơ lịch sử, không dùng làm hướng dẫn hiện hành. Xem [hướng dẫn thu dữ liệu](../scenario-collection-runbook.md) và [trạng thái hiện tại](../current-status.md).
+
 Phạm vi: năm nhóm blocker R01–R05 được tái hiện sau bản pilot
 `192f5cd4ca013545659b1d461a34656ea739e9d5`. Giữ nguyên dataset cũ ở ngoài đợt thu;
 không dùng QA/fixture/pilot để đủ quota train. Lab 4 VM ở máy Kiên, chưa được nghiệm

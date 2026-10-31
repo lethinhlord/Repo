@@ -1,5 +1,7 @@
 # Kiểm thử tích hợp runtime v3 — 28/10/2026
 
+> Hồ sơ lịch sử, không dùng làm hướng dẫn hiện hành. Xem [hướng dẫn thu dữ liệu](../scenario-collection-runbook.md) và [trạng thái hiện tại](../current-status.md).
+
 Kết quả: **PASS đối với đường tích hợp được mô tả dưới đây**.
 Đây là thử nghiệm phần mềm bằng dữ liệu tổng hợp mới tạo, không phải nghiệm thu bốn
 VM, dữ liệu train thật hay đánh giá chất lượng phát hiện. Không dùng package smoke

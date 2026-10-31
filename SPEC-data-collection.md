@@ -3,8 +3,9 @@
 ## Objective
 
 Provide an executable, fail-closed workflow that lets Kiên collect independent real-lab
-runs for `account:benign`, `account:malicious`, `c2:benign` and `c2:malicious`. A dataset
-is ready at 10 valid runs per stratum and reaches the preferred target at 12. The workflow
+runs for `account:benign`, `account:malicious`, `c2:benign` and `c2:malicious`. Collection
+quota is at least 10 valid runs per stratum, with a preferred target of 12. Quota alone
+does not establish independent cohort coverage, training readiness or model quality. The workflow
 must preserve raw evidence, derive features without using the label, prevent row-level
 leakage and produce input accepted by the existing Week 3 grouped-split pipeline.
 
@@ -14,7 +15,8 @@ leakage and produce input accepted by the existing Week 3 grouped-split pipeline
 2. The collector runs on SOC-AI where Wazuh Archives are local.
 3. NET-SENSOR runs a Wazuh Agent that forwards Suricata EVE JSON to SOC-AI.
 4. Each run produces one aggregated incident and one immutable ground-truth label.
-5. `run_id` is the grouping/leakage boundary; raw event rows are never independent samples.
+5. `run_id` is atomic. Production split/leakage groups are predeclared `cohort_id`;
+   matched or near-duplicate templates stay together. Raw rows are not independent samples.
 6. The collector fails rather than silently converting a missing source to observed zero.
 7. The locked test remains unopened; the collector and auditor operate only on `data/raw`.
 
@@ -31,6 +33,7 @@ leakage and produce input accepted by the existing Week 3 grouped-split pipeline
 # Focused tests
 .venv-ml/bin/python -m pytest -q tests/test_scenario_collection.py tests/test_dataset_audit.py
 
+# Only after the full runbook has produced a draft from measured --clock-preflight.
 # Start, bind the action to frozen parameters, finalize and validate a run
 .venv-ml/bin/python -m scripts.scenario_session start --draft run-draft.yaml
 .venv-ml/bin/python -m scripts.export_run_parameters --run-id RUN_ID --format powershell
@@ -120,5 +123,6 @@ def periodicity_score(timestamps: list[datetime]) -> float:
 
 ## Open Questions
 
-None block implementation. VM interface names and IP addresses are installation-time
-values and are recorded explicitly by the operator rather than guessed by the software.
+Official collection remains gated by G7: matched cohort/challenge/taxonomy design and
+real four-VM pilot acceptance. See `docs/current-status.md`. VM interface names and IPs
+are verified by the operator against actual MAC/route evidence, not guessed.

@@ -14,37 +14,23 @@ Start ML work with `docs/week3-model-training-runbook.md` and
 `docs/week3-data-contract.md`. Production monitoring, feedback, retraining and
 rollback are defined in `docs/model-operations-runbook.md`. The Colab entry point is
 `notebooks/week3_train_colab.ipynb`; it intentionally accepts only TRAIN,
-VALIDATION and the dataset manifest. The frozen Week 1 request/response rules are
+VALIDATION, the dataset manifest and its upload checksum. The frozen Week 1 request/response rules are
 in `docs/interface-contract-v1.md`; machine-readable Week 1 and Week 2 schemas
 are under `schemas/`.
 
-Real-lab collection uses the fail-closed four-VM workflow in
-`docs/scenario-collection-runbook.md`. Create a run draft from the controlled catalog,
-capture one independent run, validate its evidence, then audit all four strata:
+Real-lab collection uses the four-VM procedure in
+[the collection runbook](docs/scenario-collection-runbook.md). Follow its setup,
+measured clock preflight, context enrollment and pilot gates in order. Run drafts
+require `--clock-preflight` from that measured preflight; an abbreviated command
+cannot replace it. G7 remains closed until cohort/challenge/taxonomy release and
+real-lab acceptance are complete. A merged software fix is not a collection baseline.
 
-```bash
-.venv-ml/bin/python -m scripts.create_run_draft --scenario SCENARIO_ID \
-  --run-id UNIQUE_RUN_ID --operator OPERATOR
-.venv-ml/bin/python -m scripts.scenario_session start \
-  --draft run-drafts/UNIQUE_RUN_ID.yaml
-mkdir -p evidence/operator-parameter-exports
-.venv-ml/bin/python -m scripts.export_run_parameters \
-  --project-root . --run-id UNIQUE_RUN_ID --format bash \
-  > evidence/operator-parameter-exports/UNIQUE_RUN_ID.env
-.venv-ml/bin/python -m scripts.scenario_session begin-action \
-  --run-id UNIQUE_RUN_ID
-# Execute exactly one catalog action with the frozen parameters, then stop it.
-.venv-ml/bin/python -m scripts.scenario_session complete-action \
-  --run-id UNIQUE_RUN_ID
-.venv-ml/bin/python -m scripts.scenario_session finalize --run-id UNIQUE_RUN_ID
-.venv-ml/bin/python -m scripts.scenario_session validate --run-id UNIQUE_RUN_ID
-.venv-ml/bin/python -m scripts.audit_dataset --minimum-runs 10 --target-runs 12
-```
-
-Do not skip or reorder the export, `begin-action` and `complete-action` steps. The
-collector rejects samples whose receipt, frozen parameters, action count or timing
-contract does not match the selected catalog scenario. Follow the full runbook for
-clock evidence, VM-specific execution and cleanup commands.
+Use `main` as the maintained entry point and the exact approved source SHA for
+collection, dataset building and training. The Colab notebook accepts
+`train.jsonl`, `validation.jsonl`, `dataset_manifest.json` and `colab-upload.sha256`,
+and checks the approved SHA against the manifest before installing or running code.
+Historical validation records are under [docs/history](docs/history/README.md);
+they are not current operating instructions or proof of real-lab acceptance.
 
 For the complete test, lint and readiness gate, run
 `./scripts/verify_collection_dataset.sh`; set `REQUIRE_TARGET=1` to require all 12 runs

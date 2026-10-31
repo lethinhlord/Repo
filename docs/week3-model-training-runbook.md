@@ -38,6 +38,8 @@ bash scripts/bootstrap_ml.sh
 
 ```bash
 cd "$HOME/datn-ai-soar"
+mkdir -p evidence
+set -o pipefail
 bash scripts/verify_week3_model.sh | tee evidence/week3-model-smoke.log
 ```
 
@@ -50,6 +52,11 @@ PASS: LR/RF/XGBoost benchmark, package, and inference smoke test
 Artifacts are written under `artifacts/runtime/` and are ignored by Git.
 
 ## 3. Collect and review real scenario data
+
+G7 remains closed until the owner approves the cohort/challenge design, source release
+and independent collection acceptance. Pilot/synthetic evidence does not authorize
+official collection or automation. Use the approved cohort grouping and frozen split
+contract; the current `scenario_id` default is pilot configuration.
 
 Follow [week3-data-contract.md](week3-data-contract.md). Store each execution under
 `data/raw/<run_id>/`. Review manifests and incident lines before building partitions.
@@ -73,10 +80,11 @@ expected; an incident feature `label` is forbidden.
 cat data/processed/dataset_manifest.json
 printf '%s\n' 'TRAIN runs:' && cat ml/splits/train.txt
 printf '%s\n' 'VALIDATION runs:' && cat ml/splits/validation.txt
-printf '%s\n' 'LOCKED TEST runs (IDs only):' && cat ml/splits/test.txt
+# Locked-test mapping remains blinded until the approved Week 6 gate.
 ```
 
-Do not inspect `data/processed/locked_test.jsonl`. The manifest must show
+Do not open or display `ml/splits/test.txt` or `data/processed/locked_test.jsonl` before
+the approved Week 6 gate. Check only manifest integrity/counts; do not print test mapping. The manifest must show
 `locked_test_status: UNOPENED`, zero overlap by construction, and a stable SHA-256 hash.
 
 Rebuild partitions using the current builder before the first training run after this
@@ -97,12 +105,31 @@ folder in Google Drive:
 MyDrive/DATN/week3-data/processed/
 ├── train.jsonl
 ├── validation.jsonl
-└── dataset_manifest.json
+├── dataset_manifest.json
+└── colab-upload.sha256
 ```
 
-Do not place `locked_test.jsonl`, raw telemetry, `.env`, credentials, or API keys in the
-staging folder. Open `notebooks/week3_train_colab.ipynb` from GitHub on branch
-`feature/week3-model-training`, then run the cells in order. The notebook performs EDA,
+On the trusted Ubuntu VM, generate the checksum file before uploading the four files:
+
+```bash
+(cd data/processed && sha256sum train.jsonl validation.jsonl dataset_manifest.json > colab-upload.sha256)
+```
+
+Do not place `locked_test.jsonl`, split mapping, raw telemetry, `.env`, credentials,
+or API keys in the staging folder. Open the released notebook from `main` at the
+owner-approved source revision. Set its `EXPECTED_TRAINING_COMMIT` field to the exact
+40-character SHA approved by the owner and recorded as
+`dataset_manifest.json.provenance.builder_git_commit` by the trusted build. Do not
+substitute a branch name, current HEAD, or copy an unapproved SHA from an upload.
+The approved SHA and manifest builder SHA must agree. Build with that approved clean
+checkout and its committed `ml/training_config.yaml`; changing the config requires a
+new approved source revision and rebuild. No notebook code patch is needed.
+
+Use a fresh Colab runtime with no existing project directory, then run cells in order.
+Before installing repository dependencies or running EDA, the notebook checks all three
+data hashes, UNOPENED status, approved/builder SHA equality, checks out that exact SHA
+in detached mode, and verifies the config SHA against the manifest. A stale project,
+missing checksum, source mismatch or config mismatch stops the run. The notebook performs EDA,
 checks split independence, runs Ruff and pytest, executes the trusted training module,
 and writes `model-package-week3.tar.gz` to:
 
@@ -134,7 +161,10 @@ ml/model-package/
 ├── metadata.json
 ├── metrics_validation.json
 ├── eda_train.json
-└── leakage_audit.json
+├── leakage_audit.json
+├── calibration_validation.json
+├── feature_profile.json
+└── feature_schema.json
 ```
 
 For software and SHADOW evaluation, require a passed leakage audit, verified input

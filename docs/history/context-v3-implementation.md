@@ -1,5 +1,7 @@
 # Context, cửa sổ quan sát và dataset v3 — trạng thái triển khai
 
+> Hồ sơ lịch sử, không dùng làm hướng dẫn hiện hành. Xem [hướng dẫn thu dữ liệu](../scenario-collection-runbook.md) và [trạng thái hiện tại](../current-status.md).
+
 Ngày: 28/10/2026. Nhánh: `fix/handoff-context-v3`.
 Đây là hợp đồng kỹ thuật đang triển khai, chưa phải biên bản nghiệm thu bốn VM hoặc
 hướng dẫn bàn giao cuối cùng cho Kiên. Chưa đổi COLLECTION_BASELINE_COMMIT.
