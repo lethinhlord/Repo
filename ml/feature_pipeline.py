@@ -27,7 +27,12 @@ from ml.behavior_features import (
     derive_c2_features,
     empty_feature_vector,
 )
-from ml.context import BaselineSnapshot, context_from_events, load_baseline
+from ml.context import (
+    BaselineSnapshot,
+    context_from_events,
+    context_observation_as_of,
+    load_baseline,
+)
 from ml.telemetry import (
     account_observation_eligible,
     account_source,
@@ -396,10 +401,13 @@ def _build_response(
         taxonomy,
     )
     ordered_alerts = sorted(alerts, key=lambda item: (alert_event_time(item), item.id))
+    context_events = [item.model_dump(mode="json") for item in attributed]
     context = context_from_events(
         baseline,
-        [item.model_dump(mode="json") for item in attributed],
-        at=alert_event_time(ordered_alerts[-1]),
+        context_events,
+        at=context_observation_as_of(
+            context_events, fallback=alert_event_time(ordered_alerts[-1]),
+        ),
         asset_id=_asset_id(first, config),
     )
     features.update(context.features)

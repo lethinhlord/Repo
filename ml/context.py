@@ -258,6 +258,17 @@ def with_dns_suffix_history(snapshot: BaselineSnapshot, suffixes: list[str]) -> 
     })
 
 
+def context_observation_as_of(events: list[dict], *, fallback: datetime) -> datetime:
+    """History freshness is evaluated at the last relevant source observation.
+
+    This is observation context, not a response-time TTL. Callers that collect
+    offline must additionally bound this value by their controller decision time.
+    Source timestamps remain unchanged; unrelated rows cannot extend history TTL.
+    """
+    return max((at for event in events if (at := event_time(event)) is not None),
+               default=fallback)
+
+
 def context_from_events(
     snapshot: BaselineSnapshot | None, events: list[dict], *, at: datetime, asset_id: str,
 ) -> ContextAssessment:

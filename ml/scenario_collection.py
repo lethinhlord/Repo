@@ -28,7 +28,12 @@ from ml.behavior_features import (
 )
 from ml.clock_evidence import ClockPreflight
 from ml.collection_windows import bucket_used, reserve_bucket
-from ml.context import BaselineSnapshot, context_from_events, load_baseline
+from ml.context import (
+    BaselineSnapshot,
+    context_from_events,
+    context_observation_as_of,
+    load_baseline,
+)
 from ml.dataset import (
     DatasetRecord,
     ScenarioManifest,
@@ -1348,11 +1353,30 @@ def verify_feature_provenance(
             source,
             _load_taxonomy(evidence_dir / "suspicious-process-taxonomy.yaml"),
         )
+    metadata = json.loads(
+        (evidence_dir / "collection_metadata.json").read_text(encoding="utf-8")
+    )
+    if not isinstance(metadata, dict):
+        raise CollectionError("collection metadata must be a mapping")
+    if metadata.get("context_time_policy") != "last-relevant-source-v1":
+        raise CollectionError(
+            "feature provenance requires the last-relevant-source-v1 context policy"
+        )
+    context_at = context_observation_as_of(events, fallback=manifest.end_time)
+    finalized_at = _parse_time(metadata.get("finalized_at"))
+    if (
+        finalized_at is None or finalized_at < manifest.end_time
+        or context_at > finalized_at
+        or metadata.get("context_observation_as_of") != _iso(context_at)
+    ):
+        raise CollectionError(
+            "context observation time exceeds controller decision or differs from evidence"
+        )
     baseline = load_baseline(evidence_dir / "context-baseline.json")
     context = context_from_events(
         baseline,
         windows,
-        at=manifest.end_time,
+        at=context_at,
         asset_id=manifest.host,
     )
     features.update(context.features)
@@ -1970,11 +1994,16 @@ def finalize_run(
         evidence_sources = ["wazuh-archives", "suricata-eve"]
 
     _validate_action_window(receipt, draft, events=scoped_archive_events)
+    context_at = context_observation_as_of(scoped_archive_events, fallback=ended_at)
+    if context_at > finalized_at:
+        raise CollectionError(
+            "source observation is after the controller decision time; retry later"
+        )
     baseline = load_baseline(evidence_dir / "context-baseline.json")
     context = context_from_events(
         baseline,
         windows_events,
-        at=ended_at,
+        at=context_at,
         asset_id=draft.host,
     )
     features.update(context.features)
@@ -2085,6 +2114,8 @@ def finalize_run(
         "started_at": _iso(started_at),
         "ended_at": _iso(ended_at),
         "finalized_at": _iso(finalized_at),
+        "context_time_policy": "last-relevant-source-v1",
+        "context_observation_as_of": _iso(context_at),
         "archive_events": len(scoped_archive_events),
         "attributed_windows_events": len(windows_events),
         "attributed_suricata_events": len(suricata_events),
