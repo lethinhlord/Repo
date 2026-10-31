@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+
+- Align v3 context observation time across collection, replay and online aggregation;
+  reject legacy policy metadata instead of silently reinterpreting evidence.
+- Verify active-schema smoke inference and bind Colab to an approved immutable source.
+- Consolidate current handoff instructions, retire stale entry points and specify
+  management isolation, exact Wazuh versions and locked-test blinding.
+
 ### Added
 
 - Initial repository for the Week 1 AI and SOAR foundation.

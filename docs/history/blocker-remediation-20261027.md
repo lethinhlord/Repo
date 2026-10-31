@@ -1,5 +1,7 @@
 # Kết quả xử lý lỗi chặn — 27/10/2026
 
+> Hồ sơ lịch sử, không dùng làm hướng dẫn hiện hành. Xem [hướng dẫn thu dữ liệu](../scenario-collection-runbook.md) và [trạng thái hiện tại](../current-status.md).
+
 Hoàn tất đối chiếu và hướng dẫn bàn giao ngày 28/10/2026, Asia/Saigon.
 
 ## Phạm vi và giới hạn nghiệm thu

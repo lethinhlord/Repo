@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -133,5 +135,56 @@ def test_console_canary_requires_new_password_logon_not_unlock() -> None:
     assert any(term in normalized for term in ("đăng xuất", "sign out", "sign-out"))
     assert any(term in normalized for term in ("đăng nhập mới", "new logon", "new sign-in"))
     assert "mật khẩu" in normalized
-    assert 'tostring)=="2"' in section, "The console canary still needs fresh LogonType 2 evidence"
-    assert 'tostring)=="3"' in section, "SMB must retain its separate network-logon check"
+
+
+def _security_canary_guard():
+    """Execute the delivered guard, rather than require one jq spelling."""
+    section = RUNBOOK.read_text(encoding="utf-8").split("### 10.4", 1)[1].split("### 10.5", 1)[0]
+    blocks = re.findall(r"<<'PY'\n(.*?)^PY$", section, re.M | re.S)
+    for block in blocks:
+        tree = ast.parse(block)
+        functions = [n for n in tree.body if isinstance(n, ast.FunctionDef)
+                     and n.name == "verify_security_canary"]
+        if functions:
+            assert any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                       and n.func.id == "verify_security_canary" for n in ast.walk(tree))
+            from ml.telemetry import normalize_ip
+            namespace = {"normalize_ip": normalize_ip}
+            exec(compile(ast.Module(body=functions, type_ignores=[]), "guide-canary", "exec"),
+                 namespace)
+            return namespace["verify_security_canary"]
+    raise AssertionError("The delivered canary must enforce Security account/type pairs")
+
+
+def _security_rows():
+    return [(event, {}, {"targetUserName": user, "logonType": kind, "ipAddress": address})
+            for user, kind, address in (("datn_benign", "2", "-"),
+                                        ("datn_attack", "3", "10.40.0.10"))
+            for event in ("4624", "4625")]
+
+
+def test_security_canary_accepts_complete_console_and_smb_evidence():
+    _security_canary_guard()(_security_rows())
+
+
+@pytest.mark.parametrize("missing", range(4))
+def test_security_canary_rejects_every_missing_account_event_pair(missing):
+    rows = _security_rows()
+    rows.pop(missing)
+    with pytest.raises(SystemExit, match="Missing Security"):
+        _security_canary_guard()(rows)
+
+
+@pytest.mark.parametrize("index", range(4))
+def test_security_canary_rejects_unlock_or_wrong_network_logon_type(index):
+    rows = _security_rows()
+    rows[index][2]["logonType"] = "7"  # Unlock must not substitute for a new logon.
+    with pytest.raises(SystemExit, match="Missing Security"):
+        _security_canary_guard()(rows)
+
+
+def test_security_canary_requires_success_from_kali_data_network():
+    rows = _security_rows()
+    rows[2][2]["ipAddress"] = "192.168.58.132"
+    with pytest.raises(SystemExit, match="SMB success"):
+        _security_canary_guard()(rows)

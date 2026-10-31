@@ -1,5 +1,10 @@
 # Week 2 Acceptance Matrix — Thịnh (AI/SOAR)
 
+> Historical Week 2 snapshot. Its original PASS claims apply only to that
+> revision and evidence; they are not acceptance of the current release. For the
+> active `features-v3` contract and pilot gates, use the collection runbook and
+> model operations runbook. `dataset-manifest-v2` is a separate manifest version.
+
 | Planned item | Acceptance evidence | Status |
 |---|---|---|
 | Feature pipeline on fixture | Shared online/offline `features-v2` derivation, versioned JSON Schema, account/C2 fixtures | PASS |

@@ -1,5 +1,7 @@
 # Hướng dẫn Kiên v3.1 — kiểm chứng ngày 29/10/2026
 
+> Hồ sơ lịch sử, không dùng làm hướng dẫn hiện hành. Xem [hướng dẫn thu dữ liệu](../scenario-collection-runbook.md) và [trạng thái hiện tại](../current-status.md).
+
 Bản bàn giao hiện hành đã được thay bằng 3.2 ngày 30/10/2026. Xem
 [biên bản 3.2](handoff-guide-validation-v3.2-20261030.md); nội dung dưới đây được
 giữ để truy vết 3.1 và các lần kiểm trước.

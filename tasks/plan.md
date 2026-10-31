@@ -1,5 +1,7 @@
 # Phương án xử lý lỗi và vùng xám trước bàn giao Kiên
 
+> Nhật ký lịch sử triển khai 28–29/10. Trạng thái và nguồn chạy hiện tại ở [docs/current-status.md](../docs/current-status.md); không dùng SHA/nhánh trong nhật ký để thu mới.
+
 Ngày lập: 28/10/2026. Repo đối chiếu: `D:\Repo`.
 Baseline được rà soát: `ee7f4f6a56c355ff855802671db4d9aabc5412fe`.
 Trạng thái: **đang triển khai trên nhánh `fix/handoff-context-v3`; chưa freeze để thu chính thức**.
@@ -11,7 +13,7 @@ Theo yêu cầu mới của Thịnh khi xác nhận lab ở máy Kiên, đã ph�
 
 Checkpoint 29/10 thay bản gửi bằng Kiên.txt 3.1, pin source
 `d06d04034f0d1c996907365841f21cdb874e4d5a`. Các blocker R01–R05 và regression
-kiểm chéo được ghi trong docs/collection-blocker-validation-20261029.md; full suite
+kiểm chéo được ghi trong docs/history/collection-blocker-validation-20261029.md; full suite
 552 passed, Linux bổ sung 69 passed. G7 và nghiệm thu thật ở Kiên vẫn là điều kiện
 thu chính thức; merge code không tự đổi trạng thái đó.
 

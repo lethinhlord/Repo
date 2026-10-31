@@ -1,5 +1,7 @@
 # Checklist triển khai và nghiệm thu
 
+> Nhật ký lịch sử triển khai 28–29/10. Trạng thái và nguồn chạy hiện tại ở [docs/current-status.md](../docs/current-status.md); không dùng SHA/nhánh trong nhật ký để thu mới.
+
 Baseline: `ee7f4f6a56c355ff855802671db4d9aabc5412fe`.
 Đang triển khai trên nhánh `fix/handoff-context-v3`. Checkbox chỉ đánh dấu phần đã đủ bằng chứng; nghiệm thu bốn VM và dữ liệu thật còn tách riêng.
 Kế hoạch chi tiết và giới hạn: `plan.md` trong cùng thư mục này.
@@ -204,8 +206,8 @@ thêm trước khi thực hiện; không gom thay đổi lớn để né checkpo
 - Full suite: 552 passed/1 Windows symlink skip; Linux 69 passed/0 skip gồm case đó.
   Ruff, pip check, hai OpenAPI export và native Bash/PowerShell parser đạt.
 - Kiên.txt 3.1 cùng hash với runbook, pin source d06d0403, có backup bản 3.0.
-  Chi tiết: docs/collection-blocker-validation-20261029.md và
-  docs/handoff-guide-validation-v3-20261028.md. Trạng thái merge cuối xem trên PR.
+  Chi tiết: docs/history/collection-blocker-validation-20261029.md và
+  docs/history/handoff-guide-validation-v3-20261028.md. Trạng thái merge cuối xem trên PR.
 - G7 vẫn đóng, không dùng dataset cũ và không coi QA là nghiệm thu lab Kiên.
 
 ## Nhật ký 28/10 — checkpoint nền thu
@@ -256,7 +258,7 @@ thêm trước khi thực hiện; không gom thay đổi lớn để né checkpo
 - Commit `dd765de`: collector và API dùng cùng grace cấu hình, từ chối giá trị không hợp lệ;
   63 test liên quan đạt. `e8cec84` sửa verifier shell v2 còn giả COMPLETE cho legacy fixture.
 - Full suite mới **451/451** đạt, 0 lỗi/skip; pip check/Ruff đạt. JUnit/hash xem
-  `docs/runtime-acceptance-v3-20261028.md`.
+  `docs/history/runtime-acceptance-v3-20261028.md`.
 - Docker API/n8n/receiver thật đã PASS với dữ liệu smoke mới, context riêng: signed
   ingress, replay/restart, idempotent notification, trace context, đóng window theo
   đồng hồ thật, parity và late/raw conflict. Không phải dữ liệu lab/VM hay metric model.
@@ -272,7 +274,7 @@ thêm trước khi thực hiện; không gom thay đổi lớn để né checkpo
   flow, khóa bucket, target yên, progress/final audit, restore offline và ảnh full host.
 - Full suite 461 đạt tại 95794cc; 24d98c3 chỉ sửa ignore quarantine sinh tự động.
   Native Bash/PowerShell/jq/chrony/Suricata và backup/wheelhouse được kiểm riêng;
-  xem `docs/handoff-guide-validation-v3-20261028.md` để biết phạm vi và evidence.
+  xem `docs/history/handoff-guide-validation-v3-20261028.md` để biết phạm vi và evidence.
 - P20 hoàn tất phần hướng dẫn pilot hiện hành; checkbox tổng vẫn mở cho baseline
   chính thức. G7/catalog/cohort/taxonomy/challenge chưa chốt, không mở thu 40–48
   trainable. P21/P22 chưa được nghiệm thu trên lab Kiên, không dùng dataset cũ.

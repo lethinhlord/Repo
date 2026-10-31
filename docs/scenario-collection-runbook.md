@@ -1,6 +1,6 @@
 # HƯỚNG DẪN BÀN GIAO KIÊN — LAB 4 VM VÀ THU DỮ LIỆU V3
 
-Phiên bản tài liệu: 3.2 — ngày 29/10/2026.
+Phiên bản tài liệu: 3.3 — ngày 31/10/2026.
 Máy thực hiện: máy của Kiên có VMware; các thao tác bên dưới không yêu cầu Thịnh
 truy cập trực tiếp vào máy đó. Người thực hiện ghi kết quả thật, không đánh dấu đạt sẵn.
 
@@ -18,9 +18,9 @@ TRẠNG THÁI BÀN GIAO HIỆN TẠI
 
 Nguồn pilot đã rà soát đã được merge vào nhánh `main` của
 https://github.com/lethinhlord/Repo.
-Dùng bản Kiên.txt 3.2 này làm hướng dẫn thao tác. Hướng dẫn có revision tài liệu riêng;
+Dùng bản Kiên.txt 3.3 này làm hướng dẫn thao tác. Hướng dẫn có revision tài liệu riêng;
 checkout mã pilot có thể chứa bản runbook lịch sử, không dùng bản lịch sử đó để thực hiện.
-`REVIEWED_SOURCE_COMMIT` được ghi bằng SHA đầy đủ ở mục 6.2. Đây là revision pilot,
+`REVIEWED_SOURCE_COMMIT` lấy từ file `PILOT_SOURCE_COMMIT.txt` Thịnh gửi cùng tài liệu (mục 6.2). File này chỉ được phát hành sau khi merge/kiểm tra source; không tự lấy SHA từ upload. Đây là revision pilot,
 không phải tag/commit baseline thu train. Không dùng lại tag `data-collection-v2.0.0`
 hoặc tự chọn commit theo tên nhánh.
 
@@ -81,6 +81,17 @@ features-v2, thiếu snapshot context/intake và có bất nhất thời gian/fi
 Giữ nguyên để đối chiếu lỗi, không chép vào checkout v3, không thêm history=0,
 không đổi nhãn/timestamp/hash. Thư mục có tên VALID hoặc một lệnh VALID của bản cũ
 không thay thế các cổng của bản hiện hành.
+
+## 0.2 Thời gian context của bản hiện hành
+
+Collector và online dùng cùng policy `last-relevant-source-v1`: độ mới của lịch sử
+được đánh giá tại event liên quan cuối cùng, không dùng thời điểm đóng thao tác để
+so với đồng hồ nguồn chưa chuẩn hóa. Baseline vẫn phải được capture trước event
+đầu tiên; event không được sau thời điểm controller finalize. Giữ nguyên thời gian
+raw, không cộng tolerance để hợp thức hóa quan sát tương lai. Finalize và replay
+kiểm policy/as-of trong metadata đã checksum. Run từ bản cũ thiếu policy này phải
+thu lại, không bổ sung metadata bằng tay hoặc tái sử dụng dataset cũ.
+Đây là TTL của context quan sát; không cấp quyền phản ứng tại thời gian hiện tại.
 
 ## 1. Kết quả bắt buộc
 
@@ -237,7 +248,7 @@ Sau lần boot đầu trên Ubuntu/Kali:
 ```bash
 sudo apt update
 sudo apt full-upgrade -y
-sudo apt install -y open-vm-tools openssh-server curl git jq
+sudo apt install -y open-vm-tools openssh-server curl git jq gnupg python3 python3-venv python3-pip
 sudo systemctl enable --now ssh
 grep '^PRETTY_NAME=' /etc/os-release
 if [ -f /var/run/reboot-required ]; then
@@ -519,20 +530,75 @@ canary TCP/DNS tại G4, quan sát cùng traffic ở NIC NET-SENSOR. Không thu 
 
 ## 6. Cài SOC-AI
 
-### 6.1 Wazuh all-in-one 4.14
+### 6.1 Ma trận Wazuh và quyết định thay đổi
+
+Kế hoạch FINAL P49 ghi 4.14.7; quyết định kỹ thuật đề xuất cho bản bàn giao này
+là **4.14.9** theo quyết định duy trì tài liệu 3.3; ghi sai khác với kế hoạch
+trong evidence pilot. Ma trận đích: manager, indexer, dashboard
+và hai agent Windows/NET-SENSOR đều 4.14.9; gói Debian mục tiêu `4.14.9-1`,
+MSI Windows `wazuh-agent-4.14.9-1.msi`. Không tự downgrade máy đang chạy.
+
+Với máy đã cài, kiểm chính xác và dừng nếu bất kỳ gói khác phiên bản:
 
 ```bash
-sudo apt update
-sudo apt install -y curl git jq python3 python3-venv python3-pip openssh-server
-curl -sO https://packages.wazuh.com/4.14/wazuh-install.sh
-sudo bash ./wazuh-install.sh -a
+set -euo pipefail
+for pkg in wazuh-manager wazuh-indexer wazuh-dashboard; do
+  test "$(dpkg-query -W -f='${Version}' "$pkg")" = 4.14.9-1 || {
+    echo "FAIL: $pkg không phải 4.14.9-1" >&2; exit 1; }
+done
 sudo systemctl is-active wazuh-manager wazuh-indexer wazuh-dashboard
-dpkg-query -W -f='${Package}=${Version}\n' \
-  wazuh-manager wazuh-indexer wazuh-dashboard | tee wazuh-package-versions.txt
-grep -E '^wazuh-(manager|indexer|dashboard)=4\.14\.' wazuh-package-versions.txt
+dpkg-query -W -f='${Package}=${Version}\n' wazuh-manager wazuh-indexer wazuh-dashboard | tee wazuh-package-versions.txt
 sudo apt-mark hold wazuh-manager wazuh-indexer wazuh-dashboard
 ```
 
+Máy mới: chỉ tiếp tục khi chưa có ba package trên;
+không dùng quy trình này để downgrade hay ghi đè máy đang chạy. Cài repository
+Wazuh theo hướng dẫn chính thức, xác minh fingerprint khóa với nguồn Wazuh tin cậy
+trước khi tin khóa; dừng nếu không xác minh được. Dùng các lệnh cài key/repository
+ở đầu mục 8.2 trên SOC (không chạy lệnh cài agent ở đó). APT phải xác minh chữ ký metadata
+repository; không dùng `trusted=yes` hoặc cho phép gói không xác thực. Sau khi đã
+cấu hình repository ký và chạy `apt update`, kiểm có đúng cả ba package 4.14.9-1.
+
+```bash
+set -euo pipefail
+for pkg in wazuh-manager wazuh-indexer wazuh-dashboard; do
+  if dpkg-query -W -f='${db:Status-Status}' "$pkg" 2>/dev/null | grep -qx installed; then
+    echo "FAIL: $pkg đã cài; kiểm riêng, không tự downgrade" >&2; exit 1
+  fi
+  apt-cache madison "$pkg" | awk -F ' *\| *' '$2 == "4.14.9-1" {found=1} END {exit !found}' || {
+    echo "FAIL: thiếu $pkg=4.14.9-1 trong repository đã xác thực" >&2; exit 1; }
+done
+sudo tee /etc/apt/preferences.d/datn-wazuh-pin >/dev/null <<'PIN'
+Package: wazuh-manager wazuh-indexer wazuh-dashboard
+Pin: version 4.14.9-1
+Pin-Priority: 1001
+
+Package: wazuh-manager wazuh-indexer wazuh-dashboard
+Pin: version *
+Pin-Priority: -1
+PIN
+apt-cache policy wazuh-manager wazuh-indexer wazuh-dashboard
+curl -fL https://packages.wazuh.com/4.14/wazuh-install.sh -o wazuh-install-4.14.9.sh
+printf '%s  %s\n' 20358b7dfc5b7fbb9b1ff62fec16a2922f6b553def99bf5aabdf6b3c3b4d9ddc wazuh-install-4.14.9.sh | sha256sum -c -
+grep -Fx 'readonly wazuh_version="4.14.9"' wazuh-install-4.14.9.sh
+sudo bash ./wazuh-install-4.14.9.sh -a
+for pkg in wazuh-manager wazuh-indexer wazuh-dashboard; do
+  test "$(dpkg-query -W -f='${Version}' "$pkg")" = 4.14.9-1 || {
+    echo "FAIL: $pkg sai phiên bản; dừng pilot" >&2; exit 1; }
+done
+sudo systemctl is-active wazuh-manager wazuh-indexer wazuh-dashboard
+dpkg-query -W -f='${Package}=${Version}\n' wazuh-manager wazuh-indexer wazuh-dashboard filebeat | tee wazuh-package-versions.txt
+dpkg-query -W -f='${Version}' filebeat | grep -E '^7\.10\.2([-.]|$)'
+sudo apt-mark hold wazuh-manager wazuh-indexer wazuh-dashboard filebeat
+```
+
+Filebeat do assistant dùng phiên bản 7.10.2; kiểm version thực tế trong output và
+dừng nếu khác. Lưu installer, SHA-256, pin, metadata APT có chữ ký, log cài và
+phiên bản các gói vào evidence toolchain (không lưu mật khẩu). Nếu URL thay hash,
+chữ ký không hợp lệ, thiếu package hoặc version sai: dừng và yêu cầu artifact đã
+xác minh, không bỏ kiểm tra. Kiểm hash cố định ngăn rolling assistant đổi patch;
+không khẳng định tái lập toàn bộ dependency nếu chưa lưu và xác minh artifact của
+chúng. Các agent cũng phải giữ bằng chứng SHA-256 và chữ ký nguồn chính thức.
 Lưu thông tin đăng nhập từ output cài đặt ở nơi riêng, không đưa mật khẩu vào repo hoặc
 ảnh báo cáo. Dashboard: `https://192.168.58.147`.
 
@@ -575,7 +641,8 @@ set -euo pipefail
 test "$(id -u)" -ne 0 # Repo dung user thuong co sudo, khong dung root
 LAB_USER="$(id -un)"
 PROJECT_ROOT="$HOME/datn-ai-soar-v3"
-REVIEWED_SOURCE_COMMIT=d06d04034f0d1c996907365841f21cdb874e4d5a
+read -rp 'Paste the 40-character SHA from PILOT_SOURCE_COMMIT.txt supplied with Kien.txt: ' REVIEWED_SOURCE_COMMIT
+[[ "$REVIEWED_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
 if [ ! -e "$PROJECT_ROOT" ]; then
   git clone --branch main --single-branch \
     https://github.com/lethinhlord/Repo.git "$PROJECT_ROOT"
@@ -1198,8 +1265,12 @@ Nguồn: https://docs.suricata.io/en/suricata-8.0.7/configuration/suricata-yaml.
 
 ```bash
 sudo apt-get install -y gnupg apt-transport-https curl
-curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH | \
-  sudo gpg --no-default-keyring --keyring gnupg-ring:/usr/share/keyrings/wazuh.gpg --import
+set -euo pipefail
+curl -fsSL https://packages.wazuh.com/key/GPG-KEY-WAZUH -o /tmp/datn-wazuh-signing.asc
+WAZUH_SIGNING_FPR=0DCFCA5547B19D2A6099506096B3EE5F29111145
+ACTUAL_FPR=$(gpg --show-keys --with-colons /tmp/datn-wazuh-signing.asc | awk -F: '$1=="fpr" && !seen {print $10; seen=1}')
+test "$ACTUAL_FPR" = "$WAZUH_SIGNING_FPR"
+sudo gpg --no-default-keyring --keyring gnupg-ring:/usr/share/keyrings/wazuh.gpg --import /tmp/datn-wazuh-signing.asc
 sudo chmod 644 /usr/share/keyrings/wazuh.gpg
 echo 'deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main' | \
   sudo tee /etc/apt/sources.list.d/wazuh.list
@@ -1255,7 +1326,7 @@ có ở Archives nghĩa là cấu hình Wazuh/ACL chưa đạt.
 
 ```bash
 sudo apt update
-sudo apt install -y python3 dnsmasq curl jq dnsutils smbclient
+sudo apt install -y python3 dnsmasq curl jq dnsutils smbclient nftables
 sudo install -d -m 0755 /srv/datn/benign/api /srv/datn/beacon /srv/datn/stage
 printf 'ok\n' | sudo tee /srv/datn/benign/health
 printf '{"status":"ok"}\n' | sudo tee /srv/datn/benign/api/status
@@ -1442,6 +1513,91 @@ if ($LASTEXITCODE -ne 0 -or $timeSource -match 'Local CMOS Clock') {
 }
 ```
 
+### 9.2 Cô lập management giữa peer VMnet8 (Kali)
+
+VMnet8 là cùng L2: xóa default route và UFW route trên sensor không chặn peer.
+Kali thực thi ACL OUTPUT riêng, không flush hay thay policy firewall toàn máy.
+Bảng cho phép: Kali → SOC `192.168.58.147` UDP/123 (NTP); SOC khởi tạo
+TCP/22 tới Kali và Kali trả lời trên kết nối established; Windows/Sensor → SOC
+Wazuh 1514 và enrollment theo cấu hình tiếp tục hoạt động. Kali không được chủ
+động tới dịch vụ management SOC hoặc Sensor `192.168.58.150`, kể cả SSH,
+HTTPS, Wazuh và API. Không chặn traffic dữ liệu VMnet2/VMnet3. IPv6 trên NIC
+management bị chặn OUTPUT để tránh đường vòng; trả lời SSH IPv4 established vẫn
+được phép. Chỉ áp dụng trên lab cô lập, với console VMware mở sẵn.
+
+Trước khi áp dụng: xác nhận MAC/NIC bằng `ip -br link`, `ip -br address`,
+`ip route get 192.168.58.147` và đối chiếu VMware; xác nhận IP SOC/Sensor như
+bảng địa chỉ. Nếu sai, dừng và sửa theo lab. Đảm bảo `nft` và SSH server đã cài,
+SOC có thể SSH vào Kali, và không có policy hiện hữu chặn NTP/SSH; lưu
+`sudo nft list ruleset` và `sudo iptables-save`/`sudo ip6tables-save` ra file
+root-only ngoài repo. Kiểm `sudo nft list table inet datn_kali_mgmt`: nếu bảng
+đã tồn tại hoặc có service firewall khác quản lý bảng này thì dừng, không ghi đè.
+Nếu `/etc/datn/kali-mgmt.nft` hoặc service cùng tên đã tồn tại, dừng và đối chiếu,
+sao lưu rồi xử lý có kiểm soát; không dùng các lệnh tạo mới bên dưới để ghi đè.
+Không áp dụng qua SSH duy nhất. Quy tắc sau dùng `eth0` làm ví dụ: thay bằng NIC
+VMnet8 đã đối chiếu MAC, và giữ IP đúng thực tế.
+
+```bash
+sudo install -d -m 700 /etc/datn
+sudo tee /etc/datn/kali-mgmt.nft >/dev/null <<'NFT'
+table inet datn_kali_mgmt {
+  chain output {
+    type filter hook output priority -10; policy accept;
+    oifname "eth0" ip daddr 192.168.58.147 udp dport 123 accept
+    oifname "eth0" ip daddr 192.168.58.147 tcp sport 22 ct state established accept
+    oifname "eth0" ip daddr { 192.168.58.147, 192.168.58.150 } counter reject
+    oifname "eth0" meta nfproto ipv6 counter reject
+  }
+}
+NFT
+sudo nft -c -f /etc/datn/kali-mgmt.nft
+sudo nft -f /etc/datn/kali-mgmt.nft
+sudo nft list table inet datn_kali_mgmt
+```
+
+Quy tắc `accept` tại chain này không vượt qua firewall khác: kiểm thực tế các
+ngoại lệ sau khi áp dụng. Để nạp lại sau reboot, tạo service riêng, không sửa
+`/etc/nftables.conf` hay flush ruleset:
+
+```bash
+sudo tee /etc/systemd/system/datn-kali-mgmt.service >/dev/null <<'UNIT'
+[Unit]
+Description=DATN Kali management egress isolation
+Before=network-pre.target
+Wants=network-pre.target
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/nft -f /etc/datn/kali-mgmt.nft
+ExecStop=/usr/sbin/nft delete table inet datn_kali_mgmt
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target
+UNIT
+sudo systemctl daemon-reload
+# Bảng đã được nạp ở trên; bật service sau reboot, không start lại ngay.
+sudo systemctl enable datn-kali-mgmt.service
+```
+
+Sau reboot kiểm lại MAC, tên NIC, route, `systemctl status datn-kali-mgmt` và
+bảng nft trước thu; nếu tên NIC đã đổi hoặc bất kỳ kiểm tra thất bại
+thì dừng. Trên console, rollback riêng bằng `sudo systemctl disable --now
+datn-kali-mgmt.service` khi service đang active. Nếu mới nạp thủ công nhưng unit đã được tạo/enable, chạy
+`sudo systemctl disable datn-kali-mgmt.service` trước, rồi
+`sudo nft delete table inet datn_kali_mgmt`; nếu chưa tạo unit thì chỉ xóa bảng.
+Kiểm `systemctl is-enabled datn-kali-mgmt.service` phải disabled hoặc not-found và
+`sudo nft list table inet datn_kali_mgmt` phải báo không tồn tại, kể cả sau reboot
+rollback. Không khôi phục toàn ruleset cũ mù
+quáng. Nếu mất SSH dùng console VMware và rollback, không thay firewall khác.
+
+Nghiệm thu thật sau khi áp dụng và sau reboot: từ Kali đo NTP tới SOC; từ SOC
+SSH vào Kali và chạy lệnh; từ Kali thử TCP 22/443/1514/1515 tới SOC và Sensor
+phải thất bại, quan sát counter/log hoặc packet capture xác nhận bị ACL chặn,
+không coi timeout do dịch vụ tắt là bằng chứng. Kiểm IPv6 link-local/global qua
+NIC management cũng bị chặn; SSH dùng IPv4. Từ Windows và Sensor
+kiểm agent connected và SOC nhận event Wazuh mới qua 1514; kiểm lại canary qua
+hai mạng dữ liệu. Ghi thời gian, IP/MAC, ruleset, lệnh và kết quả bốn VM; mọi
+phép thử âm phải có dịch vụ đích hoặc listener được xác nhận đang nghe trước đó.
+Không đánh dấu đạt khi chưa có pilot thật.
 Sau khi bốn máy đã đồng bộ, trên ba Linux VM xóa default route tạm thời; trên Windows
 xóa default route của phiên hiện tại. Kết nối nội bộ cùng VMnet8 và các route
 `10.20/10.40` vẫn hoạt động. Reboot sẽ khôi phục route để bảo trì; trước buổi thu sau phải
@@ -1521,7 +1677,8 @@ cd "$HOME/datn-ai-soar-v3"
 test -z "$(git status --porcelain)"
 COLLECTION_MODE=pilot # Chi dung trainable sau khi G7 duoc nghiem thu
 if [ "$COLLECTION_MODE" = pilot ]; then
-  EXPECTED_SOURCE_COMMIT=d06d04034f0d1c996907365841f21cdb874e4d5a
+  read -rp 'Paste pilot SHA from PILOT_SOURCE_COMMIT.txt: ' EXPECTED_SOURCE_COMMIT
+  [[ "$EXPECTED_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
 elif [ "$COLLECTION_MODE" = trainable ]; then
   : "${COLLECTION_BASELINE_COMMIT:?Can baseline thu chinh thuc do Thinh cung cap}"
   EXPECTED_SOURCE_COMMIT="$COLLECTION_BASELINE_COMMIT"
@@ -1829,20 +1986,6 @@ check_canary_channels() {
     jq -e --arg id "$EVENT_ID" 'select(.agent.name=="WIN11-TARGET" and
       ((.data.win.system.eventID//"")|tostring)==$id)' "$FRESH" >/dev/null || { echo "Missing Sysmon Event $EVENT_ID" >&2; return 1; }
   done
-  for ACCOUNT_NAME in datn_benign datn_attack; do
-    TYPE=2; [ "$ACCOUNT_NAME" != datn_attack ] || TYPE=3
-    for EVENT_ID in 4624 4625; do
-      jq -e --arg user "$ACCOUNT_NAME" --arg type "$TYPE" --arg id "$EVENT_ID" '
-        select(.agent.name=="WIN11-TARGET" and
-        ((.data.win.system.eventID//"")|tostring)==$id and
-        ((.data.win.eventdata.targetUserName//"")|ascii_downcase)==$user and
-        ((.data.win.eventdata.logonType//"")|tostring)==$type)' "$FRESH" >/dev/null || { echo "Missing Security event=$EVENT_ID account=$ACCOUNT_NAME logonType=$TYPE" >&2; return 1; }
-    done
-  done
-  jq -e 'select(.agent.name=="WIN11-TARGET" and
-    ((.data.win.system.eventID//"")|tostring)=="4624" and
-    ((.data.win.eventdata.targetUserName//"")|ascii_downcase)=="datn_attack" and
-    ((.data.win.eventdata.ipAddress//"")|endswith("10.40.0.10")))' "$FRESH" >/dev/null || { echo "Missing SMB success from Kali data IP" >&2; return 1; }
   for SID in 900001 900002 900004; do
     jq -e --argjson sid "$SID" 'select(.agent.name=="NET-SENSOR") |
       (.full_log|fromjson?) | select(.event_type=="alert" and .alert.signature_id==$sid)' \
@@ -1860,7 +2003,7 @@ from pathlib import Path
 from ml.telemetry import (
     flow_connection_key, flow_counter_issues, parse_time,
     suricata_dns_names, suricata_dns_is_response, suricata_payload,
-    windows_fields, process_guid,
+    windows_fields, process_guid, normalize_ip,
 )
 
 capture, nonce, since = sys.argv[1:]
@@ -1876,6 +2019,24 @@ for line in Path(capture).read_text(encoding='utf-8').splitlines():
         payload = suricata_payload(row)
         if payload:
             payloads.append(payload)
+def verify_security_canary(records):
+    """Require fresh console logons and a separate SMB source/type pair."""
+    for user, kind in (('datn_benign', '2'), ('datn_attack', '3')):
+        for event_id in ('4624', '4625'):
+            if not any(eid == event_id
+                       and str(fields.get('targetUserName', '')).casefold() == user
+                       and str(fields.get('logonType', '')) == kind
+                       for eid, _, fields in records):
+                raise SystemExit(f'Missing Security event={event_id} account={user} logonType={kind}')
+    if not any(eid == '4624'
+               and str(fields.get('targetUserName', '')).casefold() == 'datn_attack'
+               and str(fields.get('logonType', '')) == '3'
+               and normalize_ip(fields.get('ipAddress')) == '10.40.0.10'
+               for eid, _, fields in records):
+        raise SystemExit('Missing SMB success from Kali data IP')
+
+verify_security_canary(windows)
+
 guids = {process_guid(fields) for event_id, _, fields in windows
          if event_id == '1' and nonce in str(fields.get('commandLine','')).casefold()}
 guids.discard('')
@@ -3229,46 +3390,14 @@ TRAIN và VALIDATION, hoặc phát hiện `locked_test.jsonl`.
 
 ### 14.1 Gắn đúng source khi chuyển sang Colab
 
-Phần này do Thịnh/người phụ trách ML thực hiện sau G7/build. Kiên bàn giao bốn file
-ở trên cùng SHA source build và tên nhánh train release đã xác nhận. Notebook hiện
-có mặc định BRANCH=feature/week3-model-training; không chạy nguyên mặc định cũ với
-bộ v3 mới. Mở notebook từ đúng release và thay cấu hình BRANCH/PROJECT_DIR bằng:
-
-```python
-from pathlib import Path
-import re
-BRANCH = input("Nhanh train release do Thinh ban giao: ").strip()
-EXPECTED_TRAINING_COMMIT = input("SHA 40 ky tu cua source build dataset: ").strip().lower()
-assert BRANCH and not BRANCH.startswith('-')
-assert re.fullmatch(r'[0-9a-f]{40}', EXPECTED_TRAINING_COMMIT)
-PROJECT_DIR = Path('/content/datn-ai-soar-' + EXPECTED_TRAINING_COMMIT[:12])
-```
-
-BRANCH phải là nhánh tồn tại trỏ đúng commit, không điền SHA/tag vào biến nhánh vì
-cell lấy source dùng git clone --branch và kiểm branch. Đường dẫn có hậu tố SHA
-tránh dùng lại checkout --single-branch của phiên bản trước. Giữ REPO_URL, bốn tên
-file và đường dẫn Drive như cấu hình notebook. Trước EDA/tuning/training, sau khi
-Drive đã mount và bốn file được kiểm checksum, thêm cell kiểm source:
-
-```python
-import hashlib
-import json
-import subprocess
-from pathlib import Path
-training_commit = subprocess.check_output(
-    ['git','-C',str(PROJECT_DIR),'rev-parse','HEAD'], text=True).strip()
-manifest = json.loads((DRIVE_DATA_DIR/'dataset_manifest.json').read_text())
-assert training_commit == EXPECTED_TRAINING_COMMIT, 'Sai source Colab'
-assert manifest['provenance']['builder_git_commit'] == training_commit, 'Source build/train khac nhau'
-config_sha = hashlib.sha256((PROJECT_DIR/'ml/training_config.yaml').read_bytes()).hexdigest()
-assert manifest['provenance']['builder_config_sha256'] == config_sha, 'Training config khac source build'
-print('SOURCE_BINDING_PASS', training_commit)
-```
-
-Nếu sai, dừng và lấy lại đúng source/nhánh hoặc gói dataset theo release; không
-sửa provenance hay checksum. Không mở locked_test hoặc mapping fold. Đây chỉ là
-cổng nguồn đầu vào, không phải kết quả model/accuracy và không thay các kiểm
-leakage/cohort/threshold của notebook.
+Phần này do Thịnh/người phụ trách ML thực hiện sau G7/build. Bàn giao bốn file
+ở trên cùng SHA 40 ký tự của source build dataset. Mở notebook từ chính release đó,
+điền `EXPECTED_TRAINING_COMMIT` bằng SHA đó trong notebook; dùng Colab runtime
+mới không có thư mục project cũ. Notebook checkout đúng commit và kiểm
+source, builder config và manifest trước EDA. Không dùng nhánh training cũ, không
+sửa provenance hay checksum để vượt gate. Nếu kiểm tra thất bại, dừng và lấy lại
+đúng source hoặc gói dataset. Không đưa locked test hay mapping fold lên Drive.
+Cổng nguồn không chứng minh accuracy hoặc thay kiểm leakage/cohort/threshold.
 
 ## 15. Sao lưu và bàn giao dữ liệu gốc
 
@@ -3388,7 +3517,7 @@ echo 'RESTORE_VALIDATION=PASS'
 ```
 
 Backup cũ không có wheelhouse-locks.sha256 phải được kiểm bằng hướng dẫn/source
-đúng revision của backup; không tự tạo manifest ngược ngày để gọi là đạt 3.2.
+đúng revision của backup; không tự tạo manifest ngược ngày để gọi là đạt 3.3.
 
 Với backup giữa buổi chưa đủ 40 run, audit progress có thể vẫn `COLLECTING` (final vẫn `NOT_READY`); điều đó
 không làm restore sai. Điều kiện restore là tất cả run hiện có `VALID`, checksum đúng và

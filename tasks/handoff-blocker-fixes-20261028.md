@@ -42,5 +42,5 @@ chunk >1 MiB sát cutoff và saved-late tail bypass. Đã có regression/bản s
 FINALIZING recovery và quarantine output tạm cũng được bổ sung để không để lại
 raw orphan. Full suite 552 passed/1 Windows symlink skip; Linux 69 passed/0 skip
 bao gồm case đó. Kiên.txt 3.1 đã cùng hash/runbook và pin source d06d0403.
-Xem docs/collection-blocker-validation-20261029.md và evidence ngoài repo.
+Xem docs/history/collection-blocker-validation-20261029.md và evidence ngoài repo.
 Checkbox PR là trạng thái trước khi gửi merge; trạng thái merge cuối xem trên PR.
