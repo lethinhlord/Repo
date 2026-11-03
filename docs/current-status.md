@@ -6,8 +6,10 @@ Ngày 03/11/2026. Đây là điểm vào hiện hành; các báo cáo trong `his
 - Hướng dẫn Kiên hiện hành: [lab bốn VM và thu dữ liệu v3](scenario-collection-runbook.md).
 - Dataset mới phải có 24 feature v3, baseline/capture/checkpoint và policy thời gian
   `last-relevant-source-v1`. Chỉ nhận evidence mới theo đúng source phát hành.
-- Pilot lấy source SHA từ file `PILOT_SOURCE_COMMIT.txt` gửi kèm Kiên.txt; file này
-  chỉ xác định mã chạy pilot, không mở G7. Không lấy SHA từ một nhánh/tag thu cũ.
+- Pilot 3.6 lấy mã và hướng dẫn trực tiếp từ tag GitHub `pilot-v3.6-20261103`,
+  kiểm annotated tag, anchor 9c599f6 và ghi SHA đầy đủ theo mục 6.2/6.3. Không dùng
+  gói source offline hoặc file pointer; tag pilot không mở G7. GitHub chỉ truy cập
+  trong bảo trì không có owner active, trước khi cô lập collection mode.
 - Pilot R02 chưa nghiệm thu: gói chẩn đoán chỉ là trích xuất, thiếu full capture nên
   không xác nhận được khả năng khôi phục hay bằng chứng ACCOUNT. Cần kiểm bản run
   đầy đủ và source sửa lỗi đã phát hành trước khi thử finalize lại theo runbook.
@@ -35,3 +37,8 @@ Ngày 03/11/2026. Đây là điểm vào hiện hành; các báo cáo trong `his
 Các sửa F01–F09, phạm vi kiểm, mốc source và tài nguyên đã loại bỏ được ghi trong
 biên bản nghiệm thu lượt sửa này. Không có tuyên bố model đã đạt độ chính xác hoặc
 hệ thống đã đủ điều kiện phản ứng tự động.
+
+Bàn giao GitHub-only 3.6 và các kiểm tra thao tác được ghi trong
+[biên bản hướng dẫn 3.6](github-handoff-validation-v3.6-20261103.md). Các biên bản
+R02/R03 và 3.3 trước đó là hồ sơ theo thời điểm; mô tả bundle trong đó không còn là
+quy trình nhận mã hiện hành.

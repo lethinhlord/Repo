@@ -1,6 +1,6 @@
 # HƯỚNG DẪN BÀN GIAO KIÊN — LAB 4 VM VÀ THU DỮ LIỆU V3
 
-Phiên bản tài liệu: 3.5 — ngày 03/11/2026.
+Phiên bản tài liệu: 3.6 — ngày 03/11/2026.
 Máy thực hiện: máy của Kiên có VMware; các thao tác bên dưới không yêu cầu Thịnh
 truy cập trực tiếp vào máy đó. Người thực hiện ghi kết quả thật, không đánh dấu đạt sẵn.
 
@@ -16,13 +16,24 @@ TRẠNG THÁI BÀN GIAO HIỆN TẠI
 - 10–12 run/nhóm là quota thu ban đầu, không bảo đảm accuracy hoặc đủ điều kiện
   phản ứng tự động. Model/policy thiếu bằng chứng phải REVIEW; hệ thống giữ SHADOW.
 
-Nguồn pilot phát hành được xác định bằng SHA trong file đi kèm từ Thịnh tại
-https://github.com/lethinhlord/Repo; cập nhật tài liệu không tự cập nhật mã trên lab.
-Dùng bản Kiên.txt 3.5 này làm hướng dẫn thao tác. Hướng dẫn có revision tài liệu riêng;
-checkout mã pilot có thể chứa bản runbook lịch sử, không dùng bản lịch sử đó để thực hiện.
-`REVIEWED_SOURCE_COMMIT` lấy từ file `PILOT_SOURCE_COMMIT.txt` Thịnh gửi cùng tài liệu (mục 6.2). File này chỉ được phát hành sau khi merge/kiểm tra source; không tự lấy SHA từ upload. Đây là revision pilot,
-không phải tag/commit baseline thu train. Không dùng lại tag `data-collection-v2.0.0`
-hoặc tự chọn commit theo tên nhánh.
+Mã dự án và tài liệu lấy trực tiếp từ GitHub tại tag cố định
+`pilot-v3.6-20261103`: https://github.com/lethinhlord/Repo/tree/pilot-v3.6-20261103.
+Dùng Kiên.txt 3.6 hoặc runbook của chính tag này. Không cần Thịnh gửi code offline,
+file pointer hoặc companion rời. Hai hướng dẫn R02/R03 mở trực tiếp trên GitHub:
+https://github.com/lethinhlord/Repo/blob/pilot-v3.6-20261103/docs/pilot-r02-recovery.md
+https://github.com/lethinhlord/Repo/blob/pilot-v3.6-20261103/docs/pilot-r03-runbook.md
+
+Tag này chỉ đổi tài liệu so với mã đã kiểm tại
+`9c599f656cb12009492cd8dda721529f8335de04`. Mục 6.2/6.3 kiểm tag annotated,
+tổ tiên, toàn bộ cây ngoài đúng năm file tài liệu và ghi SHA commit 40 ký tự đã
+resolve. Không dùng nhánh main đang thay đổi làm nguồn chạy. Tag pilot không mở
+G7 và không phải baseline thu train; không dùng tag `data-collection-v2.0.0`.
+APT/pip và tài nguyên upstream vẫn tải từ nguồn chính thức trước khi cô lập lab;
+dependency phải cài xong trước khi cô lập. Raw/evidence,
+backup và secrets không đưa lên GitHub. Mọi fetch/cài đặt/restore source diễn ra
+trong cửa sổ bảo trì không có run active; collection mode vẫn cô lập Internet.
+Có thể đọc tài liệu GitHub trên trình duyệt máy host khi VM đang cô lập; quy định
+bảo trì áp dụng cho fetch/cài đặt và đổi mạng/source trong các VM lab.
 
 ## 0. Cách thực hiện và trách nhiệm
 
@@ -635,48 +646,42 @@ agent đã gửi dữ liệu, không tự tạo file rỗng để vượt kiểm
 
 Dùng checkout mới để tránh đưa nhầm dataset/venv/config cũ vào đợt v3. Có Internet
 ở giai đoạn cài đặt; collection mode chỉ bật sau khi cài và tải tài nguyên xong.
+Nếu checkout đã từng thu run, dùng mục 6.3 thay vì chạy lại cài đặt mới này.
 
 ```bash
 set -euo pipefail
 test "$(id -u)" -ne 0 # Repo dung user thuong co sudo, khong dung root
 LAB_USER="$(id -un)"
 PROJECT_ROOT="$HOME/datn-ai-soar-v3"
-read -rp 'Paste the 40-character SHA from PILOT_SOURCE_COMMIT.txt supplied with Kien.txt: ' REVIEWED_SOURCE_COMMIT
-[[ "$REVIEWED_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
-if [ ! -e "$PROJECT_ROOT" ]; then
-  git clone --branch main --single-branch \
-    https://github.com/lethinhlord/Repo.git "$PROJECT_ROOT"
-fi
+PILOT_TAG=pilot-v3.6-20261103
+REVIEWED_CODE_COMMIT=9c599f656cb12009492cd8dda721529f8335de04
+test ! -e "$PROJECT_ROOT"
+git clone --branch "$PILOT_TAG" --single-branch \
+  https://github.com/lethinhlord/Repo.git "$PROJECT_ROOT"
 test -d "$PROJECT_ROOT/.git"
 cd "$PROJECT_ROOT"
-test -z "$(git status --porcelain --untracked-files=all)" || {
-  echo 'STOP: checkout has local changes; preserve them and resolve before collection' >&2
-  exit 1
-}
-git fetch origin main
-git cat-file -e "$REVIEWED_SOURCE_COMMIT^{commit}"
+test -z "$(git status --porcelain --untracked-files=all)"
+test "$(git remote get-url origin)" = https://github.com/lethinhlord/Repo.git
+git fetch --no-tags origin "refs/tags/$PILOT_TAG:refs/tags/$PILOT_TAG"
+test "$(git cat-file -t "refs/tags/$PILOT_TAG")" = tag
+REVIEWED_SOURCE_COMMIT=$(git rev-parse "refs/tags/$PILOT_TAG^{commit}")
+[[ "$REVIEWED_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+git merge-base --is-ancestor "$REVIEWED_CODE_COMMIT" "$REVIEWED_SOURCE_COMMIT"
+git diff --exit-code "$REVIEWED_CODE_COMMIT" "$REVIEWED_SOURCE_COMMIT" -- . \
+  ':(exclude)docs/scenario-collection-runbook.md' ':(exclude)docs/current-status.md' \
+  ':(exclude)docs/pilot-r02-recovery.md' ':(exclude)docs/pilot-r03-runbook.md' \
+  ':(exclude)docs/github-handoff-validation-v3.6-20261103.md'
 git checkout --detach "$REVIEWED_SOURCE_COMMIT"
 test "$(git rev-parse HEAD)" = "$REVIEWED_SOURCE_COMMIT"
-mkdir -p evidence operator-logs run-drafts
-git rev-parse HEAD | tee evidence/collection-source-commit.txt
+mkdir -p evidence/scenario-runs operator-logs run-drafts
+RELEASE_LOG="operator-logs/releases/$PILOT_TAG"
+mkdir -p "$RELEASE_LOG"
+printf '%s\n' https://github.com/lethinhlord/Repo.git > "$RELEASE_LOG/source-url.txt"
+printf '%s\n' "$PILOT_TAG" > "$RELEASE_LOG/source-tag.txt"
+printf '%s\n' "$REVIEWED_SOURCE_COMMIT" > "$RELEASE_LOG/source-commit.txt"
+(set -o noclobber; printf '%s\n' "$REVIEWED_SOURCE_COMMIT" > evidence/collection-source-commit.txt)
 bash scripts/bootstrap_ml.sh
 .venv-ml/bin/python -m pip check
-# Tai wheel truoc collection mode de restore/validate offline cung OS/Python/architecture.
-mkdir -p operator-logs/wheelhouse
-.venv-ml/bin/python -m pip download --only-binary=:all: --dest operator-logs/wheelhouse \
-  --requirement requirements.lock --requirement requirements-ml.lock
-(cd operator-logs/wheelhouse && sha256sum ./* > ../wheelhouse.sha256)
-sha256sum requirements.lock requirements-ml.lock > operator-logs/wheelhouse-locks.sha256
-sha256sum --check operator-logs/wheelhouse-locks.sha256
-WHEEL_QA=$(mktemp -d)
-trap 'rm -rf -- "$WHEEL_QA"' EXIT
-python3 -m venv "$WHEEL_QA"
-"$WHEEL_QA/bin/python" -m pip install --no-index --find-links "$PWD/operator-logs/wheelhouse" \
-  --requirement requirements.lock --requirement requirements-ml.lock
-"$WHEEL_QA/bin/python" -m pip check
-"$WHEEL_QA/bin/python" -c 'import sklearn,xgboost; print(sklearn.__version__,xgboost.__version__)'
-rm -rf -- "$WHEEL_QA"
-trap - EXIT
 .venv-ml/bin/python -m pytest -q \
   tests/test_archive_replay_identity.py \
   tests/test_intake_tail_boundaries.py \
@@ -717,7 +722,90 @@ stat -c '%U %G %a %n' /var/ossec/logs/archives/archives.json
 Nếu vẫn Permission denied, kiểm group/ACL và logrotate trên SOC-AI. Không `chmod 777`
 và không chạy cả repo bằng root để che lỗi quyền. Không tạo Archives rỗng để vượt kiểm.
 
-### 6.3 API/n8n là phần kiểm tích hợp, tách khỏi việc chuẩn bị dữ liệu
+### 6.3 Cập nhật source qua GitHub trong cửa sổ bảo trì
+
+Dùng cho checkout đã cài hoặc đã thu trước đây. Không dùng mục 6.2 để ghi đè checkout
+cũ. Trình tự: dừng lệnh collector; với run lỗi còn owner, làm backup forensic và
+quarantine đúng CLI theo hướng dẫn R02/R03 trên GitHub; kiểm owner đã giải phóng;
+với source đã có tag/receipt được duyệt thì làm backup thường mục 15. Source legacy
+chưa có receipt dùng bản forensic đã chép/kiểm checksum trên host; không tự tạo
+metadata ngược ngày hoặc coi đó là backup 3.6 đã restore. Sau đó mới mở cửa sổ bảo
+trì có Internet trên SOC-AI; sau cập nhật 3.6, làm backup/restore mục 15 trước pilot mới.
+Không đổi mạng/source/venv khi run còn STARTED hoặc FINALIZING. Nếu cần reboot SOC
+để khôi phục default route như mục 10.1, chỉ reboot sau khi đã bảo toàn dữ liệu và
+đóng owner. Không revert snapshot VM có dataset/cursor cũ. Giữ Kali/target không
+phát hành động trong bảo trì; không tắt ACL peer để tải code.
+
+Trên SOC-AI đã có Internet trở lại, nhập checkout thật. Đây là cập nhật pilot 3.6,
+không phải quy trình tự đổi catalog/contract cho G7. Nếu config/lockfile giữa source
+cũ và release khác nhau, dừng đối chiếu; không chép đè hoặc stash cấu hình để vượt.
+
+```bash
+set -euo pipefail
+read -er -p 'Existing project root: ' PROJECT_ROOT
+cd "$PROJECT_ROOT"
+test -d .git
+mkdir -p evidence/scenario-runs
+test ! -e evidence/scenario-runs/.active-run.json
+while IFS= read -r -d '' STATE; do
+  jq -e 'type=="object" and (.status=="FINALIZED" or .status=="ABORTED")' "$STATE" >/dev/null || {
+    echo 'STOP: active or unknown state; preserve and close owner first' >&2; exit 1;
+  }
+done < <(find evidence/scenario-runs -mindepth 2 -name .collection_state.json -print0)
+test -z "$(git status --porcelain --untracked-files=all)"
+case "$(git remote get-url origin)" in
+  https://github.com/lethinhlord/Repo.git|git@github.com:lethinhlord/Repo.git) ;;
+  *) echo 'STOP: origin is not the approved GitHub repository' >&2; exit 1 ;;
+esac
+PILOT_TAG=pilot-v3.6-20261103
+REVIEWED_CODE_COMMIT=9c599f656cb12009492cd8dda721529f8335de04
+if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+  git fetch --unshallow origin
+fi
+git fetch --no-tags origin "refs/tags/$PILOT_TAG:refs/tags/$PILOT_TAG"
+test "$(git cat-file -t "refs/tags/$PILOT_TAG")" = tag
+REVIEWED_SOURCE_COMMIT=$(git rev-parse "refs/tags/$PILOT_TAG^{commit}")
+[[ "$REVIEWED_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+git merge-base --is-ancestor "$REVIEWED_CODE_COMMIT" "$REVIEWED_SOURCE_COMMIT"
+git diff --exit-code "$REVIEWED_CODE_COMMIT" "$REVIEWED_SOURCE_COMMIT" -- . \
+  ':(exclude)docs/scenario-collection-runbook.md' ':(exclude)docs/current-status.md' \
+  ':(exclude)docs/pilot-r02-recovery.md' ':(exclude)docs/pilot-r03-runbook.md' \
+  ':(exclude)docs/github-handoff-validation-v3.6-20261103.md'
+git diff --exit-code HEAD "$REVIEWED_SOURCE_COMMIT" -- \
+  config ml/feature_schema.json 'requirements*' pyproject.toml
+RELEASE_LOG="operator-logs/releases/$PILOT_TAG"
+mkdir -p "$RELEASE_LOG"
+if [ -e "$RELEASE_LOG/source-commit.txt" ]; then
+  test "$(cat "$RELEASE_LOG/source-commit.txt")" = "$REVIEWED_SOURCE_COMMIT"
+fi
+if [ ! -e "$RELEASE_LOG/source-before.txt" ]; then
+  git rev-parse HEAD > "$RELEASE_LOG/source-before.txt"
+fi
+git checkout --detach "$REVIEWED_SOURCE_COMMIT"
+test "$(git rev-parse HEAD)" = "$REVIEWED_SOURCE_COMMIT"
+printf '%s\n' https://github.com/lethinhlord/Repo.git > "$RELEASE_LOG/source-url.txt"
+printf '%s\n' "$PILOT_TAG" > "$RELEASE_LOG/source-tag.txt"
+printf '%s\n' "$REVIEWED_SOURCE_COMMIT" > "$RELEASE_LOG/source-commit.txt"
+test -x .venv-ml/bin/python
+.venv-ml/bin/python -m pip check
+.venv-ml/bin/python -m pytest -q \
+  tests/test_intake_tail_boundaries.py tests/test_intake_watermark.py \
+  tests/test_intake_review.py tests/test_intake_collection.py \
+  tests/test_collection_windows.py tests/test_archive_replay_identity.py \
+  > "$RELEASE_LOG/pytest.txt" 2>&1
+cat "$RELEASE_LOG/pytest.txt"
+```
+
+Tag sai/đã bị đổi, code ngoài năm file tài liệu không khớp anchor, local edits, owner,
+lockfile hoặc test không đạt thì dừng; không dùng --force, reset --hard hoặc clean.
+Giữ source-before và source-commit để đối chiếu; không ghi đè commit metadata hoặc
+snapshot của run cũ. Phát hành 3.6 không đổi dependency, nên không bootstrap lại chỉ
+để đổi tài liệu. Checkout chưa có venv hợp lệ phải được chuẩn bị riêng trong bảo trì.
+Sau cập nhật, đồng bộ giờ, cô lập lại theo 9.1/10.1 và chạy lại toàn bộ preflight,
+context enrollment khi cần và bốn pilot với ID mới; không phục hồi state cũ thành
+STARTED. Không coi tag/SHA hoặc test đạt là nghiệm thu G7 hay lab.
+
+### 6.4 API/n8n là phần kiểm tích hợp, tách khỏi việc chuẩn bị dữ liệu
 
 Collector đọc Archives trực tiếp; dựng lab, enrollment và thu pilot không cần model
 đã train hoặc API/n8n đang chạy. Vì vậy tránh vòng lặp “phải có model mới thu được data”.
@@ -1679,8 +1767,13 @@ cd "$HOME/datn-ai-soar-v3"
 test -z "$(git status --porcelain)"
 COLLECTION_MODE=pilot # Chi dung trainable sau khi G7 duoc nghiem thu
 if [ "$COLLECTION_MODE" = pilot ]; then
-  read -rp 'Paste pilot SHA from PILOT_SOURCE_COMMIT.txt: ' EXPECTED_SOURCE_COMMIT
-  [[ "$EXPECTED_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+  PILOT_TAG=pilot-v3.6-20261103
+  RELEASE_LOG="operator-logs/releases/$PILOT_TAG"
+  test "$(cat "$RELEASE_LOG/source-url.txt")" = https://github.com/lethinhlord/Repo.git
+  test "$(cat "$RELEASE_LOG/source-tag.txt")" = "$PILOT_TAG"
+  test "$(git cat-file -t "refs/tags/$PILOT_TAG")" = tag
+  EXPECTED_SOURCE_COMMIT=$(cat "$RELEASE_LOG/source-commit.txt")
+  test "$EXPECTED_SOURCE_COMMIT" = "$(git rev-parse "refs/tags/$PILOT_TAG^{commit}")"
 elif [ "$COLLECTION_MODE" = trainable ]; then
   : "${COLLECTION_BASELINE_COMMIT:?Can baseline thu chinh thuc do Thinh cung cap}"
   EXPECTED_SOURCE_COMMIT="$COLLECTION_BASELINE_COMMIT"
@@ -1692,8 +1785,7 @@ test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_COMMIT"
 mkdir -p evidence/scenario-runs
 test ! -e evidence/scenario-runs/.active-run.json
 while IFS= read -r -d '' STATE; do
-  jq -e . "$STATE" >/dev/null
-  test "$(jq -r '.status' "$STATE")" != STARTED
+  jq -e 'type=="object" and (.status=="FINALIZED" or .status=="ABORTED")' "$STATE" >/dev/null
 done < <(find evidence/scenario-runs -mindepth 2 \
   -name .collection_state.json -print0)
 .venv-ml/bin/python -m scripts.scenario_session --help >/dev/null
@@ -2304,7 +2396,7 @@ draft, auditor loại khỏi quota train mà vẫn kiểm integrity. Không đ�
 khi xem prediction, không đổi tên thư mục pilot thành trainable.
 
 Chạy progress audit sau mỗi pilot, backup và thử restore khác root. Gửi toàn bộ
-bundle/evidence cho Thịnh kiểm G6. Nếu chỉ một pilot đạt, chưa kết luận toàn bộ hệ thống
+gói evidence và tag/SHA cho Thịnh kiểm G6. Nếu chỉ một pilot đạt, chưa kết luận toàn bộ hệ thống
 đạt. Canary trước đó chỉ kiểm đường log; nó không thay cho pilot collector/restore.
 
 ### 10.7 Cổng G7 trước thu chính thức
@@ -2330,7 +2422,10 @@ Không tự nhập `136bb754`, không chọn SHA của model smoke hoặc bỏ g
 
 **Khi đổi release/catalog:** không trộn pilot của source cũ vào data/raw của release
 mới. Auditor đối chiếu contract/hash trước khi loại pilot khỏi quota. Trước khi đổi
-source, làm backup/restore mục 15 bằng mã cũ; giữ bundle/source/checksum và biên bản.
+source, giữ URL/tag/SHA, checksum và biên bản. Source đã có approved tag/receipt
+thì backup/restore mục 15 bằng mã cũ. Source legacy chưa có receipt dùng forensic
+backup đã chép/kiểm trên host theo hướng dẫn R02/R03, không gọi đó là restore 3.6;
+sau cập nhật source được duyệt mới làm backup/restore 3.6 trước pilot mới.
 Không có active run. Liệt kê run cũ, rồi cách ly từng pilot bằng CLI hiện hành:
 
 ```bash
@@ -2355,52 +2450,54 @@ pin d06d040 không tự áp dụng cho code/catalog khác. Candidate đã nghi�
 được Thịnh xác nhận thành COLLECTION_BASELINE_COMMIT; không tự đổi SHA để né kiểm.
 Pilot cùng contract với release cuối có thể giữ lại để audit nhưng không tính quota.
 
-Nếu lab đã cô lập Internet, Thịnh phải gửi gói local gồm source.bundle đầy đủ lịch
-sử, checksums.sha256, wheelhouse Linux x86_64/Python 3.12, wheelhouse.sha256 và
-wheelhouse-locks.sha256 khớp hai lockfile của candidate. Không lấy wheel Windows
-hoặc wheelhouse của release trước khi lockfile đã đổi. SHA candidate lấy từ hướng
-dẫn mới do Thịnh cung cấp, không tự chọn commit khác. Sau backup/cách ly pilot cũ:
+Nếu lab đã cô lập Internet, không nhận gói code local. Sau khi đã giữ forensic
+backup và quarantine các owner lỗi; backup thường trước bảo trì chỉ khi source cũ
+đã có approved tag/receipt. Nếu là legacy thì giữ forensic backup đã kiểm và làm
+backup/restore 3.6 sau cập nhật. Sau đó chuyển SOC sang bảo trì có
+Internet như 6.3/10.1. Mã candidate phải được Thịnh duyệt và đưa lên GitHub bằng
+một tag annotated riêng cùng SHA 40 ký tự. Tag pilot 3.6 không phải tag G7.
+Không mở run khi fetch, checkout hoặc đổi dependency. Sau khi các gate release
+đã được phê duyệt và không còn owner, lấy candidate từ GitHub:
 
 ```bash
 set -euo pipefail
 cd "$HOME/datn-ai-soar-v3"
 test ! -e evidence/scenario-runs/.active-run.json
+while IFS= read -r -d '' STATE; do
+  jq -e 'type=="object" and (.status=="FINALIZED" or .status=="ABORTED")' "$STATE" >/dev/null || {
+    echo 'STOP: active or unknown state before release change' >&2; exit 1;
+  }
+done < <(find evidence/scenario-runs -mindepth 2 -name .collection_state.json -print0)
 test -z "$(git status --porcelain --untracked-files=all)"
-read -rp 'Absolute path of owner-provided local release package: ' RELEASE_DIR
-[[ "$RELEASE_DIR" = /* ]]
-(cd "$RELEASE_DIR" && sha256sum --check checksums.sha256)
-read -rp 'Candidate SHA from the matching new guide: ' CANDIDATE_SOURCE_COMMIT
+case "$(git remote get-url origin)" in
+  https://github.com/lethinhlord/Repo.git|git@github.com:lethinhlord/Repo.git) ;;
+  *) echo 'STOP: unexpected source repository' >&2; exit 1 ;;
+esac
+read -rp 'Approved future collection release tag from Thinh: ' COLLECTION_TAG
+read -rp 'Approved full 40-character commit SHA from Thinh: ' CANDIDATE_SOURCE_COMMIT
+[[ "$COLLECTION_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]
+test "$COLLECTION_TAG" != pilot-v3.6-20261103
 [[ "$CANDIDATE_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
-git bundle verify "$RELEASE_DIR/source.bundle"
-git fetch "$RELEASE_DIR/source.bundle" HEAD
-git cat-file -e "$CANDIDATE_SOURCE_COMMIT^{commit}"
+git fetch --no-tags origin "refs/tags/$COLLECTION_TAG:refs/tags/$COLLECTION_TAG"
+test "$(git cat-file -t "refs/tags/$COLLECTION_TAG")" = tag
+test "$(git rev-parse "refs/tags/$COLLECTION_TAG^{commit}")" = "$CANDIDATE_SOURCE_COMMIT"
+RELEASE_LOG="operator-logs/releases/$COLLECTION_TAG"
+mkdir -p "$RELEASE_LOG"
+git rev-parse HEAD > "$RELEASE_LOG/source-before.txt"
 git checkout --detach "$CANDIDATE_SOURCE_COMMIT"
 test "$(git rev-parse HEAD)" = "$CANDIDATE_SOURCE_COMMIT"
-RELEASE_LOG="operator-logs/release-$(date -u +%Y%m%dT%H%M%SZ)"
-mkdir -p "$RELEASE_LOG"
-if [ -e operator-logs/wheelhouse ]; then
-  mv -- operator-logs/wheelhouse "$RELEASE_LOG/previous-wheelhouse"
-fi
-cp -a "$RELEASE_DIR/wheelhouse" operator-logs/wheelhouse
-cp -- "$RELEASE_DIR/wheelhouse.sha256" operator-logs/wheelhouse.sha256
-cp -- "$RELEASE_DIR/wheelhouse-locks.sha256" operator-logs/wheelhouse-locks.sha256
-sha256sum --check operator-logs/wheelhouse-locks.sha256
-(cd operator-logs/wheelhouse && sha256sum --check ../wheelhouse.sha256)
-.venv-ml/bin/python -m pip install --no-index --find-links operator-logs/wheelhouse \
-  --requirement requirements.lock --requirement requirements-ml.lock
+printf '%s\n' https://github.com/lethinhlord/Repo.git > "$RELEASE_LOG/source-url.txt"
+printf '%s\n' "$COLLECTION_TAG" > "$RELEASE_LOG/source-tag.txt"
+printf '%s\n' "$CANDIDATE_SOURCE_COMMIT" > "$RELEASE_LOG/source-commit.txt"
+bash scripts/bootstrap_ml.sh
 .venv-ml/bin/python -m pip check
 ```
 
-Gói checksums.sha256 phải bao phủ source.bundle, hai manifest wheelhouse và mọi
-wheel trong wheelhouse/; wheelhouse-locks.sha256 chứa hash requirements.lock và
-requirements-ml.lock tính tại root source candidate. Wheelhouse không chỉ là gói
-để cài được vào venv đang chạy: trước G7 phải kiểm một venv sạch với --no-index
-như khối WHEEL_QA ở 6.2, lưu output và bảo đảm backup có wheelhouse mới. Khi còn
-Internet trước 10.1, có thể tạo wheelhouse bằng lệnh pip download ở 6.2 sau checkout
-candidate; nếu đã cô lập thì nhận gói đúng môi trường từ Thịnh. Không chạy bootstrap
-có pip --upgrade qua Internet trong collection mode. Không mở run trong lúc đổi source,
-venv, rule, đồng hồ hoặc import package. Dùng RUN_ID mới cho pilot candidate, kể cả
-pilot cùng ngày đã bị quarantine trước đó.
+Dependency cài từ package index theo lockfile trong cửa sổ bảo trì, không nhận
+wheelhouse/code offline. Nếu cần cài lại môi trường thì đóng owner và bảo trì trước,
+không chạy pip/apt/git qua Internet trong collection mode. Sau source candidate,
+chạy lại preflight/enrollment/bốn pilot và toàn bộ gate; dùng RUN_ID mới. Không tự
+sửa SHA hoặc đổi tag pilot thành baseline thu chính thức.
 
 
 Kiên cần nhận: SHA commit đầy đủ 40 ký tự; catalog/contract đã freeze; lịch scenario
@@ -2721,25 +2818,25 @@ dùng snapshot đầy đủ tới EOF sẵn có để phân loại, không bổ 
 đúng hạn hoặc thay checkpoint. Late input thuộc bucket, record của agent đã cấu hình
 thiếu thời gian nguồn hoặc JSON thực sự chưa hoàn chỉnh vẫn fail closed. Không dựng lại hay ghi lùi checkpoint
 `capturing` của lần lỗi cũ; giữ nguyên nguồn/inode và các snapshot. Xem
-[quy trình pilot R03](pilot-r03-runbook.md) cho run mới và bàn giao evidence.
+[quy trình pilot R03](https://github.com/lethinhlord/Repo/blob/pilot-v3.6-20261103/docs/pilot-r03-runbook.md) cho run mới và bàn giao evidence.
 
 **Xử lý lỗi và mất phiên:**
 
 - Với lỗi R02 `duplicate alert id has conflicting payload`, xem quy trình
-  [cập nhật và đánh giá phục hồi R02](pilot-r02-recovery.md). Không dùng lại lệnh
+  [cập nhật và đánh giá phục hồi R02](https://github.com/lethinhlord/Repo/blob/pilot-v3.6-20261103/docs/pilot-r02-recovery.md). Không dùng lại lệnh
   dựng checkout mới ở mục 6.2 để thay thế checkout đang sở hữu run chưa finalize.
 - Chưa từng chạy intake trước cutoff: finalize muộn báo thiếu checkpoint hợp lệ.
   Giữ evidence, abort và thu run ID mới; không đổi giờ hay nới grace.
 - Mất phiên/lệnh bị ngắt khi checkpoint còn `capturing`, thiếu checkpoint hoặc có
   dòng JSON dở: không xóa file để chạy lại; giữ evidence, abort, sửa đường log và
   thu mới. Lệnh `status` vẫn cần dùng để xác định run đang sở hữu khóa.
-- Checkpoint đã sealed trước lỗi bước tạo feature/output: chỉ thử retry cùng RUN_ID
-  sau khi source sửa lỗi đã được kiểm chứng và phát hành, và kiểm toàn vẹn checkpoint,
-  capture, nguồn gốc/tail và snapshot vẫn đạt. Giữ nguyên config/context, thời gian,
-  evidence và các khóa/reservation; ghi việc đổi source vận hành ngoài evidence đã
-  đóng checksum. Không chạy lại action, không nhận thêm byte vào capture đã đóng băng,
-  không đổi snapshot để thích ứng đường dẫn mới. Nếu file tạm/trạng thái không rõ,
-  dùng quarantine theo Bước 6 thay vì sửa state bằng tay.
+- Checkpoint đã sealed trước lỗi bước tạo feature/output: chỉ thử lại tối đa một
+  lần trên cùng RUN_ID nếu code sửa lỗi đã được cài trước khi cô lập, kiểm local
+  và owner theo hướng dẫn R02/R03 đạt, capture/nguồn/tail/snapshot còn nguyên.
+  Không fetch, checkout, đổi venv/mạng/source khi owner còn active. Nếu cần tải
+  code mới thì giữ forensic backup, quarantine bằng CLI cũ, bảo trì GitHub và
+  chạy pilot ID/bucket mới. Không chạy lại action, thêm byte hoặc sửa snapshot để
+  hợp thức hóa run. Ghi SHA cũ/mã đang có vào operator log, không ghi đè evidence.
 - Có input thuộc bucket gốc xuất hiện sau cutoff, rotate/truncate, hash lệch hoặc
   clock chạy lùi: fail closed; không retry để bổ sung log cho run cũ. Byte tới muộn
   được giữ riêng ở `archive_capture-late.jsonl` nếu có; giữ cả file này và gửi lỗi.
@@ -3430,8 +3527,12 @@ Cổng nguồn không chứng minh accuracy hoặc thay kiểm leakage/cohort/th
 ## 15. Sao lưu và bàn giao dữ liệu gốc
 
 `data/raw/` và `evidence/scenario-runs/` bị Git bỏ qua có chủ đích; `git push` **không
-phải bản sao lưu dataset**. Sau mỗi bốn run hợp lệ và cuối mỗi buổi, chỉ sao lưu khi
-không còn run `STARTED`:
+phải bản sao lưu dataset**. Backup 3.6 lưu private raw/evidence và URL/tag/SHA,
+không đóng gói source/config/schema root; snapshot bất biến bên trong evidence vẫn
+được giữ để validate. Source restore lấy từ đúng tag GitHub, không ghi đè bằng file
+root từ tar. Checkout legacy chưa có approved tag/receipt dùng backup forensic
+R02/R03 trước bảo trì, rồi tạo backup 3.6 sau cập nhật. Sau mỗi bốn run hợp lệ và cuối mỗi buổi, chỉ sao lưu khi
+không còn run `STARTED`/`FINALIZING` và không có lệnh collector chạy:
 
 ```bash
 set -euo pipefail
@@ -3445,39 +3546,49 @@ fi
 cleanup_backup_lock() { rm -f -- "$LOCK"; }
 trap cleanup_backup_lock EXIT HUP INT TERM
 while IFS= read -r -d '' STATE; do
-  jq -e . "$STATE" >/dev/null
-  STATUS=$(jq -r '.status' "$STATE")
-  if [ "$STATUS" = STARTED ]; then
-    echo "FAIL: active state in $STATE" >&2
-    exit 1
-  fi
+  jq -e 'type=="object" and (.status=="FINALIZED" or .status=="ABORTED")' "$STATE" >/dev/null || {
+    echo "FAIL: active or unknown collection state in $STATE" >&2; exit 1;
+  }
 done < <(find evidence/scenario-runs -mindepth 2 -name .collection_state.json -print0)
 
 BACKUP_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP_DIR="$HOME/datn-backups/$BACKUP_ID"
 ARCHIVE="$BACKUP_DIR/collection-$BACKUP_ID.tar.gz"
-mkdir -p "$BACKUP_DIR"
+mkdir -p "$HOME/datn-backups"
+mkdir "$BACKUP_DIR"
+read -rp 'Approved tag from the verified release receipt: ' BACKUP_SOURCE_TAG
+[[ "$BACKUP_SOURCE_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]
+RELEASE_RECEIPT="operator-logs/releases/$BACKUP_SOURCE_TAG"
+test "$(cat "$RELEASE_RECEIPT/source-url.txt")" = https://github.com/lethinhlord/Repo.git
+test "$(cat "$RELEASE_RECEIPT/source-tag.txt")" = "$BACKUP_SOURCE_TAG"
+test "$(cat "$RELEASE_RECEIPT/source-commit.txt")" = "$(git rev-parse HEAD)"
+test "$(git cat-file -t "refs/tags/$BACKUP_SOURCE_TAG")" = tag
+test "$(git rev-parse "refs/tags/$BACKUP_SOURCE_TAG^{commit}")" = "$(git rev-parse HEAD)"
 git rev-parse HEAD > "$BACKUP_DIR/git-commit.txt"
-git bundle create "$BACKUP_DIR/source.bundle" --all HEAD
-git bundle verify "$BACKUP_DIR/source.bundle"
+printf '%s\n' https://github.com/lethinhlord/Repo.git > "$BACKUP_DIR/source-url.txt"
+printf '%s\n' "$BACKUP_SOURCE_TAG" > "$BACKUP_DIR/source-tag.txt"
+git rev-parse "refs/tags/$BACKUP_SOURCE_TAG" > "$BACKUP_DIR/source-tag-object.txt"
+git diff --exit-code
+git diff --cached --exit-code
+git ls-files -- evidence > "$BACKUP_DIR/tracked-evidence.exclude"
 RAW_COUNT=$(find data/raw -mindepth 2 -maxdepth 2 -name scenario_manifest.json | wc -l)
 tar --create --gzip --file "$ARCHIVE" \
   --exclude='evidence/scenario-runs/.active-run.json' \
   --exclude='evidence/operator-parameter-exports' \
   --exclude='*.env' --exclude='*.ps1' \
-  data/raw data/quarantine evidence run-drafts operator-logs \
-  config/scenario-catalog.yaml config/collection-sources.yaml \
-  config/suspicious-process-taxonomy.yaml ml/feature_schema.json
+  --exclude='*wheelhouse*' --exclude='*.whl' --exclude='*.bundle' \
+  --exclude-from="$BACKUP_DIR/tracked-evidence.exclude" \
+  data/raw data/quarantine evidence run-drafts operator-logs
 (
   cd "$BACKUP_DIR"
-  sha256sum "$(basename "$ARCHIVE")" git-commit.txt source.bundle > checksums.sha256
+  sha256sum "$(basename "$ARCHIVE")" git-commit.txt source-url.txt source-tag.txt source-tag-object.txt tracked-evidence.exclude > checksums.sha256
   sha256sum --check checksums.sha256
 )
 tar -tzf "$ARCHIVE" > "$BACKUP_DIR/archive.list"
 grep -q '^data/raw/' "$BACKUP_DIR/archive.list"
 grep -q '^evidence/scenario-runs/' "$BACKUP_DIR/archive.list"
 ! grep -Eq '(^|/)([^/]*\.env|[^/]*\.ps1)$' "$BACKUP_DIR/archive.list"
-ARCHIVE_RUNS=$(grep -Ec '^data/raw/[^/]+/scenario_manifest.json$' "$BACKUP_DIR/archive.list")
+ARCHIVE_RUNS=$(awk -F/ '$1=="data" && $2=="raw" && NF==4 && $4=="scenario_manifest.json" {n++} END {print n+0}' "$BACKUP_DIR/archive.list")
 test "$ARCHIVE_RUNS" -eq "$RAW_COUNT"
 cleanup_backup_lock
 trap - EXIT HUP INT TERM
@@ -3489,21 +3600,27 @@ Kiểm tra giải nén vào thư mục tạm, tuyệt đối không đè lên re
 ```bash
 set -euo pipefail
 read -rp 'BACKUP_ID cần kiểm tra: ' BACKUP_ID
+[[ "$BACKUP_ID" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]
 BACKUP_DIR="$HOME/datn-backups/$BACKUP_ID"
 ARCHIVE="$BACKUP_DIR/collection-$BACKUP_ID.tar.gz"
 test -f "$ARCHIVE"
 test -f "$BACKUP_DIR/archive.list"
 (cd "$BACKUP_DIR" && sha256sum --check checksums.sha256)
-RAW_COUNT=$(grep -Ec '^data/raw/[^/]+/scenario_manifest.json$' "$BACKUP_DIR/archive.list")
+RAW_COUNT=$(awk -F/ '$1=="data" && $2=="raw" && NF==4 && $4=="scenario_manifest.json" {n++} END {print n+0}' "$BACKUP_DIR/archive.list")
 RESTORE_CHECK=$(mktemp -d)
 trap 'rm -rf -- "$RESTORE_CHECK"' EXIT
 tar -xzf "$ARCHIVE" -C "$RESTORE_CHECK"
 test -d "$RESTORE_CHECK/data/raw"
 test -d "$RESTORE_CHECK/evidence/scenario-runs"
+if [ "$RAW_COUNT" -gt 0 ]; then
+  test -d "$RESTORE_CHECK/operator-logs/enrollment"
+fi
+if [ -d "$RESTORE_CHECK/operator-logs/enrollment" ]; then
 while IFS= read -r -d '' ENROLL_CHECKSUM; do
   (cd "$(dirname "$ENROLL_CHECKSUM")" && sha256sum --check "$(basename "$ENROLL_CHECKSUM")")
 done < <(find "$RESTORE_CHECK/operator-logs/enrollment" \
   -type f \( -name capture.sha256 -o -name baseline.sha256 \) -print0)
+fi
 RESTORED_RUNS=$(find "$RESTORE_CHECK/data/raw" -name scenario_manifest.json | wc -l)
 test "$RESTORED_RUNS" -eq "$RAW_COUNT"
 while IFS= read -r -d '' CHECKSUM; do
@@ -3512,29 +3629,61 @@ done < <(find "$RESTORE_CHECK/evidence/scenario-runs" -name checksums.sha256 -pr
 echo 'RESTORE_DRY_RUN=PASS'
 ```
 
-Khôi phục thật vào checkout mới, không đè repo đang thu:
+Khôi phục thật cần cửa sổ bảo trì có Internet, không có owner/STARTED/FINALIZING;
+lấy source từ GitHub theo đúng SHA đã lưu rồi mới nạp private backup. Không restore
+source giữa collection mode hoặc đè lên checkout đang thu. Backup legacy thiếu receipt/tag đã duyệt chỉ dùng forensic để bảo toàn evidence;
+không tự gắn metadata 3.6 ngược ngày để coi là restore đạt. Bản 3.6 không cần code offline.
+Nếu GitHub không có tag/object/commit đã lưu thì dừng, không thay bằng main mới
+nhất. Cài dependency online từ lockfile của tag trong bảo trì rồi mới cô lập lab:
+
+Nhập đường dẫn checkout đang dùng trên SOC-AI, kể cả khi đã đổi tên/thư mục so
+với hướng dẫn. Không dùng biến mặc định để bỏ qua kiểm owner. Nếu SOC-AI vừa được
+dựng lại hoàn toàn và chưa có checkout, thực hiện cài mới 6.2 trước rồi nhập đường
+dẫn vừa tạo; không thực hiện cách này để né owner của một checkout còn đang chạy.
+
 
 ```bash
 set -euo pipefail
+read -er -p 'Đường dẫn tuyệt đối checkout đang dùng trên SOC-AI: ' ACTIVE_PROJECT_ROOT
+[[ "$ACTIVE_PROJECT_ROOT" = /* ]]
+test -d "$ACTIVE_PROJECT_ROOT/.git"
+test -d "$ACTIVE_PROJECT_ROOT/evidence/scenario-runs"
+  test ! -e "$ACTIVE_PROJECT_ROOT/evidence/scenario-runs/.active-run.json"
+  while IFS= read -r -d '' STATE; do
+    jq -e 'type=="object" and (.status=="FINALIZED" or .status=="ABORTED")' "$STATE" >/dev/null || {
+      echo 'STOP: active or unknown state before GitHub restore' >&2; exit 1;
+    }
+  done < <(find "$ACTIVE_PROJECT_ROOT/evidence/scenario-runs" -mindepth 2 -name .collection_state.json -print0)
 read -rp 'BACKUP_ID cần khôi phục: ' BACKUP_ID
+[[ "$BACKUP_ID" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]
 BACKUP_DIR="$HOME/datn-backups/$BACKUP_ID"
 ARCHIVE="$BACKUP_DIR/collection-$BACKUP_ID.tar.gz"
 test -f "$ARCHIVE"
 test -f "$BACKUP_DIR/git-commit.txt"
-test -f "$BACKUP_DIR/source.bundle"
+test "$(cat "$BACKUP_DIR/source-url.txt")" = https://github.com/lethinhlord/Repo.git
+SOURCE_TAG=$(cat "$BACKUP_DIR/source-tag.txt")
+TAG_OBJECT=$(cat "$BACKUP_DIR/source-tag-object.txt")
+[[ "$SOURCE_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]
+[[ "$TAG_OBJECT" =~ ^[0-9a-f]{40}$ ]]
+(cd "$BACKUP_DIR" && sha256sum --check checksums.sha256)
 RESTORE_ROOT="$HOME/datn-ai-soar-v3-restored-$BACKUP_ID"
 test ! -e "$RESTORE_ROOT"
 COMMIT=$(cat "$BACKUP_DIR/git-commit.txt")
-git clone "$BACKUP_DIR/source.bundle" "$RESTORE_ROOT"
+[[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]]
+git clone --branch "$SOURCE_TAG" --single-branch \
+  https://github.com/lethinhlord/Repo.git "$RESTORE_ROOT"
+git -C "$RESTORE_ROOT" fetch --no-tags origin "refs/tags/$SOURCE_TAG:refs/tags/$SOURCE_TAG"
+test "$(git -C "$RESTORE_ROOT" cat-file -t "refs/tags/$SOURCE_TAG")" = tag
+test "$(git -C "$RESTORE_ROOT" rev-parse "refs/tags/$SOURCE_TAG")" = "$TAG_OBJECT"
+test "$(git -C "$RESTORE_ROOT" rev-parse "refs/tags/$SOURCE_TAG^{commit}")" = "$COMMIT"
 git -C "$RESTORE_ROOT" checkout --detach "$COMMIT"
+test "$(git -C "$RESTORE_ROOT" rev-parse HEAD)" = "$COMMIT"
 tar -xzf "$ARCHIVE" -C "$RESTORE_ROOT"
 cd "$RESTORE_ROOT"
-# Khong can Internet tren SOC dang collection mode. Dung wheelhouse da tai truoc.
-sha256sum --check operator-logs/wheelhouse-locks.sha256
-(cd operator-logs/wheelhouse && sha256sum --check ../wheelhouse.sha256)
-python3 -m venv .venv-ml
-.venv-ml/bin/python -m pip install --no-index --find-links operator-logs/wheelhouse \
-  --requirement requirements.lock --requirement requirements-ml.lock
+git diff --exit-code
+git diff --cached --exit-code
+# Source va dependency chi lay online trong bao tri, truoc collection mode.
+bash scripts/bootstrap_ml.sh
 .venv-ml/bin/python -m pip check
 for RUN_PATH in data/raw/*; do
   test -d "$RUN_PATH" || continue
@@ -3544,8 +3693,10 @@ done
 echo 'RESTORE_VALIDATION=PASS'
 ```
 
-Backup cũ không có wheelhouse-locks.sha256 phải được kiểm bằng hướng dẫn/source
-đúng revision của backup; không tự tạo manifest ngược ngày để gọi là đạt 3.5.
+Backup cũ không có tag/object SHA/receipt đã duyệt chỉ là forensic/hồ sơ lịch sử;
+không tự tạo metadata ngược ngày để coi là backup 3.6 đạt. Backup 3.6 không cần
+wheelhouse hoặc source offline; khi mất kết nối GitHub/package index, giữ dữ liệu
+và hoãn source restore cho tới cửa sổ bảo trì có kết nối hợp lệ.
 
 Với backup giữa buổi chưa đủ 40 run, audit progress có thể vẫn `COLLECTING` (final vẫn `NOT_READY`); điều đó
 không làm restore sai. Điều kiện restore là tất cả run hiện có `VALID`, checksum đúng và
@@ -3558,6 +3709,8 @@ in ra. Bản nằm cùng datastore VMware không được tính là bản sao th
 $ErrorActionPreference = 'Stop'
 $SocUser = Read-Host "SOC-AI SSH username"
 $BackupId = Read-Host "BACKUP_ID from SOC-AI"
+if ($SocUser -notmatch '^[a-z_][a-z0-9_-]*$') { throw 'Invalid SOC username' }
+if ($BackupId -notmatch '^\d{8}T\d{6}Z$') { throw 'Invalid BACKUP_ID' }
 $BackupRoot = "D:\SOC_AI_SOAR_backups"
 $SocHome = ssh "${SocUser}@192.168.58.147" 'printf %s "$HOME"'
 if ($LASTEXITCODE -ne 0 -or -not $SocHome) { throw "Cannot resolve SOC-AI HOME" }
@@ -3598,7 +3751,7 @@ gửi archive, `checksums.sha256`, `git-commit.txt` và báo cáo audit cùng nh
 | `late original-window input` | input của bucket cũ xuất hiện sau hạn | giữ late capture, sửa độ trễ/forwarding, thu lại; không nới grace theo run |
 | `cannot recover collection bucket` | không đủ chứng cứ để xác định quyền bucket | bảo toàn dữ liệu hỏng, restore bộ backup đã kiểm, không xóa quarantine/reservation |
 | `collection contract` | catalog/schema/taxonomy/source config khác snapshot lúc start | quarantine run, đồng bộ đúng commit, chạy lại pilot rồi thu ID mới |
-| `duplicate alert id has conflicting payload` | archive thiếu rule giữ ID nguồn không duy nhất trên mã cũ, hoặc alert có rule thật sự xung đột | giữ toàn bộ capture/checkpoint; theo hướng dẫn R02 cập nhật source đã kiểm, chỉ retry nếu còn đủ provenance; không xóa dòng hoặc tắt parity |
+| `duplicate alert id has conflicting payload` | archive thiếu rule giữ ID nguồn không duy nhất trên mã cũ, hoặc alert có rule thật sự xung đột | giữ toàn bộ capture/checkpoint; theo hướng dẫn R02 kiểm code sửa lỗi đã có local và owner; chỉ retry khi đủ provenance, nếu cần tải code thì forensic/quarantine trước bảo trì; không xóa dòng hoặc tắt parity |
 | `SCENARIO_CATALOG_MISMATCH` | draft/manifest không thuộc catalog hoặc sai family/label | quarantine run, cập nhật repo đúng commit, tạo draft mới từ CLI |
 | `SCENARIO_IMBALANCE`/`STRATUM_EXCESS` | năm scenario lệch nhau quá 1 run hoặc nhóm đã quá 12 | không copy/xóa tùy tiện; dừng thu, bàn giao audit để người phụ trách quyết định dataset version mới |
 | duplicate incident/run | tái sử dụng dữ liệu hoặc ID | quarantine bản trùng và chạy mới |
@@ -3664,7 +3817,7 @@ Các mốc cần ảnh (chụp từng bước, không chỉ ảnh cuối):
 - [ ] Progress audit chỉ còn shortage/design pending, không lỗi integrity/collision.
 - [ ] Backup nguyên liệu đã chép host, SHA đúng, restore khác root validate toàn bộ.
 - [ ] Ảnh PNG gốc toàn màn hình và nhật ký có tên bước/RUN_ID/UTC/SHA thật.
-- [ ] Gửi Thịnh bundle source + tar dataset/evidence + checksums + progress report +
+- [ ] Gửi Thịnh URL/tag/SHA GitHub + tar dataset/evidence riêng tư + checksums + progress report +
       nhật ký/ảnh. Không gửi password/key; chưa đánh dấu G7 hoặc model sẵn sàng train.
 
 ### 18.2 Bàn giao dataset chính thức sau khi được mở G7
