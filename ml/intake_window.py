@@ -71,6 +71,34 @@ def _hash_prefix(handle, length):
     return digest.hexdigest()
 
 
+def _read_tail_snapshot(handle, cursor, offset):
+    """Observe a finite late suffix, never chasing an actively growing log."""
+    _identity(handle, cursor, offset)
+    end = os.fstat(handle.fileno()).st_size
+    if end < offset:
+        raise IntakeError("intake source truncated before late tail snapshot")
+    handle.seek(offset)
+    parts = []
+    remaining = end - offset
+    while remaining:
+        block = handle.read(min(1024 * 1024, remaining))
+        if not block:
+            raise IntakeError("intake source truncated while observing late tail")
+        parts.append(block)
+        remaining -= len(block)
+        _identity(handle, cursor, end)
+    _identity(handle, cursor, end)
+    return b"".join(parts)
+
+
+def _save_late(path, payload):
+    saved = path.read_bytes() if path.exists() else b""
+    if not payload.startswith(saved):
+        raise IntakeError("source late tail was truncated or changed")
+    if payload:
+        path.write_bytes(payload)
+
+
 def verify_capture(cursor, capture_path, checkpoint_path, *, deadline, relevant, live_source=True):
     """Verify frozen evidence; live_source also audits the current archive tail.
 
@@ -110,8 +138,13 @@ def verify_capture(cursor, capture_path, checkpoint_path, *, deadline, relevant,
             raise IntakeError("checkpoint lacks read completion evidence")
         late_path = capture_path.with_name(capture_path.stem + "-late.jsonl")
         saved_late = late_path.read_bytes() if late_path.exists() else b""
-        if any(relevant(row) for row in _rows(saved_late)):
+        # Previously observed complete late records remain evidence even if the
+        # source is now unavailable or changed. An incomplete suffix needs a
+        # live, prefix-preserving observation before it can be classified.
+        boundary = saved_late.rfind(b"\n") + 1
+        if any(relevant(row) for row in _rows(saved_late[:boundary])):
             raise IntakeError("saved late original-window evidence after cutoff")
+        late = saved_late
         if live_source:
             with Path(cursor["path"]).open("rb") as handle:
                 _identity(handle, cursor, offset)
@@ -119,15 +152,12 @@ def verify_capture(cursor, capture_path, checkpoint_path, *, deadline, relevant,
                     raise IntakeError("source prefix provenance mismatch")
                 if _hash_prefix(handle, offset) != checkpoint["source_sha256"]:
                     raise IntakeError("source capture provenance mismatch")
-                handle.seek(offset)
-                late = handle.read()
-                _identity(handle, cursor, offset + len(late))
-            if not late.startswith(saved_late):
-                raise IntakeError("source late tail was truncated or changed")
-            if late:
-                late_path.write_bytes(late)
-                if any(relevant(row) for row in _rows(late)):
-                    raise IntakeError("late original-window input after intake cutoff")
+                late = _read_tail_snapshot(handle, cursor, offset)
+            _save_late(late_path, late)
+        boundary = late.rfind(b"\n") + 1
+        if any(relevant(row) for row in _rows(late[:boundary])):
+            raise IntakeError("late original-window input after intake cutoff")
+        _rows(late[boundary:])  # An unresolved EOF suffix remains fail-closed.
         return _rows(raw)
     except (OSError, KeyError, TypeError, ValueError) as exc:
         if isinstance(exc, IntakeError):
@@ -182,12 +212,17 @@ def capture_window(
                 previous = completed
                 pending += block
                 if completed > deadline:
-                    if pending:
-                        capture_path.with_name(capture_path.stem + "-late.jsonl").write_bytes(
-                            pending
-                        )
-                        if any(relevant(row) for row in _rows(pending)):
-                            raise IntakeError("read completed after intake deadline/cutoff")
+                    late_path = capture_path.with_name(capture_path.stem + "-late.jsonl")
+                    _save_late(late_path, pending)
+                    late = _read_tail_snapshot(source, cursor, offset)
+                    if not late.startswith(pending):
+                        raise IntakeError("source late tail was truncated or changed")
+                    _save_late(late_path, late)
+                    # Completing observation cannot admit any byte past cutoff.
+                    boundary = late.rfind(b"\n") + 1
+                    if any(relevant(row) for row in _rows(late[:boundary])):
+                        raise IntakeError("read completed after intake deadline/cutoff")
+                    _rows(late[boundary:])
                     break
                 boundary = pending.rfind(b"\n") + 1
                 if boundary:
