@@ -1256,7 +1256,7 @@ def _verify_full_capture_parity(
     """Replay the full asset bucket without label, scenario or nonce filtering."""
     start, end = _aggregation_window(incident.start_time)
     alerts = []
-    for row in captured:
+    for ordinal, row in enumerate(captured):
         at = _event_time(row)
         agent = row.get("agent")
         if not isinstance(agent, dict) or agent.get("name") not in {
@@ -1270,7 +1270,14 @@ def _verify_full_capture_parity(
             continue
         envelope = dict(row)
         canonical = json.dumps(row, sort_keys=True, separators=(",", ":"))
-        envelope.setdefault("id", "archive-" + hashlib.sha256(canonical.encode()).hexdigest())
+        digest = hashlib.sha256(canonical.encode()).hexdigest()
+        if "rule" not in row:
+            # Native archive IDs can repeat. Bind each raw occurrence to its
+            # position in the sealed full capture, preserving identical rows.
+            # This virtual ID never replaces the original captured evidence.
+            envelope["id"] = f"archive-raw-v1-{ordinal}-{digest}"
+        else:
+            envelope.setdefault("id", "archive-" + digest)
         envelope.setdefault("timestamp", _iso(at))
         envelope.setdefault("rule", {"id": "archive-raw", "level": 0})
         try:
@@ -1280,13 +1287,18 @@ def _verify_full_capture_parity(
         alerts.append(alert)
     if not alerts:
         raise CollectionError("full-capture parity has no replayable records")
-    batch = aggregate_wazuh_alerts(
-        alerts,
-        baseline=load_baseline(evidence_dir / "context-baseline.json"),
-        source_config=source.model_dump(mode="json"),
-        taxonomy=_load_taxonomy(evidence_dir / "suspicious-process-taxonomy.yaml"),
-        use_runtime_baseline=False,
-    )
+    baseline = load_baseline(evidence_dir / "context-baseline.json")
+    taxonomy = _load_taxonomy(evidence_dir / "suspicious-process-taxonomy.yaml")
+    try:
+        batch = aggregate_wazuh_alerts(
+            alerts,
+            baseline=baseline,
+            source_config=source.model_dump(mode="json"),
+            taxonomy=taxonomy,
+            use_runtime_baseline=False,
+        )
+    except ValueError as exc:
+        raise CollectionError(f"full-capture parity aggregation failed: {exc}") from exc
     candidates = [
         item.incident
         for item in batch.incidents
