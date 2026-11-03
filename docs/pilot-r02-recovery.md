@@ -62,63 +62,119 @@ grep -Fq "$RUN_DIR/.collection_state.json" "$BACKUP_DIR/archive.list"
 echo "$BACKUP_DIR"
 ```
 
-Chép bộ backup ra host để bảo toàn. Backup này chưa phải xác nhận run hợp lệ và
+Chép backup ra host qua kênh riêng tư và kiểm `checksums.sha256` tại host. Đây là
+backup forensic khi owner còn active; không chạy backup thường mục 15 lúc này.
+Backup này chưa phải xác nhận run hợp lệ và
 không bảo đảm có thể restore inode/prefix của archive live để tiếp tục finalize.
 
-## 3. Nhận bản sửa đã phát hành, không đổi snapshot của run
+## 3. Kiểm mã local và xử lý owner
 
-Các file cần cho quy trình R02: `PILOT_SOURCE.bundle`, `PILOT_SOURCE.bundle.sha256`,
-`PILOT_SOURCE_COMMIT.txt`, Kiên.txt cùng đợt và chính `pilot-r02-recovery.md` này.
-Đặt companion cùng thư mục Kiên.txt để liên kết trong bản TXT không trỏ tới file
-còn thiếu ở checkout cũ. Bundle được tạo từ main sau merge đã kiểm; SHA trong
-pointer chỉ dùng pilot, không mở G7.
+Source và hướng dẫn pilot ở tag [pilot-v3.6-20261103](https://github.com/lethinhlord/Repo/tree/pilot-v3.6-20261103);
+anchor mã đã kiểm là `9c599f656cb12009492cd8dda721529f8335de04`. Tag pilot
+không mở G7. Khi owner còn active, không fetch, checkout, cài/sửa venv hoặc nối
+Internet. Không bootstrap lại, đổi snapshot hay ghi đè
+`evidence/collection-source-commit.txt` cũ.
 
-Chép ba file source vào `$HOME/datn-r02-fix` trên SOC-AI trước khi thực hiện khối
-dưới. Bundle cho phép cập nhật khi SOC đang collection mode không có Internet.
-Checksum kiểm lỗi sao chép; chỉ nhận bộ source từ Thịnh qua kênh bàn giao đã biết.
-
-```bash
-HANDOFF="$HOME/datn-r02-fix"
-(cd "$HANDOFF" && sha256sum --check PILOT_SOURCE.bundle.sha256)
-FIX_SHA=$(cat "$HANDOFF/PILOT_SOURCE_COMMIT.txt")
-[[ "$FIX_SHA" =~ ^[0-9a-f]{40}$ ]]
-git bundle verify "$HANDOFF/PILOT_SOURCE.bundle"
-git fetch "$HANDOFF/PILOT_SOURCE.bundle" refs/heads/main
-test "$(git rev-parse FETCH_HEAD)" = "$FIX_SHA"
-```
-
-Tiếp tục trên **chính checkout cũ**. Bản sửa đã kiểm từ main cũ `35c043c...`;
-nếu checkout có nguồn khác thì không tự nâng cấp xuyên nhiều contract. Kiểm này
-chủ động dừng để gửi SHA/worktree và evidence cho Thịnh đối chiếu.
+Chỉ thử finalize tối đa một lần khi mã đã sửa được cài trước khi cô lập, checkpoint
+sealed và provenance còn nguyên. Kiểm local chỉ chấp nhận đúng anchor hoặc commit
+của tag 3.6 đã có sẵn; với tag, kiểm tổ tiên và toàn bộ cây ngoài năm file tài liệu.
+Nếu thiếu object hoặc tag local, không tải giữa run; đi nhánh quarantine bên dưới:
 
 ```bash
-OLD_PILOT='35c043c3a9a4874d3bcffe7d06522ab500355546'
-test "$(git rev-parse HEAD)" = "$OLD_PILOT"
-git diff --exit-code -- ml api scripts tests requirements.lock requirements-ml.lock
-git diff --cached --exit-code
-git diff --exit-code "$OLD_PILOT" "$FIX_SHA" -- \
-  config ml/feature_schema.json requirements.lock requirements-ml.lock
-git checkout --detach "$FIX_SHA"
-test "$(git rev-parse HEAD)" = "$FIX_SHA"
-mkdir -p operator-logs/r02-recovery
-git rev-parse HEAD > operator-logs/r02-recovery/source-after.txt
-.venv-ml/bin/python -m pytest -q tests/test_archive_replay_identity.py \
-  tests/test_feature_pipeline.py tests/test_feature_state.py
+CODE_ANCHOR=9c599f656cb12009492cd8dda721529f8335de04
+RUN_DIR="evidence/scenario-runs/$RUN_ID"
+retry_local_gate() {
+  local head_sha clean
+  test -d "$RUN_DIR" || return 1
+  jq -e --arg id "$RUN_ID" 'type=="object" and .run_id==$id' \
+    evidence/scenario-runs/.active-run.json >/dev/null || return 1
+  jq -e '.status == "STARTED" and .execution_receipt.status == "COMPLETED"' \
+    "$RUN_DIR/.collection_state.json" >/dev/null || return 1
+  jq -e '.status == "sealed"' "$RUN_DIR/intake_checkpoint.json" >/dev/null || return 1
+  head_sha=$(git rev-parse HEAD) || return 1
+  git cat-file -e "$CODE_ANCHOR^{commit}" || return 1
+  if [ "$head_sha" != "$CODE_ANCHOR" ]; then
+    test "$(git cat-file -t refs/tags/pilot-v3.6-20261103)" = tag || return 1
+    test "$head_sha" = "$(git rev-parse 'refs/tags/pilot-v3.6-20261103^{commit}')" || return 1
+  fi
+  git merge-base --is-ancestor "$CODE_ANCHOR" "$head_sha" || return 1
+  git diff --exit-code "$CODE_ANCHOR" "$head_sha" -- . \
+    ':(exclude)docs/scenario-collection-runbook.md' ':(exclude)docs/current-status.md' \
+    ':(exclude)docs/pilot-r02-recovery.md' ':(exclude)docs/pilot-r03-runbook.md' \
+    ':(exclude)docs/github-handoff-validation-v3.6-20261103.md' || return 1
+  clean=$(git status --porcelain --untracked-files=all) || return 1
+  test -z "$clean" || return 1
+}
+LOCAL_RETRY_OK=0
+if retry_local_gate; then
+  LOCAL_RETRY_OK=1
+  mkdir -p operator-logs/r02-recovery
+  git rev-parse HEAD > operator-logs/r02-recovery/source-retry.txt
+  echo 'LOCAL_RETRY_OK=1: inspect provenance, then consider one retry in step 4'
+else
+  echo 'LOCAL_RETRY_OK=0: preserve backup, use quarantine branch below'
+fi
 ```
 
-Không dùng `reset --hard`, `clean`, `checkout -f`, stash rồi chép ngược config, hay
-xóa file cản checkout. Nếu kiểm source/local edits hoặc test lỗi, dừng và gửi log.
-Không chạy bootstrap/enrollment lại, không ghi đè `evidence/collection-source-commit.txt`
-của đợt cũ. Mã mới không thay đổi contract/config/schema/dependency; các cấu hình lab
-và snapshot frozen phải còn nguyên. Ghi cập nhật source ngoài evidence run đã đóng checksum.
+Dùng cùng Bash session cho các block. Nếu trạng thái khác STARTED, dừng và xử lý
+theo nhánh trạng thái ở Kiên.txt; không tự quarantine theo block này. Nếu kiểm
+không đạt hoặc run không đủ điều kiện retry, không chạy finalize. Sau
+forensic backup ở mục 2 và khi collector đã dừng, dùng CLI và venv cũ để quarantine
+đúng run, rồi kiểm owner đã được giải phóng:
+
+```bash
+if [ "$LOCAL_RETRY_OK" != 1 ]; then
+  if [ -e evidence/scenario-runs/.active-run.json ]; then
+    jq -e --arg id "$RUN_ID" 'type=="object" and .run_id==$id' \
+      evidence/scenario-runs/.active-run.json >/dev/null
+  fi
+  jq -e '.status == "STARTED"' "$RUN_DIR/.collection_state.json" >/dev/null
+  read -rp 'Forensic backup copied to host and checksum verified there? Type YES: ' HOST_BACKUP_VERIFIED
+  test "$HOST_BACKUP_VERIFIED" = YES
+  .venv-ml/bin/python -m scripts.scenario_session quarantine \
+    --run-id "$RUN_ID" --reason 'Failed R02; preserve evidence before maintenance'
+  jq -e --arg id "$RUN_ID" '.status == "QUARANTINED" and .run_id == $id' \
+    "evidence/quarantine/$RUN_ID/quarantine.json" >/dev/null
+  test ! -e evidence/scenario-runs/.active-run.json
+  LOCAL_RETRY_OK=0
+else
+  echo 'Local gate passed; skip quarantine and assess provenance in step 4'
+fi
+```
+
+Nếu lệnh lỗi, owner không đúng hoặc khóa vẫn còn, dừng và giữ evidence; không xóa
+khóa thủ công. Sau quarantine thành công, giữ forensic backup đã kiểm trên host.
+Nếu checkout cũ đã có tag annotated được duyệt và receipt hợp lệ theo
+[mục 15](https://github.com/lethinhlord/Repo/blob/pilot-v3.6-20261103/docs/scenario-collection-runbook.md#15-sao-lưu-và-bàn-giao-dữ-liệu-gốc),
+làm backup/restore bình thường trước bảo trì. Với source cũ 35c, faac hoặc 9c thiếu
+receipt tag được duyệt, forensic backup vẫn giữ nguyên nhưng chưa phải bản restore
+được chứng nhận 3.6; không tự tạo receipt hay gán tag ngược cho source cũ.
+
+Khi khóa đã được giải phóng, có thể dùng forensic backup đã kiểm để vào cửa sổ bảo
+trì, nối mạng và cập nhật theo
+[mục 6.3](https://github.com/lethinhlord/Repo/blob/pilot-v3.6-20261103/docs/scenario-collection-runbook.md#63-cập-nhật-source-qua-github-trong-cửa-sổ-bảo-trì).
+Sau khi cài source 3.6 và có receipt hợp lệ, làm backup và kiểm restore mục 15;
+sau đó cô lập lại, chạy preflight đầy đủ và thu pilot mới với ID/bucket mới.
+Ghi SHA cũ từ forensic backup và SHA mới vào log riêng, không suy diễn immutable
+state đã ghi SHA mã chạy. Dữ liệu/evidence được backup riêng tư ngoài GitHub.
+Không dùng force, reset, clean hoặc ghi đè sửa đổi local.
 
 ## 4. Thử finalize một lần khi provenance còn nguyên
 
-Chỉ làm bước này khi đã giữ đủ original evidence. Không dựng checkpoint bằng tay.
+Chỉ làm bước này khi đã giữ đủ original evidence và mọi kiểm local ở mục 3 đạt. Không dựng checkpoint bằng tay.
 Nếu trước đó không có checkpoint sealed hợp lệ trước cutoff, hoặc archive nguồn
 đã rotate/truncate/thay đổi, code phải từ chối; không dùng export rời để thay nguồn.
 
 ```bash
+test "${LOCAL_RETRY_OK:-0}" = 1
+test -d "$RUN_DIR"
+jq -e '.status == "STARTED" and .execution_receipt.status == "COMPLETED"' \
+  "$RUN_DIR/.collection_state.json" >/dev/null
+jq -e '.status == "sealed"' "$RUN_DIR/intake_checkpoint.json" >/dev/null
+if ! (set -o noclobber; : > "operator-logs/r02-recovery/${RUN_DIR##*/}.retry-attempted") 2>/dev/null; then
+  echo 'STOP: retry already attempted or marker cannot be created' >&2
+  exit 1
+fi
 set +e
 .venv-ml/bin/python -m scripts.scenario_session finalize --run-id "$RUN_ID" \
   > operator-logs/r02-recovery/finalize.json \
@@ -140,6 +196,9 @@ Kiên.txt, rồi chạy pilot mới với run ID và bucket mới sau khi sửa 
 
 Nếu finalize và validate đạt, tiếp tục phép kiểm `RUN_EVIDENCE_CHECK_PASS`, kiểm
 context AVAILABLE/quality COMPLETE, backup/restore và bàn giao full raw/evidence
-theo Kiên.txt mục 11 Bước 6 và mục 15/18. Không chỉ gửi hai file JSON kết quả.
+theo Kiên.txt mục 11 Bước 6 và mục 15/18. Nếu source chưa có receipt tag được duyệt,
+giữ forensic backup và chỉ thực hiện backup/restore 3.6 sau khi run đã đóng, owner
+được giải phóng và đã cập nhật trong cửa sổ bảo trì theo mục 6.3. Không chỉ gửi hai
+file JSON kết quả.
 R02 vẫn là `purpose: pilot`, không nhập vào quota train. G7 vẫn đóng cho tới nghiệm
 thu đủ các điều kiện và phát hành baseline thu chính thức.
