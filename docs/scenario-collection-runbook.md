@@ -1,6 +1,6 @@
 # HƯỚNG DẪN BÀN GIAO KIÊN — LAB 4 VM VÀ THU DỮ LIỆU V3
 
-Phiên bản tài liệu: 3.4 — ngày 03/11/2026.
+Phiên bản tài liệu: 3.5 — ngày 03/11/2026.
 Máy thực hiện: máy của Kiên có VMware; các thao tác bên dưới không yêu cầu Thịnh
 truy cập trực tiếp vào máy đó. Người thực hiện ghi kết quả thật, không đánh dấu đạt sẵn.
 
@@ -18,7 +18,7 @@ TRẠNG THÁI BÀN GIAO HIỆN TẠI
 
 Nguồn pilot phát hành được xác định bằng SHA trong file đi kèm từ Thịnh tại
 https://github.com/lethinhlord/Repo; cập nhật tài liệu không tự cập nhật mã trên lab.
-Dùng bản Kiên.txt 3.4 này làm hướng dẫn thao tác. Hướng dẫn có revision tài liệu riêng;
+Dùng bản Kiên.txt 3.5 này làm hướng dẫn thao tác. Hướng dẫn có revision tài liệu riêng;
 checkout mã pilot có thể chứa bản runbook lịch sử, không dùng bản lịch sử đó để thực hiện.
 `REVIEWED_SOURCE_COMMIT` lấy từ file `PILOT_SOURCE_COMMIT.txt` Thịnh gửi cùng tài liệu (mục 6.2). File này chỉ được phát hành sau khi merge/kiểm tra source; không tự lấy SHA từ upload. Đây là revision pilot,
 không phải tag/commit baseline thu train. Không dùng lại tag `data-collection-v2.0.0`
@@ -679,6 +679,7 @@ rm -rf -- "$WHEEL_QA"
 trap - EXIT
 .venv-ml/bin/python -m pytest -q \
   tests/test_archive_replay_identity.py \
+  tests/test_intake_tail_boundaries.py \
   tests/test_scenario_collection.py tests/test_dataset_audit.py \
   tests/test_collection_configuration.py tests/test_collection_windows.py \
   tests/test_bucket_reservations.py tests/test_handoff_regressions.py \
@@ -2648,6 +2649,12 @@ guard 5 giây: begin-action có thể bắt đầu từ 12:00:05, complete-actio
 (grace 60 giây). Lịch dài có thể không vừa bucket hiện tại; CLI đợi bucket kế trước
 khi tạo receipt. Không lấy ví dụ này để tự nhập timestamp; đọc action_deadline thực
 trong receipt. Mất thời gian chuẩn bị giữa hành động không được bù bằng đổi deadline.
+Giữ nguyên pre-delay và interval đã đóng băng; chuẩn bị xong trước begin-action và
+thu đủ cả bucket cộng grace, không đóng sớm chỉ vì đã đủ số event. Profile bucket
+60 giây không phù hợp lịch C2 đóng băng 73,5–273 giây; account dự trù 60 giây
+còn cần guard. Grace 90 giây chỉ là ứng viên tương lai khi có đo đạc, cấu hình
+online/offline nhất quán và run mới. Max 81,063 giây của Windows tổng thể là số đo
+đã quan sát, không phải giới hạn bảo đảm; nhóm 4625 chỉ có năm mẫu, max 1,387 giây.
 
 ### Bước 4 — Đóng receipt rồi chờ pipeline chuyển log
 
@@ -2709,7 +2716,12 @@ API nhận log. Replay ở đây kiểm tính nhất quán feature; nghiệm thu
 online phải dùng bằng chứng API thực riêng. `validate` từ bản backup có thể xác minh
 checkpoint/raw đã lưu mà không truy cập Archives gốc; không chứng minh thêm log
 chưa từng được đóng băng. Khi finalize/retry còn trên SOC-AI, nguồn gốc và tail thật
-được kiểm tra lại.
+được kiểm tra lại. Với bản sửa R03 đã được kiểm chứng và phát hành, late tail chỉ
+dùng snapshot đầy đủ tới EOF sẵn có để phân loại, không bổ sung capture đã nhận
+đúng hạn hoặc thay checkpoint. Late input thuộc bucket, record của agent đã cấu hình
+thiếu thời gian nguồn hoặc JSON thực sự chưa hoàn chỉnh vẫn fail closed. Không dựng lại hay ghi lùi checkpoint
+`capturing` của lần lỗi cũ; giữ nguyên nguồn/inode và các snapshot. Xem
+[quy trình pilot R03](pilot-r03-runbook.md) cho run mới và bàn giao evidence.
 
 **Xử lý lỗi và mất phiên:**
 
@@ -2902,8 +2914,11 @@ Không thêm `|| true`. Final audit ở mục 14 dùng mode final và phải đ�
 
 ### Bước 8 — Cleanup và khoảng nghỉ
 
-Thực hiện cleanup trong catalog, chờ ít nhất 60 giây, kiểm tra không còn PID của chính
-vòng lặp đã chạy và xóa file tạm. Collector tự chặn hai run đồng thời; nếu báo active lock,
+Nếu cleanup theo catalog đã hoàn tất trước `complete-action` và đã kiểm tra mọi
+process, artifact và traffic thuộc scenario đều đã dừng/được dọn, không cần thêm
+một khoảng chờ 60 giây bắt buộc sau finalize. Nếu chưa, hoàn tất cleanup và kiểm tra
+trước run tiếp theo; vẫn tuân thủ mọi cooldown thực tế, guard và reservation. Collector
+tự chặn hai run đồng thời; nếu báo active lock,
 phải finalize/abort/quarantine run đang sở hữu khóa. Không xóa file lock bằng tay và không
 tái dùng `run_id`.
 
@@ -3530,7 +3545,7 @@ echo 'RESTORE_VALIDATION=PASS'
 ```
 
 Backup cũ không có wheelhouse-locks.sha256 phải được kiểm bằng hướng dẫn/source
-đúng revision của backup; không tự tạo manifest ngược ngày để gọi là đạt 3.4.
+đúng revision của backup; không tự tạo manifest ngược ngày để gọi là đạt 3.5.
 
 Với backup giữa buổi chưa đủ 40 run, audit progress có thể vẫn `COLLECTING` (final vẫn `NOT_READY`); điều đó
 không làm restore sai. Điều kiện restore là tất cả run hiện có `VALID`, checksum đúng và

@@ -67,8 +67,8 @@ không bảo đảm có thể restore inode/prefix của archive live để ti�
 
 ## 3. Nhận bản sửa đã phát hành, không đổi snapshot của run
 
-Thịnh gửi năm file cùng đợt: `PILOT_SOURCE.bundle`, `PILOT_SOURCE.bundle.sha256`,
-`PILOT_SOURCE_COMMIT.txt`, Kiên.txt 3.4 và chính `pilot-r02-recovery.md` này.
+Các file cần cho quy trình R02: `PILOT_SOURCE.bundle`, `PILOT_SOURCE.bundle.sha256`,
+`PILOT_SOURCE_COMMIT.txt`, Kiên.txt cùng đợt và chính `pilot-r02-recovery.md` này.
 Đặt companion cùng thư mục Kiên.txt để liên kết trong bản TXT không trỏ tới file
 còn thiếu ở checkout cũ. Bundle được tạo từ main sau merge đã kiểm; SHA trong
 pointer chỉ dùng pilot, không mở G7.
