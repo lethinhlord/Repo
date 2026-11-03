@@ -1,6 +1,6 @@
 # HƯỚNG DẪN BÀN GIAO KIÊN — LAB 4 VM VÀ THU DỮ LIỆU V3
 
-Phiên bản tài liệu: 3.3 — ngày 31/10/2026.
+Phiên bản tài liệu: 3.4 — ngày 03/11/2026.
 Máy thực hiện: máy của Kiên có VMware; các thao tác bên dưới không yêu cầu Thịnh
 truy cập trực tiếp vào máy đó. Người thực hiện ghi kết quả thật, không đánh dấu đạt sẵn.
 
@@ -16,9 +16,9 @@ TRẠNG THÁI BÀN GIAO HIỆN TẠI
 - 10–12 run/nhóm là quota thu ban đầu, không bảo đảm accuracy hoặc đủ điều kiện
   phản ứng tự động. Model/policy thiếu bằng chứng phải REVIEW; hệ thống giữ SHADOW.
 
-Nguồn pilot đã rà soát đã được merge vào nhánh `main` của
-https://github.com/lethinhlord/Repo.
-Dùng bản Kiên.txt 3.3 này làm hướng dẫn thao tác. Hướng dẫn có revision tài liệu riêng;
+Nguồn pilot phát hành được xác định bằng SHA trong file đi kèm từ Thịnh tại
+https://github.com/lethinhlord/Repo; cập nhật tài liệu không tự cập nhật mã trên lab.
+Dùng bản Kiên.txt 3.4 này làm hướng dẫn thao tác. Hướng dẫn có revision tài liệu riêng;
 checkout mã pilot có thể chứa bản runbook lịch sử, không dùng bản lịch sử đó để thực hiện.
 `REVIEWED_SOURCE_COMMIT` lấy từ file `PILOT_SOURCE_COMMIT.txt` Thịnh gửi cùng tài liệu (mục 6.2). File này chỉ được phát hành sau khi merge/kiểm tra source; không tự lấy SHA từ upload. Đây là revision pilot,
 không phải tag/commit baseline thu train. Không dùng lại tag `data-collection-v2.0.0`
@@ -533,7 +533,7 @@ canary TCP/DNS tại G4, quan sát cùng traffic ở NIC NET-SENSOR. Không thu 
 ### 6.1 Ma trận Wazuh và quyết định thay đổi
 
 Kế hoạch FINAL P49 ghi 4.14.7; quyết định kỹ thuật đề xuất cho bản bàn giao này
-là **4.14.9** theo quyết định duy trì tài liệu 3.3; ghi sai khác với kế hoạch
+là **4.14.9** theo quyết định kỹ thuật duy trì bản bàn giao; ghi sai khác với kế hoạch
 trong evidence pilot. Ma trận đích: manager, indexer, dashboard
 và hai agent Windows/NET-SENSOR đều 4.14.9; gói Debian mục tiêu `4.14.9-1`,
 MSI Windows `wazuh-agent-4.14.9-1.msi`. Không tự downgrade máy đang chạy.
@@ -678,6 +678,7 @@ python3 -m venv "$WHEEL_QA"
 rm -rf -- "$WHEEL_QA"
 trap - EXIT
 .venv-ml/bin/python -m pytest -q \
+  tests/test_archive_replay_identity.py \
   tests/test_scenario_collection.py tests/test_dataset_audit.py \
   tests/test_collection_configuration.py tests/test_collection_windows.py \
   tests/test_bucket_reservations.py tests/test_handoff_regressions.py \
@@ -2690,8 +2691,13 @@ rồi đọc tất cả log đang có.
 
 Nó lưu `archive_capture.jsonl` nguyên byte trước lọc và `intake_checkpoint.json`
 đóng băng phạm vi nhận, cursor nguồn, hash và thời điểm đọc. Sau đó replay toàn bộ
-bucket bằng source/taxonomy/context đóng băng. Tài khoản nền có danh tính OS xác
-định được giữ thành unknown/PARTIAL, không thêm count vào tài khoản người dùng;
+bucket bằng source/taxonomy/context đóng băng. Với record archive thiếu `rule`,
+replay dùng định danh nội bộ xác định từ ordinal lần xuất hiện trong toàn bộ capture
+trước lọc và hash canonical của record gốc; ID nguồn và raw không đổi. Các lần
+xuất hiện raw giống hệt nhau vẫn được giữ riêng. Alert thật vẫn giữ guard từ chối
+cùng ID khác payload; `rule: null` hoặc sai cấu trúc không được bỏ qua kiểm tra.
+Tài khoản nền có danh tính OS xác định được giữ thành unknown/PARTIAL, không thêm
+count vào tài khoản người dùng;
 thiếu trường định danh cũng phải unknown/PARTIAL, không đoán thành benign.
 C2 bắt buộc nonce, ProcessGuid, thời gian, tuple IP/cổng/giao thức và transaction
 Suricata khớp. Final flow không có transaction hợp lệ, tuple thiếu/sai hoặc DNS
@@ -2707,18 +2713,25 @@ chưa từng được đóng băng. Khi finalize/retry còn trên SOC-AI, nguồ
 
 **Xử lý lỗi và mất phiên:**
 
+- Với lỗi R02 `duplicate alert id has conflicting payload`, xem quy trình
+  [cập nhật và đánh giá phục hồi R02](pilot-r02-recovery.md). Không dùng lại lệnh
+  dựng checkout mới ở mục 6.2 để thay thế checkout đang sở hữu run chưa finalize.
 - Chưa từng chạy intake trước cutoff: finalize muộn báo thiếu checkpoint hợp lệ.
   Giữ evidence, abort và thu run ID mới; không đổi giờ hay nới grace.
 - Mất phiên/lệnh bị ngắt khi checkpoint còn `capturing`, thiếu checkpoint hoặc có
   dòng JSON dở: không xóa file để chạy lại; giữ evidence, abort, sửa đường log và
   thu mới. Lệnh `status` vẫn cần dùng để xác định run đang sở hữu khóa.
-- Checkpoint đã sealed trước lỗi bước tạo feature/output: chỉ retry cùng RUN_ID
-  với nguyên evidence sau khi xử lý nguyên nhân được phép. Retry không nhận thêm
-  byte vào capture đã đóng băng. Nếu file tạm/trạng thái không rõ, dùng quarantine
-  theo Bước 6 thay vì sửa state bằng tay.
+- Checkpoint đã sealed trước lỗi bước tạo feature/output: chỉ thử retry cùng RUN_ID
+  sau khi source sửa lỗi đã được kiểm chứng và phát hành, và kiểm toàn vẹn checkpoint,
+  capture, nguồn gốc/tail và snapshot vẫn đạt. Giữ nguyên config/context, thời gian,
+  evidence và các khóa/reservation; ghi việc đổi source vận hành ngoài evidence đã
+  đóng checksum. Không chạy lại action, không nhận thêm byte vào capture đã đóng băng,
+  không đổi snapshot để thích ứng đường dẫn mới. Nếu file tạm/trạng thái không rõ,
+  dùng quarantine theo Bước 6 thay vì sửa state bằng tay.
 - Có input thuộc bucket gốc xuất hiện sau cutoff, rotate/truncate, hash lệch hoặc
   clock chạy lùi: fail closed; không retry để bổ sung log cho run cũ. Byte tới muộn
   được giữ riêng ở `archive_capture-late.jsonl` nếu có; giữ cả file này và gửi lỗi.
+  Checkpoint thiếu/hết hiệu lực hoặc nguồn đã rotate cần run mới.
 - Không sinh thêm traffic để bù event, không copy log cũ, không giảm quality gate.
   Sau abort/quarantine, bucket cũ vẫn được giữ quyền; run mới dùng bucket mới.
 
@@ -3517,7 +3530,7 @@ echo 'RESTORE_VALIDATION=PASS'
 ```
 
 Backup cũ không có wheelhouse-locks.sha256 phải được kiểm bằng hướng dẫn/source
-đúng revision của backup; không tự tạo manifest ngược ngày để gọi là đạt 3.3.
+đúng revision của backup; không tự tạo manifest ngược ngày để gọi là đạt 3.4.
 
 Với backup giữa buổi chưa đủ 40 run, audit progress có thể vẫn `COLLECTING` (final vẫn `NOT_READY`); điều đó
 không làm restore sai. Điều kiện restore là tất cả run hiện có `VALID`, checksum đúng và
@@ -3570,6 +3583,7 @@ gửi archive, `checksums.sha256`, `git-commit.txt` và báo cáo audit cùng nh
 | `late original-window input` | input của bucket cũ xuất hiện sau hạn | giữ late capture, sửa độ trễ/forwarding, thu lại; không nới grace theo run |
 | `cannot recover collection bucket` | không đủ chứng cứ để xác định quyền bucket | bảo toàn dữ liệu hỏng, restore bộ backup đã kiểm, không xóa quarantine/reservation |
 | `collection contract` | catalog/schema/taxonomy/source config khác snapshot lúc start | quarantine run, đồng bộ đúng commit, chạy lại pilot rồi thu ID mới |
+| `duplicate alert id has conflicting payload` | archive thiếu rule giữ ID nguồn không duy nhất trên mã cũ, hoặc alert có rule thật sự xung đột | giữ toàn bộ capture/checkpoint; theo hướng dẫn R02 cập nhật source đã kiểm, chỉ retry nếu còn đủ provenance; không xóa dòng hoặc tắt parity |
 | `SCENARIO_CATALOG_MISMATCH` | draft/manifest không thuộc catalog hoặc sai family/label | quarantine run, cập nhật repo đúng commit, tạo draft mới từ CLI |
 | `SCENARIO_IMBALANCE`/`STRATUM_EXCESS` | năm scenario lệch nhau quá 1 run hoặc nhóm đã quá 12 | không copy/xóa tùy tiện; dừng thu, bàn giao audit để người phụ trách quyết định dataset version mới |
 | duplicate incident/run | tái sử dụng dữ liệu hoặc ID | quarantine bản trùng và chạy mới |
