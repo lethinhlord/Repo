@@ -14,6 +14,13 @@ Ngày 03/11/2026. Đây là điểm vào hiện hành; các báo cáo trong `his
 - Sửa archive identity và kiểm chéo ngày 03/11 được ghi trong
   [biên bản R02](archive-replay-r02-validation-20261103.md), kèm
   [quy trình cập nhật/khôi phục](pilot-r02-recovery.md).
+- R03: sửa phân loại late tail không xác nhận pilot đã được cứu hay nghiệm thu;
+  chưa tìm thấy evidence run R03 thực tế trong các nơi đã kiểm. Không dựng lại hoặc
+  ghi lùi checkpoint `capturing` cũ; xem [quy trình pilot R03](pilot-r03-runbook.md)
+  cho run mới sau khi source sửa lỗi được kiểm chứng và phát hành.
+- Kết quả sửa intake, kiểm kê thư mục/GitHub/Docker và sai lệch runtime v2 trên máy
+  Thịnh nằm trong [biên bản R03](pilot-r03-validation-20261103.md). Image QA v3 đã
+  kiểm riêng; stack cũ chưa được nâng cấp khi thiếu baseline/package v3 hợp lệ.
 - G7 vẫn đóng; nghiệm thu lab thực tế hiện chưa được thực hiện. Thu chính thức còn cần
   catalog/cohort/challenge/taxonomy và pilot lab được nghiệm thu. Không dùng quota run
   thay cho số cohort độc lập hoặc bằng chứng thống kê.
