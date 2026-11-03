@@ -1,6 +1,6 @@
 # Trạng thái phần mềm và bàn giao hiện tại
 
-Ngày 31/10/2026. Đây là điểm vào hiện hành; các báo cáo trong `history/` và nhật ký
+Ngày 03/11/2026. Đây là điểm vào hiện hành; các báo cáo trong `history/` và nhật ký
 `tasks/` là hồ sơ theo thời điểm, không phải chỉ dẫn chạy phiên bản cũ.
 
 - Hướng dẫn Kiên hiện hành: [lab bốn VM và thu dữ liệu v3](scenario-collection-runbook.md).
@@ -8,8 +8,15 @@ Ngày 31/10/2026. Đây là điểm vào hiện hành; các báo cáo trong `his
   `last-relevant-source-v1`. Chỉ nhận evidence mới theo đúng source phát hành.
 - Pilot lấy source SHA từ file `PILOT_SOURCE_COMMIT.txt` gửi kèm Kiên.txt; file này
   chỉ xác định mã chạy pilot, không mở G7. Không lấy SHA từ một nhánh/tag thu cũ.
-- G7 thu chính thức còn cần catalog/cohort/challenge/taxonomy và pilot lab được nghiệm
-  thu. Không dùng quota run thay cho số cohort độc lập hoặc bằng chứng thống kê.
+- Pilot R02 chưa nghiệm thu: gói chẩn đoán chỉ là trích xuất, thiếu full capture nên
+  không xác nhận được khả năng khôi phục hay bằng chứng ACCOUNT. Cần kiểm bản run
+  đầy đủ và source sửa lỗi đã phát hành trước khi thử finalize lại theo runbook.
+- Sửa archive identity và kiểm chéo ngày 03/11 được ghi trong
+  [biên bản R02](archive-replay-r02-validation-20261103.md), kèm
+  [quy trình cập nhật/khôi phục](pilot-r02-recovery.md).
+- G7 vẫn đóng; nghiệm thu lab thực tế hiện chưa được thực hiện. Thu chính thức còn cần
+  catalog/cohort/challenge/taxonomy và pilot lab được nghiệm thu. Không dùng quota run
+  thay cho số cohort độc lập hoặc bằng chứng thống kê.
 - Workflow n8n hiện SHADOW và ingest tạm thời. API finalize-window đã có; workflow
   đóng window tự động/decision cuối và phản ứng mạnh vẫn chưa được nghiệm thu.
 - Kiểm clock/firewall/loss/flow/restore trên bốn VM thật do Kiên thực hiện. Không có
