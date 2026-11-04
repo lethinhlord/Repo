@@ -1,15 +1,22 @@
 # Trạng thái phần mềm và bàn giao hiện tại
 
-Ngày 03/11/2026. Đây là điểm vào hiện hành; các báo cáo trong `history/` và nhật ký
+Ngày 04/11/2026. Đây là điểm vào hiện hành; các báo cáo trong `history/` và nhật ký
 `tasks/` là hồ sơ theo thời điểm, không phải chỉ dẫn chạy phiên bản cũ.
 
 - Hướng dẫn Kiên hiện hành: [lab bốn VM và thu dữ liệu v3](scenario-collection-runbook.md).
 - Dataset mới phải có 24 feature v3, baseline/capture/checkpoint và policy thời gian
   `last-relevant-source-v1`. Chỉ nhận evidence mới theo đúng source phát hành.
-- Pilot 3.6 lấy mã và hướng dẫn trực tiếp từ tag GitHub `pilot-v3.6-20261103`,
-  kiểm annotated tag, anchor 9c599f6 và ghi SHA đầy đủ theo mục 6.2/6.3. Không dùng
+- Pilot 3.7 lấy mã và hướng dẫn trực tiếp từ tag GitHub `pilot-v3.7-20261104`,
+  kiểm annotated tag, anchor `402d40658be416d3d6a3112afe6d63bdeca7033c` và ghi SHA đầy đủ theo mục 6.2/6.3. Không dùng
   gói source offline hoặc file pointer; tag pilot không mở G7. GitHub chỉ truy cập
   trong bảo trì không có owner active, trước khi cô lập collection mode.
+- Bản 3.7 sửa identity cho mọi occurrence Archives, kể cả có rule như R06; raw,
+  native ID và firedtimes giữ nguyên. Guard xung đột transport ID ở API/store vẫn
+  có hiệu lực. R06 được Kiên báo đã ABORTED: giữ nguyên evidence, không đổi state
+  để cứu mẫu; cập nhật trong bảo trì và chạy pilot mới theo mục 0.3 của runbook.
+- Collector dùng mutex hệ điều hành cho sáu thao tác thay đổi state; recovery giữ
+  checksum bất biến và validate trước publish/nhả owner. Missing target account
+  không dùng Subject làm đích; byte flow chỉ tính từ counter cuối hợp lệ.
 - Pilot R02 chưa nghiệm thu: gói chẩn đoán chỉ là trích xuất, thiếu full capture nên
   không xác nhận được khả năng khôi phục hay bằng chứng ACCOUNT. Cần kiểm bản run
   đầy đủ và source sửa lỗi đã phát hành trước khi thử finalize lại theo runbook.
@@ -38,7 +45,8 @@ Các sửa F01–F09, phạm vi kiểm, mốc source và tài nguyên đã loạ
 biên bản nghiệm thu lượt sửa này. Không có tuyên bố model đã đạt độ chính xác hoặc
 hệ thống đã đủ điều kiện phản ứng tự động.
 
-Bàn giao GitHub-only 3.6 và các kiểm tra thao tác được ghi trong
-[biên bản hướng dẫn 3.6](github-handoff-validation-v3.6-20261103.md). Các biên bản
-R02/R03 và 3.3 trước đó là hồ sơ theo thời điểm; mô tả bundle trong đó không còn là
-quy trình nhận mã hiện hành.
+Sửa lỗi và bàn giao 3.7 được ghi trong
+[biên bản kiểm chứng 04/11](collection-integrity-validation-20261104.md).
+[Biên bản 3.6](github-handoff-validation-v3.6-20261103.md) và các biên bản R02/R03,
+3.3 trước đó là hồ sơ theo thời điểm. Mô tả bundle hoặc chỉ xử lý record thiếu rule
+trong hồ sơ cũ không phải quy trình nhận mã/replay hiện hành.
