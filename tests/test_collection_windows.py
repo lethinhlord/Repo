@@ -225,22 +225,22 @@ def test_begin_cli_exposes_wait_for_window() -> None:
     assert args.wait_for_window is True
 
 
-def test_aborting_run_during_wait_does_not_resurrect_action(tmp_path: Path, monkeypatch) -> None:
+def test_stopping_foreground_wait_before_abort_does_not_resurrect_action(
+    tmp_path: Path, monkeypatch,
+) -> None:
     started = datetime(2026, 10, 27, 0, 4, tzinfo=UTC)
     run_id = started_run(tmp_path, started, family="c2", count=8, intervals=",".join(["30"] * 7))
     clock = {"current": started + timedelta(seconds=1)}
-    aborted = []
-
     def sleep(seconds: float) -> None:
-        if not aborted:
+        with pytest.raises(CollectionError, match="busy|locked|in progress"):
             abort_run(run_id, tmp_path, "operator cancelled during window wait")
-            aborted.append(True)
-        clock["current"] += timedelta(seconds=seconds)
+        raise KeyboardInterrupt("operator stops the foreground wait first")
 
     monkeypatch.setattr("ml.scenario_collection._utc", lambda value=None: value or clock["current"])
     monkeypatch.setattr("ml.scenario_collection.time.sleep", sleep)
-    with pytest.raises(CollectionError, match="run state changed"):
+    with pytest.raises(KeyboardInterrupt):
         begin_action(run_id, tmp_path, wait_for_window=True)
+    abort_run(run_id, tmp_path, "operator cancelled after stopping the foreground wait")
     saved = json.loads(
         (tmp_path / "evidence/scenario-runs" / run_id / ".collection_state.json").read_text()
     )

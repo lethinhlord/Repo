@@ -99,10 +99,14 @@ def _save_late(path, payload):
         path.write_bytes(payload)
 
 
-def verify_capture(cursor, capture_path, checkpoint_path, *, deadline, relevant, live_source=True):
+def verify_capture(
+    cursor, capture_path, checkpoint_path, *, deadline, relevant, live_source=True,
+    late_observation_path=None,
+):
     """Verify frozen evidence; live_source also audits the current archive tail.
 
     Offline verification cannot attest that no new source bytes arrived later.
+    Recovery may persist new observations outside the certified evidence tree.
     """
     capture_path, checkpoint_path = Path(capture_path), Path(checkpoint_path)
     try:
@@ -138,13 +142,22 @@ def verify_capture(cursor, capture_path, checkpoint_path, *, deadline, relevant,
             raise IntakeError("checkpoint lacks read completion evidence")
         late_path = capture_path.with_name(capture_path.stem + "-late.jsonl")
         saved_late = late_path.read_bytes() if late_path.exists() else b""
+        observation_path = Path(late_observation_path) if late_observation_path else late_path
+        saved_observation = (
+            observation_path.read_bytes() if observation_path.exists() else b""
+        )
         # Previously observed complete late records remain evidence even if the
         # source is now unavailable or changed. An incomplete suffix needs a
         # live, prefix-preserving observation before it can be classified.
-        boundary = saved_late.rfind(b"\n") + 1
-        if any(relevant(row) for row in _rows(saved_late[:boundary])):
-            raise IntakeError("saved late original-window evidence after cutoff")
-        late = saved_late
+        for saved in (saved_late, saved_observation):
+            boundary = saved.rfind(b"\n") + 1
+            if any(relevant(row) for row in _rows(saved[:boundary])):
+                raise IntakeError("saved late original-window evidence after cutoff")
+        if not (
+            saved_late.startswith(saved_observation) or saved_observation.startswith(saved_late)
+        ):
+            raise IntakeError("saved late observations conflict with certified evidence")
+        late = max((saved_late, saved_observation), key=len)
         if live_source:
             with Path(cursor["path"]).open("rb") as handle:
                 _identity(handle, cursor, offset)
@@ -153,7 +166,9 @@ def verify_capture(cursor, capture_path, checkpoint_path, *, deadline, relevant,
                 if _hash_prefix(handle, offset) != checkpoint["source_sha256"]:
                     raise IntakeError("source capture provenance mismatch")
                 late = _read_tail_snapshot(handle, cursor, offset)
-            _save_late(late_path, late)
+            if not late.startswith(saved_late):
+                raise IntakeError("source late tail was truncated or changed")
+            _save_late(observation_path, late)
         boundary = late.rfind(b"\n") + 1
         if any(relevant(row) for row in _rows(late[:boundary])):
             raise IntakeError("late original-window input after intake cutoff")

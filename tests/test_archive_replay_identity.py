@@ -143,22 +143,21 @@ def test_replay_identity_uses_original_row_and_full_capture_ordinal(tmp_path, mo
     monkeypatch.setattr(collector, "aggregate_wazuh_alerts", observe)
     _finalize_and_replay(tmp_path, rows, successes=3)
     expected = []
-    for ordinal in (2, 3):
+    for ordinal in (2, 3, 4):
         canonical = json.dumps(rows[ordinal], sort_keys=True, separators=(",", ":"))
-        expected.append(f"archive-raw-v1-{ordinal}-{hashlib.sha256(canonical.encode()).hexdigest()}")
-    expected.append("genuine-alert-id")
+        expected.append(
+            f"archive-occurrence-v2-{ordinal:012d}-{hashlib.sha256(canonical.encode()).hexdigest()}"
+        )
     assert len(observed_ids) >= 2  # Finalization and source-independent validation.
     assert all(ids == expected for ids in observed_ids)
 
 
-def test_conflicting_genuine_alert_identity_still_fails_as_collection_error(tmp_path):
+def test_ruled_archive_occurrences_with_same_native_id_replay(tmp_path):
     rows = [_account(5), _account(6)]
     for row in rows:
         row["rule"] = {"id": "100001", "level": 3}
     _prepare(tmp_path, rows, successes=2)
-    with pytest.raises(collector.CollectionError, match="conflicting payload"):
-        collector.finalize_run(RUN_ID, tmp_path, now=BASE + timedelta(seconds=360))
-    assert not (tmp_path / "data/raw" / RUN_ID).exists()
+    _finalize_and_replay(tmp_path, rows, successes=2)
 
 
 @pytest.mark.parametrize("rule", [None, "invalid-rule", {}, {"id": "100001"}])
@@ -227,14 +226,20 @@ def test_c2_raw_id_collision_preserves_correlated_records_offline(tmp_path, scen
     assert _rows(evidence / "archive_capture.jsonl") == events
 
 
-def test_cli_genuine_conflicting_alert_returns_structured_error(tmp_path):
+def test_cli_replays_sealed_ruled_archive_collision(tmp_path, monkeypatch):
     rows = [_account(5), _account(6)]
     for row in rows:
         row["rule"] = {"id": "100001", "level": 3}
     _prepare(tmp_path, rows, successes=2)
-    # Seal the synthetic historical intake before retrying with the CLI's live clock.
-    with pytest.raises(collector.CollectionError, match="conflicting payload"):
-        collector.finalize_run(RUN_ID, tmp_path, now=BASE + timedelta(seconds=360))
+    # Seal historical intake, then stop before derivation. Retry uses the real
+    # CLI clock and must still evaluate context at the source observation time.
+    def stop_after_capture(*args, **kwargs):
+        raise collector.CollectionError("synthetic stop after sealed intake")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(collector, "_derive_account", stop_after_capture)
+        with pytest.raises(collector.CollectionError, match="synthetic stop"):
+            collector.finalize_run(RUN_ID, tmp_path, now=BASE + timedelta(seconds=360))
     result = subprocess.run(
         [sys.executable, "-m", "scripts.scenario_session", "--project-root", str(tmp_path),
          "finalize", "--run-id", RUN_ID],
@@ -244,9 +249,8 @@ def test_cli_genuine_conflicting_alert_returns_structured_error(tmp_path):
         check=False,
         timeout=30,
     )
-    assert result.returncode == 1
+    assert result.returncode == 0, result.stdout + result.stderr
     assert result.stderr == ""
     payload = json.loads(result.stdout)
-    assert payload["status"] == "ERROR"
-    assert "conflicting payload" in payload["detail"]
-    assert not (tmp_path / "data/raw" / RUN_ID).exists()
+    assert payload["status"] == "FINALIZED"
+    assert collector.validate_run(RUN_ID, tmp_path)["status"] == "VALID"

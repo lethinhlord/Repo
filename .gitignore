@@ -21,6 +21,7 @@ data/raw/
 data/quarantine/
 data/processed/
 evidence/scenario-runs/
+evidence/.collection-operation.lock
 evidence/quarantine/
 evidence/bucket-reservations/
 evidence/context-baseline*.json
