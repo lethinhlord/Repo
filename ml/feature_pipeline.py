@@ -40,6 +40,7 @@ from ml.telemetry import (
     basename,
     event_time,
     flow_counter_issues,
+    is_interactive_logon,
     linked_flow,
     network_is_outbound,
     normalize_ip,
@@ -110,7 +111,11 @@ def window_start(alert: WazuhAlert, *, window_minutes: int = 5) -> datetime:
 def _family(alert: WazuhAlert) -> str:
     event_id, fields = _windows_fields(alert)
     if event_id in {"4624", "4625"}:
-        return "account" if account_observation_eligible(fields) else "unknown"
+        if account_observation_eligible(fields):
+            return "account"
+        # Keep an otherwise eligible logon with no target in its source window
+        # so it cannot make neighboring account features appear complete.
+        return "account" if not account_user(fields) and is_interactive_logon(fields) else "unknown"
     if event_id in {"1", "3", "22"} or _suricata_payload(alert) is not None:
         return "c2"
     decoder = alert.decoder.name.strip().lower()
@@ -188,8 +193,11 @@ def _derive_raw_group(
     if family == "account":
         observations: list[AccountObservation] = []
         attributed = []
+        missing_target = False
         for alert in alerts:
             event_id, eventdata = _windows_fields(alert)
+            if event_id in {"4624", "4625"} and not account_user(eventdata):
+                missing_target = missing_target or is_interactive_logon(eventdata)
             if (
                 event_id not in {"4624", "4625"}
                 or not account_user(eventdata)
@@ -210,11 +218,13 @@ def _derive_raw_group(
             )
         if not observations:
             features, missing = _legacy_features(alerts[0])
+            if missing_target:
+                missing = list(ACCOUNT_FEATURES)
             return features, missing, list(C2_FEATURES), alerts[0].data.srcip, []
         features = derive_account_features(observations)
         return (
             features,
-            [],
+            list(ACCOUNT_FEATURES) if missing_target else [],
             list(C2_FEATURES),
             next((item.source for item in observations if item.source != "local-console"), None),
             attributed,

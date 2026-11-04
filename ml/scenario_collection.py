@@ -12,6 +12,7 @@ import tempfile
 import time
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
+from functools import wraps
 from pathlib import Path
 from typing import Any, Literal
 
@@ -27,6 +28,7 @@ from ml.behavior_features import (
     interval_features,
 )
 from ml.clock_evidence import ClockPreflight
+from ml.collection_lock import CollectionLockError, collection_operation
 from ml.collection_windows import bucket_used, reserve_bucket
 from ml.context import (
     BaselineSnapshot,
@@ -92,6 +94,25 @@ from ml.telemetry import (
 
 class CollectionError(RuntimeError):
     pass
+
+
+def _serialized_operation(root_index: int):
+    """Keep a complete mutation, including foreground waits, under one mutex."""
+    def decorate(operation):
+        @wraps(operation)
+        def run(*args, **kwargs):
+            project_root = kwargs.get("project_root")
+            if project_root is None:
+                project_root = args[root_index]
+            try:
+                with collection_operation(Path(project_root)):
+                    return operation(*args, **kwargs)
+            except CollectionLockError as exc:
+                raise CollectionError(str(exc)) from exc
+
+        return run
+
+    return decorate
 
 
 class Attribution(BaseModel):
@@ -576,6 +597,7 @@ def _assert_raw_dataset_layout(project_root: Path) -> None:
         )
 
 
+@_serialized_operation(2)
 def start_run(
     draft_path: Path,
     source_config_path: Path,
@@ -1271,13 +1293,11 @@ def _verify_full_capture_parity(
         envelope = dict(row)
         canonical = json.dumps(row, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(canonical.encode()).hexdigest()
-        if "rule" not in row:
-            # Native archive IDs can repeat. Bind each raw occurrence to its
-            # position in the sealed full capture, preserving identical rows.
-            # This virtual ID never replaces the original captured evidence.
-            envelope["id"] = f"archive-raw-v1-{ordinal}-{digest}"
-        else:
-            envelope.setdefault("id", "archive-" + digest)
+        # Archives can repeat a native ID even on rows carrying a valid rule.
+        # Replay each sealed occurrence; keep the native ID/rule in raw evidence.
+        # Padding preserves capture order when original event times are equal.
+        # This adapter does not relax the online transport-ID conflict guard.
+        envelope["id"] = f"archive-occurrence-v2-{ordinal:012d}-{digest}"
         envelope.setdefault("timestamp", _iso(at))
         envelope.setdefault("rule", {"id": "archive-raw", "level": 0})
         try:
@@ -1684,6 +1704,7 @@ def _validate_action_window(
     return start, end
 
 
+@_serialized_operation(1)
 def begin_action(
     run_id: str,
     project_root: Path,
@@ -1786,6 +1807,7 @@ def begin_action(
     return receipt
 
 
+@_serialized_operation(1)
 def complete_action(
     run_id: str,
     project_root: Path,
@@ -1841,7 +1863,9 @@ def _intake_relevant(source: SourceConfig, started_at: datetime):
     return relevant
 
 
-def _verify_live_intake(state: dict[str, Any], evidence_dir: Path) -> None:
+def _verify_live_intake(
+    state: dict[str, Any], evidence_dir: Path, *, late_observation_path: Path | None = None,
+) -> None:
     source = SourceConfig.model_validate(state["source"])
     if not source.require_online_parity:
         return
@@ -1852,17 +1876,21 @@ def _verify_live_intake(state: dict[str, Any], evidence_dir: Path) -> None:
         seconds=source.late_arrival_grace_seconds,
     )
     try:
+        if late_observation_path is not None:
+            late_observation_path.parent.mkdir(parents=True, exist_ok=True)
         verify_capture(
             state["archive_cursor"],
             evidence_dir / "archive_capture.jsonl",
             evidence_dir / "intake_checkpoint.json",
             deadline=deadline,
             relevant=_intake_relevant(source, started),
+            late_observation_path=late_observation_path,
         )
-    except IntakeError as exc:
+    except (IntakeError, OSError) as exc:
         raise CollectionError(str(exc)) from exc
 
 
+@_serialized_operation(1)
 def finalize_run(
     run_id: str,
     project_root: Path,
@@ -1878,25 +1906,38 @@ def finalize_run(
     state = json.loads(state_path.read_text(encoding="utf-8"))
     final_dir = project_root / "data/raw" / run_id
     temporary_dir = final_dir.with_name(f".{run_id}.tmp")
+    if state.get("status") == "FINALIZED":
+        # A crash may follow the durable commit but precede owner release.
+        # Validate the committed bytes before finishing that same ownership.
+        _validate_finalized_run(run_id, project_root, state)
+        _release_active_run(evidence_dir.parent, run_id)
+        return json.loads((evidence_dir / "collection_metadata.json").read_text(encoding="utf-8"))
     if state.get("status") == "FINALIZING":
+        _verify_checksums(evidence_dir)
         _verify_start_snapshot(evidence_dir, state, project_root)
-        _verify_live_intake(state, evidence_dir)
+        _verify_live_intake(
+            state, evidence_dir,
+            late_observation_path=(
+                project_root / "operator-logs/recovery" / run_id / "late-observation.jsonl"
+            ),
+        )
         if final_dir.exists() and temporary_dir.exists():
             raise CollectionError(
                 "finalization recovery found both staged and final output; quarantine the run"
             )
-        if temporary_dir.is_dir():
-            temporary_dir.replace(final_dir)
-        if not final_dir.is_dir():
+        candidate_dir = temporary_dir if temporary_dir.is_dir() else final_dir
+        if not candidate_dir.is_dir():
             raise CollectionError(
                 "finalization recovery found neither staged nor final dataset output"
             )
-        state["status"] = "FINALIZED"
-        state["ended_at"] = state.get("pending_ended_at")
-        state.pop("pending_ended_at", None)
-        _write_json(state_path, state)
+        finalized_state = dict(state)
+        finalized_state["status"] = "FINALIZED"
+        finalized_state["ended_at"] = finalized_state.pop("pending_ended_at", None)
+        _validate_finalized_run(run_id, project_root, finalized_state, run_dir=candidate_dir)
+        if candidate_dir == temporary_dir:
+            temporary_dir.replace(final_dir)
+        _write_json(state_path, finalized_state)
         _release_active_run(evidence_dir.parent, run_id)
-        validate_run(run_id, project_root)
         return json.loads((evidence_dir / "collection_metadata.json").read_text(encoding="utf-8"))
     if state.get("status") != "STARTED":
         raise CollectionError(f"run is not in STARTED state: {run_id}")
@@ -2155,11 +2196,12 @@ def finalize_run(
     state["status"] = "FINALIZING"
     state["pending_ended_at"] = _iso(ended_at)
     _write_json(state_path, state)
+    finalized_state = dict(state)
+    finalized_state["status"] = "FINALIZED"
+    finalized_state["ended_at"] = finalized_state.pop("pending_ended_at")
+    _validate_finalized_run(run_id, project_root, finalized_state, run_dir=temporary_dir)
     temporary_dir.replace(final_dir)
-    state["status"] = "FINALIZED"
-    state["ended_at"] = _iso(ended_at)
-    state.pop("pending_ended_at", None)
-    _write_json(state_path, state)
+    _write_json(state_path, finalized_state)
     _release_active_run(evidence_dir.parent, run_id)
     return metadata
 
@@ -2203,13 +2245,21 @@ def _verify_checksums(evidence_dir: Path) -> None:
 def validate_run(run_id: str, project_root: Path) -> dict[str, Any]:
     project_root = project_root.resolve()
     evidence_dir = project_root / "evidence/scenario-runs" / run_id
-    run_dir = project_root / "data/raw" / run_id
-    _verify_checksums(evidence_dir)
     state_path = evidence_dir / ".collection_state.json"
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise CollectionError(f"invalid collection state: {exc}") from exc
+    return _validate_finalized_run(run_id, project_root, state)
+
+
+def _validate_finalized_run(
+    run_id: str, project_root: Path, state: dict[str, Any], *, run_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Check staged or published bytes before committing the finalized state."""
+    evidence_dir = project_root / "evidence/scenario-runs" / run_id
+    run_dir = project_root / "data/raw" / run_id if run_dir is None else run_dir
+    _verify_checksums(evidence_dir)
     if state.get("status") != "FINALIZED" or state.get("run_id") != run_id:
         raise CollectionError("collection state is not FINALIZED for this run")
     _verify_start_snapshot(evidence_dir, state, project_root)
@@ -2345,6 +2395,7 @@ def run_status(run_id: str, project_root: Path) -> dict[str, Any]:
     return json.loads(state_path.read_text(encoding="utf-8"))
 
 
+@_serialized_operation(1)
 def abort_run(run_id: str, project_root: Path, reason: str) -> dict[str, Any]:
     if not reason.strip():
         raise CollectionError("abort reason must not be blank")
@@ -2367,6 +2418,7 @@ def abort_run(run_id: str, project_root: Path, reason: str) -> dict[str, Any]:
     return {"status": "ABORTED", "run_id": run_id, "reason": reason.strip()}
 
 
+@_serialized_operation(1)
 def quarantine_run(run_id: str, project_root: Path, reason: str) -> dict[str, Any]:
     if not reason.strip():
         raise CollectionError("quarantine reason must not be blank")
