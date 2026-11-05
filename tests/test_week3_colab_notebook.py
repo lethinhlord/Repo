@@ -60,4 +60,36 @@ def test_colab_notebook_preserves_the_locked_test_boundary() -> None:
     assert "UNOPENED" in source
     assert "LOCKED_TEST_PATH.exists()" in source
     assert "python -m ml.evaluate" not in source
-    assert "python -m ml.freeze_model" not in source
+    code = "\n".join(
+        "".join(c.get("source", [])) for c in _notebook()["cells"] if c["cell_type"] == "code"
+    )
+    assert "python -m ml.freeze_model" not in code
+
+
+def test_handoff_distinguishes_smoke_from_real_package_acceptance() -> None:
+    source = _source_text()
+    for step in ('tarfile.open', 'model-package-week3.tar.gz', 'builder_git_commit',
+                 'ml.freeze_model', '--verify-only', '/model/ready', 'smoke PASS'):
+        assert step in source
+
+
+def test_handoff_is_one_fail_stop_block_with_fresh_staging_and_identity_checks() -> None:
+    import re
+    source = _source_text()
+    block = next(b for b in re.findall(r'```bash\n(.*?)```', source, re.S)
+                 if 'ml.freeze_model' in b)
+    assert 'set -eu' in block and 'mktemp -d' in block
+    assert block.index('mkdir "$MODEL_PACKAGE_DIR"') < block.index('ml.freeze_model')
+    assert block.count('--package-dir "$MODEL_PACKAGE_DIR"') == 2
+    assert 'dataset_manifest_payload_sha256' in block
+    assert 'EXPECTED_MODEL_VERSION' in block and 'EXPECTED_ARCHIVE_SHA256' in block
+    assert 'test ! -e ml/model-package && cp' not in block
+
+
+def test_handoff_uses_new_versioned_release_and_safe_archive_members() -> None:
+    source = _source_text()
+    assert 'artifacts/runtime/model-releases/' in source
+    assert 'MODEL_PACKAGE_HOST_DIR' in source
+    assert 'tar -xzf' not in source
+    assert 'member.issym()' in source and 'member.islnk()' in source
+    assert '/app/ml/model-package' in source

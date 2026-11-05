@@ -116,15 +116,28 @@ class ModelRuntime:
             ):
                 raise ModelPackageError(f"{family} binary estimator capability is invalid")
 
-        self.locked_test_status = "UNOPENED"
-        opened_path = package_dir / "LOCKED_TEST_OPENED.json"
+        # Validate any pre-existing opening record at construction as well.
+        _ = self._read_locked_test_status()
+        self.monitoring = ModelMonitoringStore(monitoring_path)
+
+    def _read_locked_test_status(self) -> str:
+        if not (self.package_dir / "FROZEN.json").is_file():
+            raise ModelPackageError("locked-test opening record cannot be checked without freeze")
+        status = (
+            "OPENED_INCOMPLETE"
+            if (self.package_dir / "LOCKED_TEST_RESERVED").exists()
+            else "UNOPENED"
+        )
+        opened_path = self.package_dir / "LOCKED_TEST_OPENED.json"
         if opened_path.exists():
             try:
                 opened = json.loads(opened_path.read_text(encoding="utf-8"))
             except json.JSONDecodeError as exc:
                 raise ModelPackageError("invalid locked-test opening record") from exc
+            if not isinstance(opened, dict):
+                raise ModelPackageError("invalid locked-test opening record")
             freeze_sha256 = hashlib.sha256(
-                (package_dir / "FROZEN.json").read_bytes()
+                (self.package_dir / "FROZEN.json").read_bytes()
             ).hexdigest()
             if (
                 opened.get("model_version") != self.metadata.get("model_version")
@@ -133,8 +146,27 @@ class ModelRuntime:
                 != self.metadata.get("locked_test_sha256")
             ):
                 raise ModelPackageError("locked-test opening record integrity failed")
-            self.locked_test_status = "EVALUATED"
-        self.monitoring = ModelMonitoringStore(monitoring_path)
+            metrics_path = self.package_dir / "metrics_locked_test.json"
+            try:
+                metrics_bytes = metrics_path.read_bytes()
+                metrics = json.loads(metrics_bytes)
+                valid = (opened.get("status") == "EVALUATED"
+                         and hashlib.sha256(metrics_bytes).hexdigest()
+                         == opened.get("metrics_locked_test_sha256")
+                         and isinstance(metrics, dict)
+                         and metrics.get("locked_test_status") == "EVALUATED"
+                         and metrics.get("model_version") == self.metadata.get("model_version"))
+            except (OSError, ValueError):
+                valid = False
+            status = "EVALUATED" if valid else "EVIDENCE_INTEGRITY_ERROR"
+        return status
+
+    @property
+    def locked_test_status(self) -> str:
+        try:
+            return self._read_locked_test_status()
+        except (ModelPackageError, OSError, ValueError):
+            return "EVIDENCE_INTEGRITY_ERROR"
 
     def predict(self, incident: IncidentRequest) -> PredictionResponse:
         family = incident.family_hint
