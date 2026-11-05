@@ -125,14 +125,17 @@ class ModelRuntime:
             raise ModelPackageError("locked-test opening record cannot be checked without freeze")
         status = (
             "OPENED_INCOMPLETE"
-            if (self.package_dir / "LOCKED_TEST_RESERVED").exists()
+            if any(path.exists() or path.is_symlink() for path in (
+                self.package_dir / "LOCKED_TEST_RESERVED",
+                self.package_dir / "metrics_locked_test.json",
+            ))
             else "UNOPENED"
         )
         opened_path = self.package_dir / "LOCKED_TEST_OPENED.json"
-        if opened_path.exists():
+        if opened_path.exists() or opened_path.is_symlink():
             try:
                 opened = json.loads(opened_path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError as exc:
+            except (OSError, json.JSONDecodeError) as exc:
                 raise ModelPackageError("invalid locked-test opening record") from exc
             if not isinstance(opened, dict):
                 raise ModelPackageError("invalid locked-test opening record")

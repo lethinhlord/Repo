@@ -518,6 +518,22 @@ def test_locked_test_interruption_is_recorded_before_read(tmp_path, monkeypatch)
         evaluate_locked_test(package, locked, unlock_locked_test=True)
 
 
+def test_legacy_visible_metrics_without_markers_never_returns_unopened(tmp_path):
+    package = tmp_path / "package"
+    create_package(package)
+    freeze(package)
+    runtime = ModelRuntime(package)
+    # Reproduce the pre-v38 crash: metrics reached disk, neither a reservation
+    # nor the final opening record exists. This is exposure evidence, not a new test.
+    (package / "metrics_locked_test.json").write_text('{"legacy_metrics_visible":true}')
+    locked = tmp_path / "locked.jsonl"
+    locked.write_text("")
+    assert runtime.locked_test_status == "OPENED_INCOMPLETE"
+    assert ModelRuntime(package).locked_test_status == "OPENED_INCOMPLETE"
+    with pytest.raises(PermissionError, match="already"):
+        evaluate_locked_test(package, locked, unlock_locked_test=True)
+
+
 def test_opening_metrics_corruption_is_visible(tmp_path):
     package = tmp_path / 'package'
     create_package(package)

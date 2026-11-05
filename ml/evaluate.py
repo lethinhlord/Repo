@@ -55,7 +55,9 @@ def evaluate_locked_test(
         raise PermissionError(str(exc)) from exc
     opened_path = package_dir / "LOCKED_TEST_OPENED.json"
     reservation_path = package_dir / "LOCKED_TEST_RESERVED"
-    if opened_path.exists():
+    metrics_path = package_dir / "metrics_locked_test.json"
+    if (opened_path.exists() or opened_path.is_symlink()
+            or metrics_path.exists() or metrics_path.is_symlink()):
         raise PermissionError("locked test has already been opened for this model package")
     try:
         fd = os.open(reservation_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
