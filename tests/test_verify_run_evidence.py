@@ -70,3 +70,13 @@ def test_legacy_bad_destination_history_prevents_whole_pilot_acceptance(tmp_path
     assert report["enrollment_clock_issue_examples"][0]["reasons"] == [
         "clock:sysmon_timestamp_mismatch",
     ]
+
+
+def test_lab_export_cannot_use_legacy_adapter_to_skip_native_clock_fields(tmp_path: Path):
+    module = verifier()
+    archive, source, catalog = _prepare_collection_root(tmp_path)
+    scenario = next(s for s in catalog.scenarios if s.scenario_id == "C2-MALICIOUS-HTTP-BEACON")
+    # The historical adapter fixture has SystemTime but no native utcTime.
+    run_id = _collect_run(tmp_path, archive, source, scenario, sequence=0, repeat=0)
+    with pytest.raises(CollectionError, match="missing native Sysmon UTC field"):
+        module.verify_run_evidence(run_id, tmp_path)

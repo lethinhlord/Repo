@@ -54,9 +54,17 @@ def verify_run_evidence(run_id: str, project_root: Path) -> dict[str, Any]:
     eve = _rows(evidence / "suricata_eve.jsonl")
     checked = 0
     for number, event in enumerate(windows, 1):
-        event_id, _, _ = windows_fields(event)
+        event_id, system, fields = windows_fields(event)
         if event_id in {"1", "3", "22"}:
             checked += 1
+            # Preserve the original runbook's strict raw-export gate. Historical
+            # provider-less online adapters remain supported by the central
+            # helper, but cannot certify missing native fields in a lab export.
+            if not any(key.casefold() == "utctime" for key in fields):
+                raise CollectionError(f"missing native Sysmon UTC field line={number}")
+            provider = str(system.get("providerName", "")).casefold()
+            if provider and provider != "microsoft-windows-sysmon":
+                raise CollectionError(f"selected C2 record is not native Sysmon line={number}")
             if reasons := sysmon_clock_issues(event, maximum_skew_seconds=skew):
                 raise CollectionError(f"Sysmon UTC mismatch line={number}: {','.join(reasons)}")
     connections = {
