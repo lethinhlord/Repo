@@ -23,6 +23,10 @@ Finding còn lại so sánh hai trường **ngay trong cùng sự kiện Sysmon*
 `data.win.system.message` cũng có dòng `UtcTime` giống trường eventdata nói trên.
 Mỗi record xuất hiện nhất quán trong `windows_events.jsonl`, `wazuh_archives.jsonl`
 và `archive_capture.jsonl`; không phải field do script báo cáo tạo ra.
+Đã parse riêng JSON trong **`full_log`** của cả hai record: `win.system.systemTime`
+và `win.eventdata.utcTime` vẫn đúng hai giá trị trong bảng. Vì vậy mâu thuẫn không
+chỉ nằm ở việc chọn trường `data.win` hoặc cách hiển thị báo cáo. Chưa có native
+EVTX để kết luận agent, endpoint hay chặng nào trước export đã tạo ra chênh lệch.
 
 Đường dẫn tương đối trong gói:
 

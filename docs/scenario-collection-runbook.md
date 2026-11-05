@@ -1,6 +1,6 @@
 # HƯỚNG DẪN BÀN GIAO KIÊN — LAB 4 VM VÀ THU DỮ LIỆU V3
 
-Phiên bản tài liệu: 3.7 — ngày 04/11/2026.
+Phiên bản tài liệu: 3.8 — ngày 05/11/2026.
 
 TRẠNG THÁI BÀN GIAO HIỆN TẠI
 
@@ -15,15 +15,15 @@ TRẠNG THÁI BÀN GIAO HIỆN TẠI
   phản ứng tự động. Model/policy thiếu bằng chứng phải REVIEW; hệ thống giữ SHADOW.
 
 Mã dự án và tài liệu lấy trực tiếp từ GitHub tại tag cố định
-`pilot-v3.7-20261104`: https://github.com/lethinhlord/Repo/tree/pilot-v3.7-20261104.
-Dùng Kiên.txt 3.7 hoặc runbook của chính tag này. Không cần Thịnh gửi code offline,
+`pilot-v3.8-20261105`: https://github.com/lethinhlord/Repo/tree/pilot-v3.8-20261105.
+Dùng Kiên.txt 3.8 hoặc runbook của chính tag này. Không cần Thịnh gửi code offline,
 file pointer hoặc companion rời. Hai hướng dẫn R02/R03 mở trực tiếp trên GitHub:
-https://github.com/lethinhlord/Repo/blob/pilot-v3.7-20261104/docs/pilot-r02-recovery.md
-https://github.com/lethinhlord/Repo/blob/pilot-v3.7-20261104/docs/pilot-r03-runbook.md
+https://github.com/lethinhlord/Repo/blob/pilot-v3.8-20261105/docs/pilot-r02-recovery.md
+https://github.com/lethinhlord/Repo/blob/pilot-v3.8-20261105/docs/pilot-r03-runbook.md
 
 Tag này chỉ đổi tài liệu so với mã đã kiểm tại
-`402d40658be416d3d6a3112afe6d63bdeca7033c`. Mục 6.2/6.3 kiểm tag annotated,
-tổ tiên, toàn bộ cây ngoài đúng năm file tài liệu và ghi SHA commit 40 ký tự đã
+`0d6e44ffdf4936182a4ee337db78f29116469b94`. Mục 6.2/6.3 kiểm tag annotated,
+tổ tiên, toàn bộ cây ngoài đúng tám file tài liệu và ghi SHA commit 40 ký tự đã
 resolve. Không dùng nhánh main đang thay đổi làm nguồn chạy. Tag pilot không mở
 G7 và không phải baseline thu train; không dùng tag `data-collection-v2.0.0`.
 APT/pip và tài nguyên upstream vẫn tải từ nguồn chính thức trước khi cô lập lab;
@@ -36,7 +36,7 @@ bảo trì áp dụng cho fetch/cài đặt và đổi mạng/source trong các 
 ## 0. Cách thực hiện và trách nhiệm
 
 Chỉ một lệnh thay đổi collector được chạy trong một checkout tại một thời điểm.
-Bản 3.7 giữ khóa hệ điều hành cho start/begin-action/complete-action/finalize/
+Bản 3.8 giữ khóa hệ điều hành cho start/begin-action/complete-action/finalize/
 abort/quarantine, kể cả khi chờ bucket hoặc intake. Nếu báo `busy/locked`, chờ lệnh
 foreground kết thúc hoặc dừng nó bằng Ctrl+C trên terminal sở hữu lệnh, xác nhận
 tiến trình đã dừng rồi mới abort/quarantine. Không xóa
@@ -125,7 +125,7 @@ identity replay cho mọi trường hợp.
    gồm run-drafts, clock, enrollment, recovery observations và bản sao trên host.
    Nếu owner vẫn còn, dừng collector và xử lý quarantine bằng CLI cũ theo trạng
    thái trước khi mở cửa sổ bảo trì; không xóa khóa thủ công.
-3. Trong bảo trì không còn owner, cập nhật theo 6.3 từ tag 3.7 cố định trên GitHub.
+3. Trong bảo trì không còn owner, cập nhật theo 6.3 từ tag 3.8 cố định trên GitHub.
    Chạy regression được liệt kê, kiểm tag/SHA và normal backup/restore mục 15.
    Không chép patch Python thủ công hay dùng nhánh main đang thay đổi.
 4. R06 đã ABORTED không dùng làm pilot VALID. Theo mục 11–12, tạo draft/run ID mới
@@ -141,19 +141,19 @@ không qua adapter vẫn phải bị chặn.
 ## 0.4 Đối chiếu native clock trước khi thu tiếp sau gói pilot 04/11
 
 Tám output JSON bổ sung đã khớp hash metadata. Không còn yêu cầu tạo lại output để
-bù file gửi thiếu. Hai phép đo thời gian khác nhau: Wazuh nhận log trễ khoảng0,6s
+bù file gửi thiếu. Hai phép đo thời gian khác nhau: Wazuh nhận log trễ khoảng 0,6 s
 không chứng minh SystemTime và eventdata.utcTime trong cùng Sysmon record khớp nhau.
-Xem [bằng chứng cụ thể và tiêu chí parity](dataset-handoff-20261105.md): DNS record149398
-và HTTP record150153 có UtcTime ngày03/11 trong cả eventdata và native message,
+Xem [bằng chứng cụ thể và tiêu chí parity](dataset-handoff-20261105.md): DNS record 149398
+và HTTP record 150153 có UtcTime ngày03/11 trong cả eventdata và native message,
 SystemTime ngày04/11. Chưa có EVTX để xác định nguồn sai lệch.
 
 Trước khi restart/cập nhật Sysmon, dùng helper Export-DatnSysmonClockEvidence.ps1
-được copy/hash từ release đã pin ở mục7.2, lưu thư mục forensic mới và gửi cả XML,
+được copy/hash từ release đã pin ở mục 7.2, lưu thư mục forensic mới và gửi cả XML,
 EVTX, clocks, services và checksum. Không clear log, sửa timestamp, sửa metadata
 hoặc dùng lệnh đổi giờ để làm evidence cũ đạt. Đối chiếu đúng channel/host/recordID/GUID.
 Khi lỗi có trong XML native, điều tra endpoint/VM/Sysmon; khi XML đúng nhưng Archives
 khác, kiểm forwarding/decoder/export. Giữ bằng chứng ở từng chặng trước khi thay đổi.
-Sau xử lý, chứng minh event mới qua5s gate rồi enroll revision mới và chạy pilot mới.
+Sau xử lý, chứng minh event mới qua 5 s gate rồi enroll revision mới và chạy pilot mới.
 Account Suricata=0 là đúng kịch bản4624/4625; không thêm traffic để bù số dòng.
 
 Bản sửa phân family giải quyết extra account group do Windows background. Record
@@ -713,8 +713,8 @@ set -euo pipefail
 test "$(id -u)" -ne 0 # Repo dung user thuong co sudo, khong dung root
 LAB_USER="$(id -un)"
 PROJECT_ROOT="$HOME/datn-ai-soar-v3"
-PILOT_TAG=pilot-v3.7-20261104
-REVIEWED_CODE_COMMIT=402d40658be416d3d6a3112afe6d63bdeca7033c
+PILOT_TAG=pilot-v3.8-20261105
+REVIEWED_CODE_COMMIT=0d6e44ffdf4936182a4ee337db78f29116469b94
 test ! -e "$PROJECT_ROOT"
 git clone --branch "$PILOT_TAG" --single-branch \
   https://github.com/lethinhlord/Repo.git "$PROJECT_ROOT"
@@ -730,7 +730,9 @@ git merge-base --is-ancestor "$REVIEWED_CODE_COMMIT" "$REVIEWED_SOURCE_COMMIT"
 git diff --exit-code "$REVIEWED_CODE_COMMIT" "$REVIEWED_SOURCE_COMMIT" -- . \
   ':(exclude)docs/scenario-collection-runbook.md' ':(exclude)docs/current-status.md' \
   ':(exclude)docs/pilot-r02-recovery.md' ':(exclude)docs/pilot-r03-runbook.md' \
-  ':(exclude)docs/collection-integrity-validation-20261104.md'
+  ':(exclude)docs/week3-model-training-runbook.md' ':(exclude)README.md' \
+  ':(exclude)docs/dataset-handoff-20261105.md' \
+  ':(exclude)docs/audit-v38-validation-20261105.md'
 git checkout --detach "$REVIEWED_SOURCE_COMMIT"
 test "$(git rev-parse HEAD)" = "$REVIEWED_SOURCE_COMMIT"
 mkdir -p evidence/scenario-runs operator-logs run-drafts
@@ -753,7 +755,10 @@ bash scripts/bootstrap_ml.sh
   tests/test_progress_audit.py tests/test_context_baseline.py \
   tests/test_context_enrollment.py tests/test_context_dns_suffix.py \
   tests/test_context_feature_contract.py tests/test_dataset_purposes.py \
-  tests/test_cohort_dataset_build.py tests/test_feature_window_closure.py
+  tests/test_cohort_dataset_build.py tests/test_feature_window_closure.py \
+  tests/test_collection_v38_uncertainty.py tests/test_collection_v38_boundaries.py \
+  tests/test_v38_api_runtime.py tests/test_v38_cohort_constraints.py \
+  tests/test_ml_package.py tests/test_week3_colab_notebook.py tests/test_verify_run_evidence.py
 .venv-ml/bin/python -m scripts.create_run_draft --help
 .venv-ml/bin/python -m scripts.scenario_session finalize --help
 .venv-ml/bin/python -m scripts.enroll_context_baseline --help
@@ -791,14 +796,14 @@ cũ. Trình tự: dừng lệnh collector; với run lỗi còn owner, làm back
 quarantine đúng CLI theo hướng dẫn R02/R03 trên GitHub; kiểm owner đã giải phóng;
 với source đã có tag/receipt được duyệt thì làm backup thường mục 15. Source legacy
 chưa có receipt dùng bản forensic đã chép/kiểm checksum trên host; không tự tạo
-metadata ngược ngày hoặc coi đó là backup 3.7 đã restore. Sau đó mới mở cửa sổ bảo
-trì có Internet trên SOC-AI; sau cập nhật 3.7, làm backup/restore mục 15 trước pilot mới.
+metadata ngược ngày hoặc coi đó là backup 3.8 đã restore. Sau đó mới mở cửa sổ bảo
+trì có Internet trên SOC-AI; sau cập nhật 3.8, làm backup/restore mục 15 trước pilot mới.
 Không đổi mạng/source/venv khi run còn STARTED hoặc FINALIZING. Nếu cần reboot SOC
 để khôi phục default route như mục 10.1, chỉ reboot sau khi đã bảo toàn dữ liệu và
 đóng owner. Không revert snapshot VM có dataset/cursor cũ. Giữ Kali/target không
 phát hành động trong bảo trì; không tắt ACL peer để tải code.
 
-Trên SOC-AI đã có Internet trở lại, nhập checkout thật. Đây là cập nhật pilot 3.7,
+Trên SOC-AI đã có Internet trở lại, nhập checkout thật. Đây là cập nhật pilot 3.8,
 không phải quy trình tự đổi catalog/contract cho G7. Nếu config/lockfile giữa source
 cũ và release khác nhau, dừng đối chiếu; không chép đè hoặc stash cấu hình để vượt.
 
@@ -819,8 +824,8 @@ case "$(git remote get-url origin)" in
   https://github.com/lethinhlord/Repo.git|git@github.com:lethinhlord/Repo.git) ;;
   *) echo 'STOP: origin is not the approved GitHub repository' >&2; exit 1 ;;
 esac
-PILOT_TAG=pilot-v3.7-20261104
-REVIEWED_CODE_COMMIT=402d40658be416d3d6a3112afe6d63bdeca7033c
+PILOT_TAG=pilot-v3.8-20261105
+REVIEWED_CODE_COMMIT=0d6e44ffdf4936182a4ee337db78f29116469b94
 if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
   git fetch --unshallow origin
 fi
@@ -832,7 +837,9 @@ git merge-base --is-ancestor "$REVIEWED_CODE_COMMIT" "$REVIEWED_SOURCE_COMMIT"
 git diff --exit-code "$REVIEWED_CODE_COMMIT" "$REVIEWED_SOURCE_COMMIT" -- . \
   ':(exclude)docs/scenario-collection-runbook.md' ':(exclude)docs/current-status.md' \
   ':(exclude)docs/pilot-r02-recovery.md' ':(exclude)docs/pilot-r03-runbook.md' \
-  ':(exclude)docs/collection-integrity-validation-20261104.md'
+  ':(exclude)docs/week3-model-training-runbook.md' ':(exclude)README.md' \
+  ':(exclude)docs/dataset-handoff-20261105.md' \
+  ':(exclude)docs/audit-v38-validation-20261105.md'
 git diff --exit-code HEAD "$REVIEWED_SOURCE_COMMIT" -- \
   config ml/feature_schema.json 'requirements*' pyproject.toml
 RELEASE_LOG="operator-logs/releases/$PILOT_TAG"
@@ -848,6 +855,9 @@ test "$(git rev-parse HEAD)" = "$REVIEWED_SOURCE_COMMIT"
 printf '%s\n' https://github.com/lethinhlord/Repo.git > "$RELEASE_LOG/source-url.txt"
 printf '%s\n' "$PILOT_TAG" > "$RELEASE_LOG/source-tag.txt"
 printf '%s\n' "$REVIEWED_SOURCE_COMMIT" > "$RELEASE_LOG/source-commit.txt"
+sudo apt update
+sudo apt install -y nodejs
+node --version
 test -x .venv-ml/bin/python
 .venv-ml/bin/python -m pip check
 .venv-ml/bin/python -m pytest -q \
@@ -856,15 +866,19 @@ test -x .venv-ml/bin/python
   tests/test_collection_windows.py tests/test_archive_replay_identity.py \
   tests/test_archive_ruled_identity.py tests/test_collection_integrity.py \
   tests/test_telemetry_integrity.py tests/test_account_scope_review.py \
+  tests/test_collection_v38_uncertainty.py tests/test_collection_v38_boundaries.py \
+  tests/test_v38_api_runtime.py tests/test_v38_cohort_constraints.py \
+  tests/test_ml_package.py tests/test_week3_colab_notebook.py tests/test_verify_run_evidence.py \
   > "$RELEASE_LOG/pytest.txt" 2>&1
 cat "$RELEASE_LOG/pytest.txt"
 ```
 
-Tag sai/đã bị đổi, code ngoài năm file tài liệu không khớp anchor, local edits, owner,
+Tag sai/đã bị đổi, code ngoài tám file tài liệu không khớp anchor, local edits, owner,
 lockfile hoặc test không đạt thì dừng; không dùng --force, reset --hard hoặc clean.
 Giữ source-before và source-commit để đối chiếu; không ghi đè commit metadata hoặc
-snapshot của run cũ. Phát hành 3.7 sửa code nhưng không đổi dependency; nếu venv đã
-đúng lockfile thì không cần cài lại, vẫn phải cập nhật source và chạy test mới.
+snapshot của run cũ. Phát hành 3.8 không đổi Python lockfile nhưng regression workflow
+cần Node.js; cài trong bảo trì trước khi cô lập như block trên. Nếu venv đã đúng
+lockfile thì không cần cài lại Python, vẫn phải cập nhật source và chạy test mới.
 Checkout chưa có venv hợp lệ phải được chuẩn bị riêng trong bảo trì.
 Sau cập nhật, đồng bộ giờ, cô lập lại theo 9.1/10.1 và chạy lại toàn bộ preflight,
 context enrollment khi cần và bốn pilot với ID mới; không phục hồi state cũ thành
@@ -1848,7 +1862,7 @@ cd "$HOME/datn-ai-soar-v3"
 test -z "$(git status --porcelain)"
 COLLECTION_MODE=pilot # Chi dung trainable sau khi G7 duoc nghiem thu
 if [ "$COLLECTION_MODE" = pilot ]; then
-  PILOT_TAG=pilot-v3.7-20261104
+  PILOT_TAG=pilot-v3.8-20261105
   RELEASE_LOG="operator-logs/releases/$PILOT_TAG"
   test "$(cat "$RELEASE_LOG/source-url.txt")" = https://github.com/lethinhlord/Repo.git
   test "$(cat "$RELEASE_LOG/source-tag.txt")" = "$PILOT_TAG"
@@ -2514,8 +2528,8 @@ Không tự nhập `136bb754`, không chọn SHA của model smoke hoặc bỏ g
 mới. Auditor đối chiếu contract/hash trước khi loại pilot khỏi quota. Trước khi đổi
 source, giữ URL/tag/SHA, checksum và biên bản. Source đã có approved tag/receipt
 thì backup/restore mục 15 bằng mã cũ. Source legacy chưa có receipt dùng forensic
-backup đã chép/kiểm trên host theo hướng dẫn R02/R03, không gọi đó là restore 3.7;
-sau cập nhật source được duyệt mới làm backup/restore 3.7 trước pilot mới.
+backup đã chép/kiểm trên host theo hướng dẫn R02/R03, không gọi đó là restore 3.8;
+sau cập nhật source được duyệt mới làm backup/restore 3.8 trước pilot mới.
 Không có active run. Liệt kê run cũ, rồi cách ly từng pilot bằng CLI hiện hành:
 
 ```bash
@@ -2543,9 +2557,9 @@ Pilot cùng contract với release cuối có thể giữ lại để audit như
 Nếu lab đã cô lập Internet, không nhận gói code local. Sau khi đã giữ forensic
 backup và quarantine các owner lỗi; backup thường trước bảo trì chỉ khi source cũ
 đã có approved tag/receipt. Nếu là legacy thì giữ forensic backup đã kiểm và làm
-backup/restore 3.7 sau cập nhật. Sau đó chuyển SOC sang bảo trì có
+backup/restore 3.8 sau cập nhật. Sau đó chuyển SOC sang bảo trì có
 Internet như 6.3/10.1. Mã candidate phải được Thịnh duyệt và đưa lên GitHub bằng
-một tag annotated riêng cùng SHA 40 ký tự. Tag pilot 3.7 không phải tag G7.
+một tag annotated riêng cùng SHA 40 ký tự. Tag pilot 3.8 không phải tag G7.
 Không mở run khi fetch, checkout hoặc đổi dependency. Sau khi các gate release
 đã được phê duyệt và không còn owner, lấy candidate từ GitHub:
 
@@ -2922,12 +2936,12 @@ dùng snapshot đầy đủ tới EOF sẵn có để phân loại, không bổ 
 đúng hạn hoặc thay checkpoint. Late input thuộc bucket, record của agent đã cấu hình
 thiếu thời gian nguồn hoặc JSON thực sự chưa hoàn chỉnh vẫn fail closed. Không dựng lại hay ghi lùi checkpoint
 `capturing` của lần lỗi cũ; giữ nguyên nguồn/inode và các snapshot. Xem
-[quy trình pilot R03](https://github.com/lethinhlord/Repo/blob/pilot-v3.7-20261104/docs/pilot-r03-runbook.md) cho run mới và bàn giao evidence.
+[quy trình pilot R03](https://github.com/lethinhlord/Repo/blob/pilot-v3.8-20261105/docs/pilot-r03-runbook.md) cho run mới và bàn giao evidence.
 
 **Xử lý lỗi và mất phiên:**
 
 - Với lỗi R02 `duplicate alert id has conflicting payload`, xem quy trình
-  [cập nhật và đánh giá phục hồi R02](https://github.com/lethinhlord/Repo/blob/pilot-v3.7-20261104/docs/pilot-r02-recovery.md). Không dùng lại lệnh
+  [cập nhật và đánh giá phục hồi R02](https://github.com/lethinhlord/Repo/blob/pilot-v3.8-20261105/docs/pilot-r02-recovery.md). Không dùng lại lệnh
   dựng checkout mới ở mục 6.2 để thay thế checkout đang sở hữu run chưa finalize.
 - Chưa từng chạy intake trước cutoff: finalize muộn báo thiếu checkpoint hợp lệ.
   Giữ evidence, abort và thu run ID mới; không đổi giờ hay nới grace.
@@ -3008,7 +3022,7 @@ và output tạm cùng tồn tại, giữ cả hai; không chọn/xóa một b�
 `data/quarantine`, kể cả thư mục ẩn. Không để `.RUN_ID.tmp` cũ trong `data/raw` để
 tính quota hoặc tiếp tục train.
 
-Trên đúng bản 3.7 đã cài trước khi cô lập, nhánh recovery của finalize kiểm checksum
+Trên đúng bản 3.8 đã cài trước khi cô lập, nhánh recovery của finalize kiểm checksum
 đã chốt trước, ghi quan sát tail mới riêng tại
 `operator-logs/recovery/RUN_ID/late-observation.jsonl`, kiểm candidate trước khi
 publish và nhả owner. Raw/capture/checkpoint/checksum đã chốt không bị thay đổi.
@@ -3566,11 +3580,11 @@ Cổng nguồn không chứng minh accuracy hoặc thay kiểm leakage/cohort/th
 ## 15. Sao lưu và bàn giao dữ liệu gốc
 
 `data/raw/` và `evidence/scenario-runs/` bị Git bỏ qua có chủ đích; `git push` **không
-phải bản sao lưu dataset**. Backup 3.7 lưu private raw/evidence và URL/tag/SHA,
+phải bản sao lưu dataset**. Backup 3.8 lưu private raw/evidence và URL/tag/SHA,
 không đóng gói source/config/schema root; snapshot bất biến bên trong evidence vẫn
 được giữ để validate. Source restore lấy từ đúng tag GitHub, không ghi đè bằng file
 root từ tar. Checkout legacy chưa có approved tag/receipt dùng backup forensic
-R02/R03 trước bảo trì, rồi tạo backup 3.7 sau cập nhật. Sau mỗi bốn run hợp lệ và cuối mỗi buổi, chỉ sao lưu khi
+R02/R03 trước bảo trì, rồi tạo backup 3.8 sau cập nhật. Sau mỗi bốn run hợp lệ và cuối mỗi buổi, chỉ sao lưu khi
 không còn run `STARTED`/`FINALIZING` và không có lệnh collector chạy:
 
 ```bash
@@ -3671,7 +3685,7 @@ echo 'RESTORE_DRY_RUN=PASS'
 Khôi phục thật cần cửa sổ bảo trì có Internet, không có owner/STARTED/FINALIZING;
 lấy source từ GitHub theo đúng SHA đã lưu rồi mới nạp private backup. Không restore
 source giữa collection mode hoặc đè lên checkout đang thu. Backup legacy thiếu receipt/tag đã duyệt chỉ dùng forensic để bảo toàn evidence;
-không tự gắn metadata 3.7 ngược ngày để coi là restore đạt. Bản 3.7 không cần code offline.
+không tự gắn metadata 3.8 ngược ngày để coi là restore đạt. Bản 3.8 không cần code offline.
 Nếu GitHub không có tag/object/commit đã lưu thì dừng, không thay bằng main mới
 nhất. Cài dependency online từ lockfile của tag trong bảo trì rồi mới cô lập lab:
 
@@ -3733,7 +3747,7 @@ echo 'RESTORE_VALIDATION=PASS'
 ```
 
 Backup cũ không có tag/object SHA/receipt đã duyệt chỉ là forensic/hồ sơ lịch sử;
-không tự tạo metadata ngược ngày để coi là backup 3.7 đạt. Backup 3.7 không cần
+không tự tạo metadata ngược ngày để coi là backup 3.8 đạt. Backup 3.8 không cần
 wheelhouse hoặc source offline; khi mất kết nối GitHub/package index, giữ dữ liệu
 và hoãn source restore cho tới cửa sổ bảo trì có kết nối hợp lệ.
 
