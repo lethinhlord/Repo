@@ -15,13 +15,18 @@ def test_incomplete_account_event_remains_visible_and_partial(missing):
     batch = aggregate_wazuh_alerts([alert], use_runtime_baseline=False)
     assert len(batch.incidents) == 1
     result = batch.incidents[0]
-    assert result.incident.family_hint == ("account" if missing == "targetUserName" else "unknown")
+    # Both are uncertain authentication records, kept in the account window so
+    # a complete neighbor cannot hide the missing observation.
+    assert result.incident.family_hint == "account"
     assert result.quality_status == "PARTIAL"
     assert f"wazuh-alert:{alert.id}" in result.incident.raw_refs
+    assert result.incident.features["successful_login_count"] == 0
+    assert set(ACCOUNT_FEATURES) <= set(result.missing_required_features)
     if missing == "targetUserName":
         assert result.incident.features["unique_target_account_count"] == 0
-        assert result.incident.features["successful_login_count"] == 0
-        assert set(ACCOUNT_FEATURES) <= set(result.missing_required_features)
+        assert "telemetry:missing_target_account" in result.incident.review_reasons
+    else:
+        assert "telemetry:missing_or_invalid_logon_type" in result.incident.review_reasons
 
 
 def test_os_only_window_can_be_ingested_and_closed(tmp_path, monkeypatch):

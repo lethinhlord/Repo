@@ -46,12 +46,14 @@ from ml.feature_pipeline import aggregate_wazuh_alerts
 from ml.intake_window import IntakeError, capture_window, verify_capture
 from ml.telemetry import (
     account_observation_eligible,
+    account_observation_issues,
     flow_counter_issues,
     linked_flow,
     linked_transaction,
     network_is_outbound,
     normalize_ip,
     suricata_observations,
+    sysmon_clock_issues,
     unambiguous_transactions,
 )
 from ml.telemetry import (
@@ -491,30 +493,59 @@ def _payload_sha256(payload: Any) -> str:
 
 def _cursor(path: Path) -> dict[str, int | str]:
     with path.open("rb") as handle:
-        size = handle.seek(0, 2)
-        if size:
-            handle.seek(size - 1)
-            if handle.read(1) != b"\n":
+        initial_size = handle.seek(0, 2)
+        stat = os.fstat(handle.fileno())
+
+        def prefix_digest(length, *, original_size=None, original_hash=None):
+            handle.seek(0)
+            digest = hashlib.sha256()
+            remaining = length
+            while remaining:
+                boundary = length - remaining
+                take = min(1024 * 1024, remaining)
+                if original_size is not None and boundary < original_size:
+                    take = min(take, original_size - boundary)
+                block = handle.read(take)
+                if not block:
+                    raise CollectionError("archive truncated while recording start cursor")
+                digest.update(block)
+                remaining -= len(block)
+                if (original_size is not None and length - remaining == original_size
+                        and digest.hexdigest() != original_hash):
+                    raise CollectionError("archive start prefix changed while awaiting completion")
+            return digest.hexdigest()
+
+        initial_hash = prefix_digest(initial_size)
+        size = initial_size
+        expires = time.monotonic() + 2.0
+        for attempt in range(21):
+            current = path.stat()
+            observed = os.fstat(handle.fileno())
+            if any(item.st_dev != stat.st_dev or item.st_ino != stat.st_ino
+                   or item.st_size < size for item in (current, observed)):
+                raise CollectionError("archive rotated or truncated while recording start cursor")
+            size = observed.st_size
+            if size:
+                handle.seek(size - 1)
+            if not size or handle.read(1) == b"\n":
+                break
+            if attempt == 20 or time.monotonic() >= expires:
                 raise CollectionError(
                     "Wazuh Archives does not end with a complete newline; wait for the "
                     "current write to finish and retry start"
                 )
-        stat = os.fstat(handle.fileno())
-        handle.seek(0)
-        digest = hashlib.sha256()
-        remaining = size
-        while remaining:
-            block = handle.read(min(1024 * 1024, remaining))
-            if not block:
-                raise CollectionError("archive truncated while recording start cursor")
-            digest.update(block)
-            remaining -= len(block)
+            time.sleep(min(0.1, max(0.0, expires - time.monotonic())))
+        # The original partial prefix is evidence too, even while awaiting newline.
+        digest = prefix_digest(size, original_size=initial_size, original_hash=initial_hash)
+        final = path.stat()
+        if final.st_dev != stat.st_dev or final.st_ino != stat.st_ino or final.st_size < size:
+            raise CollectionError("archive rotated or truncated while recording start cursor")
     return {
         "path": str(path),
         "size": size,
         "device": stat.st_dev,
         "inode": stat.st_ino,
-        "prefix_sha256": digest.hexdigest(),
+        "prefix_sha256": digest,
     }
 
 
@@ -939,6 +970,15 @@ def _derive_account(
             continue
         event_id, _, eventdata = _windows_fields(event)
         source = _account_source(eventdata)
+        issues = account_observation_issues(eventdata)
+        logon_type = str(eventdata.get("logonType", eventdata.get("LogonType", ""))).strip()
+        if (event_id in {"4624", "4625"}
+                and (_account_user(eventdata) in users or not _account_user(eventdata))
+                and (not sources or source in sources or source == "unknown-source")
+                and (logon_type in {str(value) for value in draft.attribution.logon_types}
+                     or "telemetry:missing_or_invalid_logon_type" in issues)
+                and issues):
+            raise CollectionError("incomplete attributable account evidence: " + ", ".join(issues))
         if (
             event_id not in {"4624", "4625"}
             or _account_user(eventdata) not in users
@@ -1003,6 +1043,11 @@ def _derive_account(
     return features, selected, draft.attribution.account_names[0]
 
 
+def _validate_attributed_clock(event: dict[str, Any]) -> None:
+    if issues := sysmon_clock_issues(event):
+        raise CollectionError("attributed raw clock evidence invalid: " + ", ".join(issues))
+
+
 def _derive_c2(
     events: list[dict[str, Any]], draft: RunDraft, source: SourceConfig, taxonomy: dict[str, Any]
 ) -> tuple[dict[str, float], list[dict[str, Any]], list[dict[str, Any]], str | None]:
@@ -1029,6 +1074,7 @@ def _derive_c2(
             and nonce in command_line
             and guid
         ):
+            _validate_attributed_clock(event)
             windows.append(event)
             process_events += 1
             attributed_process_guids.add(guid)
@@ -1049,6 +1095,7 @@ def _derive_c2(
             timestamp = _event_time(event)
             if timestamp is None:
                 continue
+            _validate_attributed_clock(event)
             windows.append(event)
             destination = normalize_ip(eventdata.get("destinationIp"))
             destination_port = None
@@ -1074,6 +1121,7 @@ def _derive_c2(
             timestamp = _event_time(event)
             if timestamp is None:
                 continue
+            _validate_attributed_clock(event)
             windows.append(event)
             dns_events += 1
             query = str(eventdata.get("queryName", "")).strip(".")
@@ -2004,6 +2052,8 @@ def finalize_run(
             state["archive_cursor"],
             evidence_dir / "archive_capture.jsonl",
         )
+    for event in events:
+        _validate_raw_event_structure(event)
     tolerance = timedelta(seconds=draft.clock_preflight.maximum_skew_seconds)
     window_start = started_at - tolerance
     window_end = ended_at + tolerance

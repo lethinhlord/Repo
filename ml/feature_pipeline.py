@@ -35,12 +35,12 @@ from ml.context import (
 )
 from ml.telemetry import (
     account_observation_eligible,
+    account_observation_issues,
     account_source,
     account_user,
     basename,
     event_time,
     flow_counter_issues,
-    is_interactive_logon,
     linked_flow,
     network_is_outbound,
     normalize_ip,
@@ -48,6 +48,7 @@ from ml.telemetry import (
     suricata_correlates,
     suricata_observations,
     suricata_payload,
+    sysmon_clock_issues,
     taxonomy_match,
     unambiguous_transactions,
     windows_fields,
@@ -113,11 +114,13 @@ def _family(alert: WazuhAlert) -> str:
     if event_id in {"4624", "4625"}:
         if account_observation_eligible(fields):
             return "account"
-        # Keep an otherwise eligible logon with no target in its source window
-        # so it cannot make neighboring account features appear complete.
-        return "account" if not account_user(fields) and is_interactive_logon(fields) else "unknown"
+        # Keep uncertain authentication in scope so missing target/type/source
+        # evidence cannot make neighboring account features appear complete.
+        return "account" if account_observation_issues(fields) else "unknown"
     if event_id in {"1", "3", "22"} or _suricata_payload(alert) is not None:
         return "c2"
+    if event_id:
+        return "unknown"
     decoder = alert.decoder.name.strip().lower()
     if decoder in {"suricata", "sysmon-c2"} or any(
         (value or 0) > 0
@@ -197,11 +200,12 @@ def _derive_raw_group(
         for alert in alerts:
             event_id, eventdata = _windows_fields(alert)
             if event_id in {"4624", "4625"} and not account_user(eventdata):
-                missing_target = missing_target or is_interactive_logon(eventdata)
+                missing_target = missing_target or bool(account_observation_issues(eventdata))
             if (
                 event_id not in {"4624", "4625"}
                 or not account_user(eventdata)
                 or not account_observation_eligible(eventdata)
+                or _account_source(alert) != _account_source(alerts[0])
             ):
                 continue
             attributed.append(alert)
@@ -421,6 +425,23 @@ def _build_response(
         asset_id=_asset_id(first, config),
     )
     features.update(context.features)
+    telemetry_reasons = sorted({
+        reason
+        for item in alerts
+        for reason in (
+            sysmon_clock_issues(item.model_dump(mode="json"))
+            + (account_observation_issues(_windows_fields(item)[1])
+               if _windows_fields(item)[0] in {"4624", "4625"} else [])
+        )
+    })
+    if telemetry_reasons:
+        missing.extend(
+            name for name in (ACCOUNT_FEATURES if family == "account" else C2_FEATURES)
+            if name not in missing
+        )
+        if family == "account" and "telemetry:unknown_account_source" in telemetry_reasons:
+            features["source_history_known"] = 0.0
+            features["new_source_for_user"] = 0.0
     if context.status != "AVAILABLE":
         if family == "account":
             missing.append("new_source_for_user")
@@ -490,6 +511,7 @@ def _build_response(
         review_reasons=[
             *context.review_reasons,
             *flow_reasons,
+            *telemetry_reasons,
             *(["telemetry:partial"] if missing else []),
         ],
         observation_quality="PARTIAL" if missing or family == "unknown" else "COMPLETE",
@@ -549,9 +571,17 @@ def aggregate_wazuh_alerts(
         unique_by_id.setdefault(alert.id, alert)
     ordered = sorted(unique_by_id.values(), key=lambda item: (alert_event_time(item), item.id))
     groups: dict[tuple[tuple[str, str, str], datetime], list[WazuhAlert]] = {}
+    unknown_sources: dict[tuple[str, datetime], list[WazuhAlert]] = {}
     for alert in ordered:
         key = (_aggregation_key(alert, config), window_start(alert, window_minutes=window_minutes))
         groups.setdefault(key, []).append(alert)
+        if key[0][1:] == ("account", "unknown-source"):
+            unknown_sources.setdefault((key[0][0], key[1]), []).append(alert)
+    for (group_key, bucket), group in groups.items():
+        if group_key[1] == "account" and group_key[2] != "unknown-source":
+            # Source-less authentication could belong to any source in this
+            # asset bucket. Carry its uncertainty, never assign its counts.
+            group.extend(unknown_sources.get((group_key[0], bucket), []))
     return FeatureBatchResponse(
         input_alert_count=len(alerts),
         unique_alert_count=len(unique_by_id),

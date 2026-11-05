@@ -13,12 +13,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from ml.behavior_features import AccountObservation, NetworkObservation
 from ml.telemetry import (
     account_observation_eligible,
+    account_observation_issues,
     account_source,
     account_user,
     basename,
     event_time,
     network_is_outbound,
     normalize_ip,
+    sysmon_clock_issues,
     windows_fields,
 )
 
@@ -120,7 +122,10 @@ def assess_context(
         for item in snapshot.accounts if item.asset_id.casefold() == asset_id.casefold()
     }
     if accounts:
-        if all(item.account.casefold() in known for item in accounts):
+        if all(
+            item.account.casefold() in known and item.source != "unknown-source"
+            for item in accounts
+        ):
             features["source_history_known"] = 1.0
             features["new_source_for_user"] = float(any(
                 normalize_ip(item.source) not in known[item.account.casefold()]
@@ -170,6 +175,8 @@ def build_baseline(
             raise ValueError("baseline capture contains missing/future source event timestamps")
         event_id, _, fields = windows_fields(event)
         asset = windows_agent_name.casefold()
+        if event_id == "4624" and account_observation_issues(fields):
+            raise ValueError("baseline account evidence is incomplete")
         if event_id == "4624" and account_observation_eligible(fields):
             key = (asset, account_user(fields))
             accounts.setdefault(key, set()).add(account_source(fields))
@@ -189,6 +196,8 @@ def build_baseline(
             else:
                 destination = str(fields.get("queryName", "")).casefold().strip(".")
                 port = 53
+            if issues := sysmon_clock_issues(event):
+                raise ValueError("baseline clock evidence invalid: " + ", ".join(issues))
             if not destination or not 0 < port <= 65535:
                 raise ValueError("invalid baseline destination/port")
             destinations.setdefault((asset, destination, port), set()).add(

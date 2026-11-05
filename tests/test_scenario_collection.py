@@ -538,7 +538,10 @@ def test_account_run_creates_strict_manifest_incident_and_checksums(tmp_path: Pa
     assert validation["status"] == "VALID"
 
 
-def test_account_run_ignores_noninteractive_logons_for_declared_user(tmp_path: Path) -> None:
+@pytest.mark.parametrize("unknown_type", [False, True])
+def test_account_run_ignores_only_proven_noninteractive_logons(
+    tmp_path: Path, unknown_type: bool,
+) -> None:
     config = source_config(tmp_path)
     draft = write_draft(
         tmp_path,
@@ -561,7 +564,10 @@ def test_account_run_ignores_noninteractive_logons_for_declared_user(tmp_path: P
         started + timedelta(seconds=3),
         {"targetUserName": "testuser"},
     )
-    del missing_logon_type["data"]["win"]["eventdata"]["logonType"]
+    if unknown_type:
+        del missing_logon_type["data"]["win"]["eventdata"]["logonType"]
+    else:
+        missing_logon_type["data"]["win"]["eventdata"]["logonType"] = "5"
     append_jsonl(
         tmp_path / "archives.json",
         [
@@ -578,6 +584,13 @@ def test_account_run_ignores_noninteractive_logons_for_declared_user(tmp_path: P
             ),
         ],
     )
+
+    if unknown_type:
+        with pytest.raises(CollectionError, match="incomplete attributable account"):
+            finalize_run(
+                "ACCOUNT-BENIGN-INTERACTIVE-001", tmp_path, now=started + timedelta(seconds=30),
+            )
+        return
 
     result = finalize_run(
         "ACCOUNT-BENIGN-INTERACTIVE-001",
