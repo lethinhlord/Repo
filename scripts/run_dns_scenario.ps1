@@ -48,7 +48,19 @@ if ($DomainSuffix -eq 'www.datn.test') {
     $scenarioMarker = 'r'
 }
 
+$actionClock = [Diagnostics.Stopwatch]::StartNew()
+$scheduledSeconds = 0.0
+$previousStart = 0.0
 for ($index = 1; $index -le $Count; $index++) {
+    if ($index -gt 1) { $scheduledSeconds = $previousStart + $gaps[$index - 2] }
+    $remaining = $scheduledSeconds - $actionClock.Elapsed.TotalSeconds
+    if ($remaining -gt 0) {
+        Start-Sleep -Milliseconds ([int][Math]::Ceiling($remaining * 1000))
+    }
+    if ($actionClock.Elapsed.TotalSeconds - $scheduledSeconds -gt 2) {
+        throw 'DNS action missed its frozen start deadline; abort run'
+    }
+    $previousStart = $actionClock.Elapsed.TotalSeconds
     $name = '{0}-{1}{2}-{3:D2}.{4}' -f `
         $RunNonce, $scenarioMarker, $VariantIndex, $index, $DomainSuffix
     $answer = Resolve-DnsName -Name $name -Server $DnsServer -Type A -DnsOnly
@@ -56,8 +68,7 @@ for ($index = 1; $index -le $Count; $index++) {
         throw "Wrong DNS answer for ${name}: expected 10.40.0.10"
     }
     Write-Output "DNS_QUERY_OK name=$name answer=10.40.0.10"
-    if ($index -lt $Count) {
-        $milliseconds = [int][Math]::Round($gaps[$index - 1] * 1000)
-        Start-Sleep -Milliseconds $milliseconds
-    }
 }
+# Keep the child process alive until queued Sysmon DNS observations are delivered.
+Start-Sleep -Seconds 5
+Write-Output "DNS_ACTION_COMPLETE count=$Count"

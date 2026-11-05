@@ -205,9 +205,12 @@ def test_health_poll_runbook_executes_all_eight_frozen_actions() -> None:
 
     assert scenario["quality_gates"]["min_process_events"] == 8
     assert scenario["quality_gates"]["min_network_events"] == 8
-    assert "1..8 | ForEach-Object" in health
-    assert "$_ -lt 8" in health
-    assert "1..5 | ForEach-Object" not in health
+    assert "Start-DatnHttpScenario 'C2-BENIGN-HEALTH-POLL'" in health
+    runbook = RUNBOOK_PATH.read_text(encoding="utf-8")
+    assert "'-Count',[string]$DatnParameters.expected_action_count" in runbook
+    assert "'-GapsCsv',[string]$DatnParameters.expected_intervals_seconds" in runbook
+    runner = (PROJECT_ROOT / "scripts/run_http_scenario.ps1").read_text(encoding="utf-8")
+    assert "'C2-BENIGN-HEALTH-POLL'=8" in runner
 
 
 def test_account_unlock_uses_supported_winnt_adsi_and_cim_verification() -> None:

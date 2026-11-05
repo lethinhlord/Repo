@@ -138,6 +138,31 @@ Các test mô phỏng chỉ xác minh bản sửa phần mềm; chưa phải ngh
 SOC-AI của Kiên. Record `rule` sai cấu trúc và transport ID xung đột ở API/store
 không qua adapter vẫn phải bị chặn.
 
+## 0.4 Đối chiếu native clock trước khi thu tiếp sau gói pilot 04/11
+
+Tám output JSON bổ sung đã khớp hash metadata. Không còn yêu cầu tạo lại output để
+bù file gửi thiếu. Hai phép đo thời gian khác nhau: Wazuh nhận log trễ khoảng0,6s
+không chứng minh SystemTime và eventdata.utcTime trong cùng Sysmon record khớp nhau.
+Xem [bằng chứng cụ thể và tiêu chí parity](dataset-handoff-20261105.md): DNS record149398
+và HTTP record150153 có UtcTime ngày03/11 trong cả eventdata và native message,
+SystemTime ngày04/11. Chưa có EVTX để xác định nguồn sai lệch.
+
+Trước khi restart/cập nhật Sysmon, dùng helper Export-DatnSysmonClockEvidence.ps1
+được copy/hash từ release đã pin ở mục7.2, lưu thư mục forensic mới và gửi cả XML,
+EVTX, clocks, services và checksum. Không clear log, sửa timestamp, sửa metadata
+hoặc dùng lệnh đổi giờ để làm evidence cũ đạt. Đối chiếu đúng channel/host/recordID/GUID.
+Khi lỗi có trong XML native, điều tra endpoint/VM/Sysmon; khi XML đúng nhưng Archives
+khác, kiểm forwarding/decoder/export. Giữ bằng chứng ở từng chặng trước khi thay đổi.
+Sau xử lý, chứng minh event mới qua5s gate rồi enroll revision mới và chạy pilot mới.
+Account Suricata=0 là đúng kịch bản4624/4625; không thêm traffic để bù số dòng.
+
+Bản sửa phân family giải quyết extra account group do Windows background. Record
+4624/4625 thiếu target/type/source vẫn giữ raw và làm window liên quan PARTIAL,
+không bị bỏ để PASS. Delay cuối DNS/HTTP hỗ trợ attribution nhưng không sửa native
+clock. Khi Archives đang ghi dở, start chỉ chờ tối đa2s và bảo vệ toàn bộ prefix đã
+quan sát; không lùi cursor bỏ fragment. Late-tail chờ tối đa2s chỉ để phân loại:
+record relevant sau cutoff vẫn bị từ chối, dòng chưa hoàn chỉnh vẫn fail closed.
+
 ## 1. Kết quả bắt buộc
 
 Mỗi lần thực thi mới là **một run/đơn vị thu**; các run cùng cohort vẫn có thể tương quan. Mỗi run có một `run_id`, một nhãn được khai báo
@@ -293,7 +318,8 @@ Sau lần boot đầu trên Ubuntu/Kali:
 ```bash
 sudo apt update
 sudo apt full-upgrade -y
-sudo apt install -y open-vm-tools openssh-server curl git jq gnupg python3 python3-venv python3-pip
+sudo apt install -y open-vm-tools openssh-server curl git jq gnupg python3 python3-venv python3-pip nodejs
+node --version
 sudo systemctl enable --now ssh
 grep '^PRETTY_NAME=' /etc/os-release
 if [ -f /var/run/reboot-required ]; then
@@ -1031,6 +1057,22 @@ if ($localDnsScriptHash -ne $remoteDnsScriptHash) {
   throw 'run_dns_scenario.ps1 does not match the pinned repo copy'
 }
 $localDnsScriptHash | Set-Content C:\DATN\run_dns_scenario.ps1.sha256.txt -Encoding ascii
+foreach ($runnerName in 'run_http_scenario.ps1','Export-DatnSysmonClockEvidence.ps1') {
+  scp "${SocUser}@192.168.58.147:${SocRepo}/scripts/$runnerName" C:\DATN\
+  if ($LASTEXITCODE -ne 0) { throw "Cannot copy pinned resource: $runnerName" }
+  $remoteLine = ssh "${SocUser}@192.168.58.147" "sha256sum '${SocRepo}/scripts/$runnerName'"
+  if ($LASTEXITCODE -ne 0 -or -not $remoteLine) { throw "Cannot hash $runnerName" }
+  $expected = ($remoteLine -split '\s+')[0].ToLower()
+  $localPath = Join-Path C:\DATN $runnerName
+  $actual = (Get-FileHash -LiteralPath $localPath -Algorithm SHA256).Hash.ToLower()
+  if ($expected -notmatch '^[0-9a-f]{64}$' -or $actual -ne $expected) {
+    throw "Pinned script hash mismatch: $runnerName"
+  }
+  $actual | Set-Content -LiteralPath "$localPath.sha256.txt" -Encoding ascii
+  if (Get-Item -LiteralPath $localPath -Stream Zone.Identifier -ErrorAction SilentlyContinue) {
+    Unblock-File -LiteralPath $localPath
+  }
+}
 $executionPolicies = Get-ExecutionPolicy -List
 $executionPolicies | Format-Table -AutoSize
 $enforcedPolicy = @($executionPolicies | Where-Object {
@@ -2393,7 +2435,8 @@ jq -e '([.accounts[].account]|sort) ==
  ["datn_attack","datn_benign","datn_spray01","datn_spray02","datn_spray03"]' \
   evidence/context-baseline.json >/dev/null
 jq -e 'all(.accounts[]; (.known_sources|index("10.40.0.10")) != null and
- ((.known_sources|index("local-console")) != null or (.known_sources|index("-")) != null))' \
+ ((.known_sources|index("local-console")) != null or (.known_sources|index("-")) != null or
+  (.known_sources|index("127.0.0.1")) != null or (.known_sources|index("::1")) != null))' \
   evidence/context-baseline.json >/dev/null
 for PORT in 8080 8081 9001; do
   jq -e --argjson port "$PORT" 'any(.destinations[];
@@ -2415,6 +2458,14 @@ trong enrollment. Nó tránh coi mỗi run nonce trong FQDN là một đích m�
 phải khẳng định mọi truy vấn trong domain đều lành tính; C2 vẫn có thể dùng domain quen.
 Không thêm suffix Internet rộng hoặc sửa snapshot JSON. Thiếu/stale/future history
 phải UNKNOWN/PARTIAL/REVIEW, không tự thay bằng 0 và ghi COMPLETE.
+
+Gate local chấp nhận sentinel local-console hoặc loopback thật 127.0.0.1/::1;
+không thay loopback đã quan sát bằng chuỗi giả để qua gate. Với remote type3/10,
+thiếu IP/workstation phải UNKNOWN/PARTIAL và không enroll nguồn giả thành local.
+Baseline mới từ chối native-clock mâu thuẫn ở destination history. Nếu capture không
+đạt, giữ nguyên bản cũ, điều tra XML/EVTX theo mục 0.4 rồi tạo enrollment/revision mới.
+Suffix phải đúng datn.test từ inventory đã duyệt; www.datn.test không thay thế toàn
+phạm vi đó. Cả query thật và raw trước/sau lọc phải được giữ nguyên.
 
 TTL phải đủ cho toàn bộ buổi thu. Nếu hết hạn, dừng đợt, tạo enrollment/revision mới
 trước các run tiếp theo và gửi Thịnh đối chiếu; không sửa `valid_until`. Nếu API đang
@@ -2912,84 +2963,16 @@ vào tiến độ. Kết quả ghi ngoài cây evidence đã đóng checksum, kh
 ```bash
 set -euo pipefail
 mkdir -p operator-logs/run-checks
-.venv-ml/bin/python - "$RUN_ID" 2> >(tee "operator-logs/run-checks/$RUN_ID.error.txt" >&2) <<'PY' | tee "operator-logs/run-checks/$RUN_ID.json"
-"""Read-only per-run guide check, supplementary to scenario_session validate."""
-import json
-import re
-import sys
-from datetime import UTC, datetime
-from decimal import Decimal
-from pathlib import Path
-import yaml
-from ml.telemetry import flow_connection_key
-
-run_id = sys.argv[1]
-evidence = Path('evidence/scenario-runs') / run_id
-raw = Path('data/raw') / run_id
-manifest = json.loads((raw/'scenario_manifest.json').read_text())
-if manifest.get('family') not in {'account','c2'}:
-    raise SystemExit('Unknown family; zero Sysmon rows are allowed only for account')
-metadata = json.loads((evidence/'collection_metadata.json').read_text())
-incident = json.loads((raw/'incidents.jsonl').read_text())
-schema = json.loads((evidence/'feature-schema.json').read_text())
-source = yaml.safe_load((evidence/'collection-sources.yaml').read_text())
-for name in ('archive_capture.jsonl','intake_checkpoint.json','context-baseline.json',
-             'context-capture.jsonl','execution_receipt.json','checksums.sha256'):
-    if not (evidence/name).is_file() or not (evidence/name).stat().st_size:
-        raise SystemExit(f'Missing/empty required evidence: {name}')
-if metadata.get('feature_schema_version') != 'features-v3' or schema.get('version') != 'features-v3':
-    raise SystemExit('Wrong feature schema; recollect using the frozen release')
-if set(incident['features']) != set(schema['required']) or len(schema['required']) != 24:
-    raise SystemExit('Wrong feature fields; never fill missing history with zero')
-if incident.get('context_status') != 'AVAILABLE' or incident.get('observation_quality') != 'COMPLETE':
-    raise SystemExit('Missing context or incomplete observation')
-if any(source.get(key) is not True for key in
-       ('require_clean_bucket','require_flow_counters','require_online_parity')):
-    raise SystemExit('Run used a relaxed source contract')
-
-def precise(value, naive_utc=False):
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError('missing timestamp')
-    dt = datetime.fromisoformat(value.replace('Z','+00:00'))
-    if dt.tzinfo is None:
-        if not naive_utc:
-            raise ValueError('SystemTime must include timezone')
-        dt = dt.replace(tzinfo=UTC)
-    whole = dt.astimezone(UTC).replace(microsecond=0) - datetime(1970,1,1,tzinfo=UTC)
-    fraction = re.search(r'\d{2}:\d{2}:\d{2}[.,](\d+)', value)
-    return Decimal(whole.days*86400+whole.seconds) + (Decimal('0.'+fraction[1]) if fraction else 0)
-
-checked, maximum_delta = 0, Decimal(0)
-for number, line in enumerate((evidence/'windows_events.jsonl').read_text().splitlines(),1):
-    row = json.loads(line)
-    win = row['data']['win']
-    system, fields = win['system'], win['eventdata']
-    if str(system.get('eventID')) not in {'1','3','22'}:
-        continue
-    delta = abs(precise(system.get('systemTime')) - precise(fields.get('utcTime'), True))
-    if delta > 5:
-        raise SystemExit(f'Sysmon UTC mismatch line={number} record={system.get("eventRecordID")} delta={delta}s')
-    checked += 1
-    maximum_delta = max(maximum_delta,delta)
-connections, finals = set(), set()
-if manifest['family'] == 'c2':
-    if not checked:
-        raise SystemExit('C2 has no Sysmon timestamp evidence')
-    for line in (evidence/'suricata_eve.jsonl').read_text().splitlines():
-        row = json.loads(line)
-        if row.get('event_type') in {'http','dns','tls'}:
-            connections.add(flow_connection_key(row))
-        elif row.get('event_type') == 'flow':
-            finals.add(flow_connection_key(row))
-    if not connections or None in connections or not connections <= finals:
-        raise SystemExit('Missing final-flow coverage for a selected connection')
-print(json.dumps({'run_id':run_id,'family':manifest['family'],
-                  'purpose':manifest['purpose'],'sysmon_time_rows':checked,
-                  'max_sysmon_delta_seconds':str(maximum_delta),
-                  'transaction_connections':len(connections),'final_connections':len(finals),
-                  'status':'RUN_EVIDENCE_CHECK_PASS'}, indent=2))
-PY
+.venv-ml/bin/python -m scripts.verify_run_evidence --run-id "$RUN_ID" \
+  2> >(tee "operator-logs/run-checks/$RUN_ID.error.txt" >&2) \
+  | tee "operator-logs/run-checks/$RUN_ID.json"
 ```
+
+CLI dùng cùng central clock checker với collector/online, không thay raw timestamps.
+Nó cũng kiểm riêng destination history của context capture đã đóng băng. Account có
+Security/count hợp lệ vẫn có thể VALID ở collector, trong khi supplementary check
+báo RUN_EVIDENCE_CHECK_REVIEW do enrollment C2 chưa đạt; không tính pilot hoàn chỉnh
+chỉ từ VALID. Không bỏ history lỗi hoặc tắt gate để lấy PASS.
 
 Phải thấy RUN_EVIDENCE_CHECK_PASS cùng run ID, schema/context đủ, hai trường thời
 gian Sysmon không lệch quá 5 giây và số connection có final phủ đủ transaction.
@@ -2998,8 +2981,9 @@ do validate kiểm. Với C2, DNS phải có event1 trong child process trước
 12.2; HEALTH-POLL cần tám lượt, không dùng năm lượt như export cũ. Không ghép record
 từ run khác để đủ số. Nếu kiểm bổ sung lỗi, dùng quarantine ở block ngay dưới,
 không tiếp tục run kế hoặc tính quota dù validate trước đó in VALID. Chi tiết lỗi
-được giữ trong operator-logs/run-checks/RUN_ID.error.txt; JSON kết quả có thể rỗng
-khi lỗi, không dùng sự tồn tại của file JSON để tính run đạt.
+được giữ trong JSON có status ERROR/REVIEW hoặc stderr tại
+operator-logs/run-checks/RUN_ID.error.txt. Không dùng sự tồn tại của file JSON để
+tính run đạt; phải có đúng RUN_EVIDENCE_CHECK_PASS và exit code0.
 
 Phải thấy `VALID`; `data/raw/$RUN_ID` có `scenario_manifest.json` và `incidents.jsonl`;
 evidence có Archives nguyên byte, intake checkpoint, Windows events, Suricata EVE,
@@ -3270,6 +3254,26 @@ function Start-DatnDnsScenario(
     throw "DNS runner failed with exit code $($process.ExitCode)"
   }
 }
+function Start-DatnHttpScenario([string]$ExpectedScenario) {
+  $runner = 'C:\DATN\run_http_scenario.ps1'
+  $expectedHash = (Get-Content -LiteralPath "$runner.sha256.txt" -Raw).Trim()
+  if ($expectedHash -notmatch '^[0-9a-f]{64}$' -or
+      (Get-FileHash -LiteralPath $runner -Algorithm SHA256).Hash.ToLower() -ne $expectedHash) {
+    throw 'HTTP runner changed; restore the pinned copy before collection'
+  }
+  Start-DatnScenario $ExpectedScenario
+  $arguments = @(
+    '-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','RemoteSigned','-File',$runner,
+    '-RunNonce',[string]$DatnParameters.run_nonce,
+    '-Count',[string]$DatnParameters.expected_action_count,
+    '-GapsCsv',[string]$DatnParameters.expected_intervals_seconds,
+    '-VariantIndex',[string]$DatnParameters.variant_index,
+    '-ScenarioId',$ExpectedScenario
+  )
+  $process = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+    -ArgumentList $arguments -NoNewWindow -Wait -PassThru
+  if ($process.ExitCode -ne 0) { throw "HTTP runner failed with exit code $($process.ExitCode)" }
+}
 ```
 
 Không sửa hàm để tạo timing theo nhãn. `run_nonce` và `variant_index` phải xuất hiện
@@ -3282,18 +3286,17 @@ Giữ đúng policy `RemoteSigned` riêng cho child như block trên; không dù
 hoặc Unrestricted và không chạy `Set-ExecutionPolicy`. Nếu policy chặn file đã pin thì
 abort run và xử lý trust/signing ngoài cửa sổ thu thập, không tiếp tục để lấy mẫu thiếu DNS.
 
+Các HTTP lặp dùng runner đã pin và CSV đóng băng, khoảng nghỉ đo từ action START tới
+START kế tiếp. Request chậm không được cộng dồn sleep sau response hoặc nén khoảng
+nghỉ kế tiếp để đuổi lịch cũ. Runner dùng HTTP/1.1, Connection: close, timeout hữu hạn,
+kiểm exit code và status200, giữ parent sống5s cho Sysmon. Sai lịch/response thì abort;
+không tự tăng count. Các download một lần giữ hash payload riêng như bên dưới.
+
 ### C2-BENIGN-HEALTH-POLL
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-Start-DatnScenario 'C2-BENIGN-HEALTH-POLL'
-$gap = Get-DatnGap 30
-1..8 | ForEach-Object {
-  $uri = "http://10.40.0.10:8081/beacon?mode=health&run=$($DatnParameters.run_nonce)&v=$($DatnParameters.variant_index)&n=$_"
-  curl.exe --fail --silent --show-error --output NUL $uri
-  if ($LASTEXITCODE -ne 0) { throw 'health request failed' }
-  if ($_ -lt 8) { Start-Sleep -Seconds $gap }
-}
+Start-DatnHttpScenario 'C2-BENIGN-HEALTH-POLL'
 ```
 
 ### C2-BENIGN-SINGLE-DOWNLOAD
@@ -3315,14 +3318,7 @@ if ($hash -ne 'd3aad3cdd62be01b41e8004813eb7fb60c78590cfa520764f783f581f951c2e3'
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-Start-DatnScenario 'C2-BENIGN-IRREGULAR-API'
-$gaps = @(10,35,20) | ForEach-Object { Get-DatnGap $_ }
-for ($i=0; $i -lt 4; $i++) {
-  $uri = "http://10.40.0.10:8080/api/status?run=$($DatnParameters.run_nonce)&v=$($DatnParameters.variant_index)&n=$i"
-  curl.exe --fail --silent --show-error --output NUL $uri
-  if ($LASTEXITCODE -ne 0) { throw 'API request failed' }
-  if ($i -lt 3) { Start-Sleep -Seconds $gaps[$i] }
-}
+Start-DatnHttpScenario 'C2-BENIGN-IRREGULAR-API'
 ```
 
 ### C2-BENIGN-DNS
@@ -3337,42 +3333,21 @@ Start-DatnDnsScenario -ExpectedScenario 'C2-BENIGN-DNS' `
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-Start-DatnScenario 'C2-BENIGN-API-BURST'
-$gap = Get-DatnGap 2
-1..6 | ForEach-Object {
-  $uri = "http://10.40.0.10:8080/api/status?run=$($DatnParameters.run_nonce)&v=$($DatnParameters.variant_index)&n=$_"
-  curl.exe --fail --silent --show-error --output NUL $uri
-  if ($LASTEXITCODE -ne 0) { throw 'API burst request failed' }
-  if ($_ -lt 6) { Start-Sleep -Seconds $gap }
-}
+Start-DatnHttpScenario 'C2-BENIGN-API-BURST'
 ```
 
 ### C2-MALICIOUS-HTTP-BEACON
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-Start-DatnScenario 'C2-MALICIOUS-HTTP-BEACON'
-$gap = Get-DatnGap 15
-1..8 | ForEach-Object {
-  curl.exe --fail --silent --show-error --output NUL `
-    "http://10.40.0.10:8081/beacon?run=$($DatnParameters.run_nonce)&v=$($DatnParameters.variant_index)&n=$_"
-  if ($LASTEXITCODE -ne 0) { throw 'beacon request failed' }
-  if ($_ -lt 8) { Start-Sleep -Seconds $gap }
-}
+Start-DatnHttpScenario 'C2-MALICIOUS-HTTP-BEACON'
 ```
 
 ### C2-MALICIOUS-JITTER-BEACON
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-Start-DatnScenario 'C2-MALICIOUS-JITTER-BEACON'
-$gaps = @(8,21,13,30,11,24,17) | ForEach-Object { Get-DatnGap $_ }
-for ($i=0; $i -lt 8; $i++) {
-  curl.exe --fail --silent --show-error --output NUL `
-    "http://10.40.0.10:8081/beacon?run=$($DatnParameters.run_nonce)&v=$($DatnParameters.variant_index)&n=$i"
-  if ($LASTEXITCODE -ne 0) { throw 'jitter beacon request failed' }
-  if ($i -lt 7) { Start-Sleep -Seconds $gaps[$i] }
-}
+Start-DatnHttpScenario 'C2-MALICIOUS-JITTER-BEACON'
 ```
 
 ### C2-MALICIOUS-DNS-BEACON
