@@ -117,7 +117,9 @@ def _prepare_collection_root(tmp_path: Path) -> tuple[Path, Path, ScenarioCatalo
     for user in sorted(users):
         for source in ("local-console", "-", "10.40.0.10"):
             enrollment.append(_windows_event("ENROLLMENT", observed_at, 4624, {
-                "targetUserName": user, "logonType": "3", "ipAddress": source,
+                "targetUserName": user,
+                "logonType": "3" if source == "10.40.0.10" else "2",
+                "ipAddress": source,
             }, len(enrollment)))
     for row in catalog.scenarios:
         for destination in row.attribution.destination_ips:

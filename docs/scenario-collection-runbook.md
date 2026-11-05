@@ -1,6 +1,6 @@
 # HƯỚNG DẪN BÀN GIAO KIÊN — LAB 4 VM VÀ THU DỮ LIỆU V3
 
-Phiên bản tài liệu: 3.7 — ngày 04/11/2026.
+Phiên bản tài liệu: 3.8 — ngày 05/11/2026.
 
 TRẠNG THÁI BÀN GIAO HIỆN TẠI
 
@@ -15,15 +15,15 @@ TRẠNG THÁI BÀN GIAO HIỆN TẠI
   phản ứng tự động. Model/policy thiếu bằng chứng phải REVIEW; hệ thống giữ SHADOW.
 
 Mã dự án và tài liệu lấy trực tiếp từ GitHub tại tag cố định
-`pilot-v3.7-20261104`: https://github.com/lethinhlord/Repo/tree/pilot-v3.7-20261104.
-Dùng Kiên.txt 3.7 hoặc runbook của chính tag này. Không cần Thịnh gửi code offline,
+`pilot-v3.8-20261105`: https://github.com/lethinhlord/Repo/tree/pilot-v3.8-20261105.
+Dùng Kiên.txt 3.8 hoặc runbook của chính tag này. Không cần Thịnh gửi code offline,
 file pointer hoặc companion rời. Hai hướng dẫn R02/R03 mở trực tiếp trên GitHub:
-https://github.com/lethinhlord/Repo/blob/pilot-v3.7-20261104/docs/pilot-r02-recovery.md
-https://github.com/lethinhlord/Repo/blob/pilot-v3.7-20261104/docs/pilot-r03-runbook.md
+https://github.com/lethinhlord/Repo/blob/pilot-v3.8-20261105/docs/pilot-r02-recovery.md
+https://github.com/lethinhlord/Repo/blob/pilot-v3.8-20261105/docs/pilot-r03-runbook.md
 
 Tag này chỉ đổi tài liệu so với mã đã kiểm tại
-`402d40658be416d3d6a3112afe6d63bdeca7033c`. Mục 6.2/6.3 kiểm tag annotated,
-tổ tiên, toàn bộ cây ngoài đúng năm file tài liệu và ghi SHA commit 40 ký tự đã
+`0d6e44ffdf4936182a4ee337db78f29116469b94`. Mục 6.2/6.3 kiểm tag annotated,
+tổ tiên, toàn bộ cây ngoài đúng tám file tài liệu và ghi SHA commit 40 ký tự đã
 resolve. Không dùng nhánh main đang thay đổi làm nguồn chạy. Tag pilot không mở
 G7 và không phải baseline thu train; không dùng tag `data-collection-v2.0.0`.
 APT/pip và tài nguyên upstream vẫn tải từ nguồn chính thức trước khi cô lập lab;
@@ -36,7 +36,7 @@ bảo trì áp dụng cho fetch/cài đặt và đổi mạng/source trong các 
 ## 0. Cách thực hiện và trách nhiệm
 
 Chỉ một lệnh thay đổi collector được chạy trong một checkout tại một thời điểm.
-Bản 3.7 giữ khóa hệ điều hành cho start/begin-action/complete-action/finalize/
+Bản 3.8 giữ khóa hệ điều hành cho start/begin-action/complete-action/finalize/
 abort/quarantine, kể cả khi chờ bucket hoặc intake. Nếu báo `busy/locked`, chờ lệnh
 foreground kết thúc hoặc dừng nó bằng Ctrl+C trên terminal sở hữu lệnh, xác nhận
 tiến trình đã dừng rồi mới abort/quarantine. Không xóa
@@ -125,7 +125,7 @@ identity replay cho mọi trường hợp.
    gồm run-drafts, clock, enrollment, recovery observations và bản sao trên host.
    Nếu owner vẫn còn, dừng collector và xử lý quarantine bằng CLI cũ theo trạng
    thái trước khi mở cửa sổ bảo trì; không xóa khóa thủ công.
-3. Trong bảo trì không còn owner, cập nhật theo 6.3 từ tag 3.7 cố định trên GitHub.
+3. Trong bảo trì không còn owner, cập nhật theo 6.3 từ tag 3.8 cố định trên GitHub.
    Chạy regression được liệt kê, kiểm tag/SHA và normal backup/restore mục 15.
    Không chép patch Python thủ công hay dùng nhánh main đang thay đổi.
 4. R06 đã ABORTED không dùng làm pilot VALID. Theo mục 11–12, tạo draft/run ID mới
@@ -137,6 +137,31 @@ identity replay cho mọi trường hợp.
 Các test mô phỏng chỉ xác minh bản sửa phần mềm; chưa phải nghiệm thu R06 trên
 SOC-AI của Kiên. Record `rule` sai cấu trúc và transport ID xung đột ở API/store
 không qua adapter vẫn phải bị chặn.
+
+## 0.4 Đối chiếu native clock trước khi thu tiếp sau gói pilot 04/11
+
+Tám output JSON bổ sung đã khớp hash metadata. Không còn yêu cầu tạo lại output để
+bù file gửi thiếu. Hai phép đo thời gian khác nhau: Wazuh nhận log trễ khoảng 0,6 s
+không chứng minh SystemTime và eventdata.utcTime trong cùng Sysmon record khớp nhau.
+Xem [bằng chứng cụ thể và tiêu chí parity](dataset-handoff-20261105.md): DNS record 149398
+và HTTP record 150153 có UtcTime ngày03/11 trong cả eventdata và native message,
+SystemTime ngày04/11. Chưa có EVTX để xác định nguồn sai lệch.
+
+Trước khi restart/cập nhật Sysmon, dùng helper Export-DatnSysmonClockEvidence.ps1
+được copy/hash từ release đã pin ở mục 7.2, lưu thư mục forensic mới và gửi cả XML,
+EVTX, clocks, services và checksum. Không clear log, sửa timestamp, sửa metadata
+hoặc dùng lệnh đổi giờ để làm evidence cũ đạt. Đối chiếu đúng channel/host/recordID/GUID.
+Khi lỗi có trong XML native, điều tra endpoint/VM/Sysmon; khi XML đúng nhưng Archives
+khác, kiểm forwarding/decoder/export. Giữ bằng chứng ở từng chặng trước khi thay đổi.
+Sau xử lý, chứng minh event mới qua 5 s gate rồi enroll revision mới và chạy pilot mới.
+Account Suricata=0 là đúng kịch bản4624/4625; không thêm traffic để bù số dòng.
+
+Bản sửa phân family giải quyết extra account group do Windows background. Record
+4624/4625 thiếu target/type/source vẫn giữ raw và làm window liên quan PARTIAL,
+không bị bỏ để PASS. Delay cuối DNS/HTTP hỗ trợ attribution nhưng không sửa native
+clock. Khi Archives đang ghi dở, start chỉ chờ tối đa2s và bảo vệ toàn bộ prefix đã
+quan sát; không lùi cursor bỏ fragment. Late-tail chờ tối đa2s chỉ để phân loại:
+record relevant sau cutoff vẫn bị từ chối, dòng chưa hoàn chỉnh vẫn fail closed.
 
 ## 1. Kết quả bắt buộc
 
@@ -293,7 +318,8 @@ Sau lần boot đầu trên Ubuntu/Kali:
 ```bash
 sudo apt update
 sudo apt full-upgrade -y
-sudo apt install -y open-vm-tools openssh-server curl git jq gnupg python3 python3-venv python3-pip
+sudo apt install -y open-vm-tools openssh-server curl git jq gnupg python3 python3-venv python3-pip nodejs
+node --version
 sudo systemctl enable --now ssh
 grep '^PRETTY_NAME=' /etc/os-release
 if [ -f /var/run/reboot-required ]; then
@@ -687,8 +713,8 @@ set -euo pipefail
 test "$(id -u)" -ne 0 # Repo dung user thuong co sudo, khong dung root
 LAB_USER="$(id -un)"
 PROJECT_ROOT="$HOME/datn-ai-soar-v3"
-PILOT_TAG=pilot-v3.7-20261104
-REVIEWED_CODE_COMMIT=402d40658be416d3d6a3112afe6d63bdeca7033c
+PILOT_TAG=pilot-v3.8-20261105
+REVIEWED_CODE_COMMIT=0d6e44ffdf4936182a4ee337db78f29116469b94
 test ! -e "$PROJECT_ROOT"
 git clone --branch "$PILOT_TAG" --single-branch \
   https://github.com/lethinhlord/Repo.git "$PROJECT_ROOT"
@@ -704,7 +730,9 @@ git merge-base --is-ancestor "$REVIEWED_CODE_COMMIT" "$REVIEWED_SOURCE_COMMIT"
 git diff --exit-code "$REVIEWED_CODE_COMMIT" "$REVIEWED_SOURCE_COMMIT" -- . \
   ':(exclude)docs/scenario-collection-runbook.md' ':(exclude)docs/current-status.md' \
   ':(exclude)docs/pilot-r02-recovery.md' ':(exclude)docs/pilot-r03-runbook.md' \
-  ':(exclude)docs/collection-integrity-validation-20261104.md'
+  ':(exclude)docs/week3-model-training-runbook.md' ':(exclude)README.md' \
+  ':(exclude)docs/dataset-handoff-20261105.md' \
+  ':(exclude)docs/audit-v38-validation-20261105.md'
 git checkout --detach "$REVIEWED_SOURCE_COMMIT"
 test "$(git rev-parse HEAD)" = "$REVIEWED_SOURCE_COMMIT"
 mkdir -p evidence/scenario-runs operator-logs run-drafts
@@ -727,7 +755,10 @@ bash scripts/bootstrap_ml.sh
   tests/test_progress_audit.py tests/test_context_baseline.py \
   tests/test_context_enrollment.py tests/test_context_dns_suffix.py \
   tests/test_context_feature_contract.py tests/test_dataset_purposes.py \
-  tests/test_cohort_dataset_build.py tests/test_feature_window_closure.py
+  tests/test_cohort_dataset_build.py tests/test_feature_window_closure.py \
+  tests/test_collection_v38_uncertainty.py tests/test_collection_v38_boundaries.py \
+  tests/test_v38_api_runtime.py tests/test_v38_cohort_constraints.py \
+  tests/test_ml_package.py tests/test_week3_colab_notebook.py tests/test_verify_run_evidence.py
 .venv-ml/bin/python -m scripts.create_run_draft --help
 .venv-ml/bin/python -m scripts.scenario_session finalize --help
 .venv-ml/bin/python -m scripts.enroll_context_baseline --help
@@ -765,14 +796,14 @@ cũ. Trình tự: dừng lệnh collector; với run lỗi còn owner, làm back
 quarantine đúng CLI theo hướng dẫn R02/R03 trên GitHub; kiểm owner đã giải phóng;
 với source đã có tag/receipt được duyệt thì làm backup thường mục 15. Source legacy
 chưa có receipt dùng bản forensic đã chép/kiểm checksum trên host; không tự tạo
-metadata ngược ngày hoặc coi đó là backup 3.7 đã restore. Sau đó mới mở cửa sổ bảo
-trì có Internet trên SOC-AI; sau cập nhật 3.7, làm backup/restore mục 15 trước pilot mới.
+metadata ngược ngày hoặc coi đó là backup 3.8 đã restore. Sau đó mới mở cửa sổ bảo
+trì có Internet trên SOC-AI; sau cập nhật 3.8, làm backup/restore mục 15 trước pilot mới.
 Không đổi mạng/source/venv khi run còn STARTED hoặc FINALIZING. Nếu cần reboot SOC
 để khôi phục default route như mục 10.1, chỉ reboot sau khi đã bảo toàn dữ liệu và
 đóng owner. Không revert snapshot VM có dataset/cursor cũ. Giữ Kali/target không
 phát hành động trong bảo trì; không tắt ACL peer để tải code.
 
-Trên SOC-AI đã có Internet trở lại, nhập checkout thật. Đây là cập nhật pilot 3.7,
+Trên SOC-AI đã có Internet trở lại, nhập checkout thật. Đây là cập nhật pilot 3.8,
 không phải quy trình tự đổi catalog/contract cho G7. Nếu config/lockfile giữa source
 cũ và release khác nhau, dừng đối chiếu; không chép đè hoặc stash cấu hình để vượt.
 
@@ -793,8 +824,8 @@ case "$(git remote get-url origin)" in
   https://github.com/lethinhlord/Repo.git|git@github.com:lethinhlord/Repo.git) ;;
   *) echo 'STOP: origin is not the approved GitHub repository' >&2; exit 1 ;;
 esac
-PILOT_TAG=pilot-v3.7-20261104
-REVIEWED_CODE_COMMIT=402d40658be416d3d6a3112afe6d63bdeca7033c
+PILOT_TAG=pilot-v3.8-20261105
+REVIEWED_CODE_COMMIT=0d6e44ffdf4936182a4ee337db78f29116469b94
 if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
   git fetch --unshallow origin
 fi
@@ -806,7 +837,9 @@ git merge-base --is-ancestor "$REVIEWED_CODE_COMMIT" "$REVIEWED_SOURCE_COMMIT"
 git diff --exit-code "$REVIEWED_CODE_COMMIT" "$REVIEWED_SOURCE_COMMIT" -- . \
   ':(exclude)docs/scenario-collection-runbook.md' ':(exclude)docs/current-status.md' \
   ':(exclude)docs/pilot-r02-recovery.md' ':(exclude)docs/pilot-r03-runbook.md' \
-  ':(exclude)docs/collection-integrity-validation-20261104.md'
+  ':(exclude)docs/week3-model-training-runbook.md' ':(exclude)README.md' \
+  ':(exclude)docs/dataset-handoff-20261105.md' \
+  ':(exclude)docs/audit-v38-validation-20261105.md'
 git diff --exit-code HEAD "$REVIEWED_SOURCE_COMMIT" -- \
   config ml/feature_schema.json 'requirements*' pyproject.toml
 RELEASE_LOG="operator-logs/releases/$PILOT_TAG"
@@ -822,6 +855,9 @@ test "$(git rev-parse HEAD)" = "$REVIEWED_SOURCE_COMMIT"
 printf '%s\n' https://github.com/lethinhlord/Repo.git > "$RELEASE_LOG/source-url.txt"
 printf '%s\n' "$PILOT_TAG" > "$RELEASE_LOG/source-tag.txt"
 printf '%s\n' "$REVIEWED_SOURCE_COMMIT" > "$RELEASE_LOG/source-commit.txt"
+sudo apt update
+sudo apt install -y nodejs
+node --version
 test -x .venv-ml/bin/python
 .venv-ml/bin/python -m pip check
 .venv-ml/bin/python -m pytest -q \
@@ -830,15 +866,19 @@ test -x .venv-ml/bin/python
   tests/test_collection_windows.py tests/test_archive_replay_identity.py \
   tests/test_archive_ruled_identity.py tests/test_collection_integrity.py \
   tests/test_telemetry_integrity.py tests/test_account_scope_review.py \
+  tests/test_collection_v38_uncertainty.py tests/test_collection_v38_boundaries.py \
+  tests/test_v38_api_runtime.py tests/test_v38_cohort_constraints.py \
+  tests/test_ml_package.py tests/test_week3_colab_notebook.py tests/test_verify_run_evidence.py \
   > "$RELEASE_LOG/pytest.txt" 2>&1
 cat "$RELEASE_LOG/pytest.txt"
 ```
 
-Tag sai/đã bị đổi, code ngoài năm file tài liệu không khớp anchor, local edits, owner,
+Tag sai/đã bị đổi, code ngoài tám file tài liệu không khớp anchor, local edits, owner,
 lockfile hoặc test không đạt thì dừng; không dùng --force, reset --hard hoặc clean.
 Giữ source-before và source-commit để đối chiếu; không ghi đè commit metadata hoặc
-snapshot của run cũ. Phát hành 3.7 sửa code nhưng không đổi dependency; nếu venv đã
-đúng lockfile thì không cần cài lại, vẫn phải cập nhật source và chạy test mới.
+snapshot của run cũ. Phát hành 3.8 không đổi Python lockfile nhưng regression workflow
+cần Node.js; cài trong bảo trì trước khi cô lập như block trên. Nếu venv đã đúng
+lockfile thì không cần cài lại Python, vẫn phải cập nhật source và chạy test mới.
 Checkout chưa có venv hợp lệ phải được chuẩn bị riêng trong bảo trì.
 Sau cập nhật, đồng bộ giờ, cô lập lại theo 9.1/10.1 và chạy lại toàn bộ preflight,
 context enrollment khi cần và bốn pilot với ID mới; không phục hồi state cũ thành
@@ -1031,6 +1071,22 @@ if ($localDnsScriptHash -ne $remoteDnsScriptHash) {
   throw 'run_dns_scenario.ps1 does not match the pinned repo copy'
 }
 $localDnsScriptHash | Set-Content C:\DATN\run_dns_scenario.ps1.sha256.txt -Encoding ascii
+foreach ($runnerName in 'run_http_scenario.ps1','Export-DatnSysmonClockEvidence.ps1') {
+  scp "${SocUser}@192.168.58.147:${SocRepo}/scripts/$runnerName" C:\DATN\
+  if ($LASTEXITCODE -ne 0) { throw "Cannot copy pinned resource: $runnerName" }
+  $remoteLine = ssh "${SocUser}@192.168.58.147" "sha256sum '${SocRepo}/scripts/$runnerName'"
+  if ($LASTEXITCODE -ne 0 -or -not $remoteLine) { throw "Cannot hash $runnerName" }
+  $expected = ($remoteLine -split '\s+')[0].ToLower()
+  $localPath = Join-Path C:\DATN $runnerName
+  $actual = (Get-FileHash -LiteralPath $localPath -Algorithm SHA256).Hash.ToLower()
+  if ($expected -notmatch '^[0-9a-f]{64}$' -or $actual -ne $expected) {
+    throw "Pinned script hash mismatch: $runnerName"
+  }
+  $actual | Set-Content -LiteralPath "$localPath.sha256.txt" -Encoding ascii
+  if (Get-Item -LiteralPath $localPath -Stream Zone.Identifier -ErrorAction SilentlyContinue) {
+    Unblock-File -LiteralPath $localPath
+  }
+}
 $executionPolicies = Get-ExecutionPolicy -List
 $executionPolicies | Format-Table -AutoSize
 $enforcedPolicy = @($executionPolicies | Where-Object {
@@ -1806,7 +1862,7 @@ cd "$HOME/datn-ai-soar-v3"
 test -z "$(git status --porcelain)"
 COLLECTION_MODE=pilot # Chi dung trainable sau khi G7 duoc nghiem thu
 if [ "$COLLECTION_MODE" = pilot ]; then
-  PILOT_TAG=pilot-v3.7-20261104
+  PILOT_TAG=pilot-v3.8-20261105
   RELEASE_LOG="operator-logs/releases/$PILOT_TAG"
   test "$(cat "$RELEASE_LOG/source-url.txt")" = https://github.com/lethinhlord/Repo.git
   test "$(cat "$RELEASE_LOG/source-tag.txt")" = "$PILOT_TAG"
@@ -2393,7 +2449,8 @@ jq -e '([.accounts[].account]|sort) ==
  ["datn_attack","datn_benign","datn_spray01","datn_spray02","datn_spray03"]' \
   evidence/context-baseline.json >/dev/null
 jq -e 'all(.accounts[]; (.known_sources|index("10.40.0.10")) != null and
- ((.known_sources|index("local-console")) != null or (.known_sources|index("-")) != null))' \
+ ((.known_sources|index("local-console")) != null or (.known_sources|index("-")) != null or
+  (.known_sources|index("127.0.0.1")) != null or (.known_sources|index("::1")) != null))' \
   evidence/context-baseline.json >/dev/null
 for PORT in 8080 8081 9001; do
   jq -e --argjson port "$PORT" 'any(.destinations[];
@@ -2415,6 +2472,14 @@ trong enrollment. Nó tránh coi mỗi run nonce trong FQDN là một đích m�
 phải khẳng định mọi truy vấn trong domain đều lành tính; C2 vẫn có thể dùng domain quen.
 Không thêm suffix Internet rộng hoặc sửa snapshot JSON. Thiếu/stale/future history
 phải UNKNOWN/PARTIAL/REVIEW, không tự thay bằng 0 và ghi COMPLETE.
+
+Gate local chấp nhận sentinel local-console hoặc loopback thật 127.0.0.1/::1;
+không thay loopback đã quan sát bằng chuỗi giả để qua gate. Với remote type3/10,
+thiếu IP/workstation phải UNKNOWN/PARTIAL và không enroll nguồn giả thành local.
+Baseline mới từ chối native-clock mâu thuẫn ở destination history. Nếu capture không
+đạt, giữ nguyên bản cũ, điều tra XML/EVTX theo mục 0.4 rồi tạo enrollment/revision mới.
+Suffix phải đúng datn.test từ inventory đã duyệt; www.datn.test không thay thế toàn
+phạm vi đó. Cả query thật và raw trước/sau lọc phải được giữ nguyên.
 
 TTL phải đủ cho toàn bộ buổi thu. Nếu hết hạn, dừng đợt, tạo enrollment/revision mới
 trước các run tiếp theo và gửi Thịnh đối chiếu; không sửa `valid_until`. Nếu API đang
@@ -2463,8 +2528,8 @@ Không tự nhập `136bb754`, không chọn SHA của model smoke hoặc bỏ g
 mới. Auditor đối chiếu contract/hash trước khi loại pilot khỏi quota. Trước khi đổi
 source, giữ URL/tag/SHA, checksum và biên bản. Source đã có approved tag/receipt
 thì backup/restore mục 15 bằng mã cũ. Source legacy chưa có receipt dùng forensic
-backup đã chép/kiểm trên host theo hướng dẫn R02/R03, không gọi đó là restore 3.7;
-sau cập nhật source được duyệt mới làm backup/restore 3.7 trước pilot mới.
+backup đã chép/kiểm trên host theo hướng dẫn R02/R03, không gọi đó là restore 3.8;
+sau cập nhật source được duyệt mới làm backup/restore 3.8 trước pilot mới.
 Không có active run. Liệt kê run cũ, rồi cách ly từng pilot bằng CLI hiện hành:
 
 ```bash
@@ -2492,9 +2557,9 @@ Pilot cùng contract với release cuối có thể giữ lại để audit như
 Nếu lab đã cô lập Internet, không nhận gói code local. Sau khi đã giữ forensic
 backup và quarantine các owner lỗi; backup thường trước bảo trì chỉ khi source cũ
 đã có approved tag/receipt. Nếu là legacy thì giữ forensic backup đã kiểm và làm
-backup/restore 3.7 sau cập nhật. Sau đó chuyển SOC sang bảo trì có
+backup/restore 3.8 sau cập nhật. Sau đó chuyển SOC sang bảo trì có
 Internet như 6.3/10.1. Mã candidate phải được Thịnh duyệt và đưa lên GitHub bằng
-một tag annotated riêng cùng SHA 40 ký tự. Tag pilot 3.7 không phải tag G7.
+một tag annotated riêng cùng SHA 40 ký tự. Tag pilot 3.8 không phải tag G7.
 Không mở run khi fetch, checkout hoặc đổi dependency. Sau khi các gate release
 đã được phê duyệt và không còn owner, lấy candidate từ GitHub:
 
@@ -2871,12 +2936,12 @@ dùng snapshot đầy đủ tới EOF sẵn có để phân loại, không bổ 
 đúng hạn hoặc thay checkpoint. Late input thuộc bucket, record của agent đã cấu hình
 thiếu thời gian nguồn hoặc JSON thực sự chưa hoàn chỉnh vẫn fail closed. Không dựng lại hay ghi lùi checkpoint
 `capturing` của lần lỗi cũ; giữ nguyên nguồn/inode và các snapshot. Xem
-[quy trình pilot R03](https://github.com/lethinhlord/Repo/blob/pilot-v3.7-20261104/docs/pilot-r03-runbook.md) cho run mới và bàn giao evidence.
+[quy trình pilot R03](https://github.com/lethinhlord/Repo/blob/pilot-v3.8-20261105/docs/pilot-r03-runbook.md) cho run mới và bàn giao evidence.
 
 **Xử lý lỗi và mất phiên:**
 
 - Với lỗi R02 `duplicate alert id has conflicting payload`, xem quy trình
-  [cập nhật và đánh giá phục hồi R02](https://github.com/lethinhlord/Repo/blob/pilot-v3.7-20261104/docs/pilot-r02-recovery.md). Không dùng lại lệnh
+  [cập nhật và đánh giá phục hồi R02](https://github.com/lethinhlord/Repo/blob/pilot-v3.8-20261105/docs/pilot-r02-recovery.md). Không dùng lại lệnh
   dựng checkout mới ở mục 6.2 để thay thế checkout đang sở hữu run chưa finalize.
 - Chưa từng chạy intake trước cutoff: finalize muộn báo thiếu checkpoint hợp lệ.
   Giữ evidence, abort và thu run ID mới; không đổi giờ hay nới grace.
@@ -2912,84 +2977,16 @@ vào tiến độ. Kết quả ghi ngoài cây evidence đã đóng checksum, kh
 ```bash
 set -euo pipefail
 mkdir -p operator-logs/run-checks
-.venv-ml/bin/python - "$RUN_ID" 2> >(tee "operator-logs/run-checks/$RUN_ID.error.txt" >&2) <<'PY' | tee "operator-logs/run-checks/$RUN_ID.json"
-"""Read-only per-run guide check, supplementary to scenario_session validate."""
-import json
-import re
-import sys
-from datetime import UTC, datetime
-from decimal import Decimal
-from pathlib import Path
-import yaml
-from ml.telemetry import flow_connection_key
-
-run_id = sys.argv[1]
-evidence = Path('evidence/scenario-runs') / run_id
-raw = Path('data/raw') / run_id
-manifest = json.loads((raw/'scenario_manifest.json').read_text())
-if manifest.get('family') not in {'account','c2'}:
-    raise SystemExit('Unknown family; zero Sysmon rows are allowed only for account')
-metadata = json.loads((evidence/'collection_metadata.json').read_text())
-incident = json.loads((raw/'incidents.jsonl').read_text())
-schema = json.loads((evidence/'feature-schema.json').read_text())
-source = yaml.safe_load((evidence/'collection-sources.yaml').read_text())
-for name in ('archive_capture.jsonl','intake_checkpoint.json','context-baseline.json',
-             'context-capture.jsonl','execution_receipt.json','checksums.sha256'):
-    if not (evidence/name).is_file() or not (evidence/name).stat().st_size:
-        raise SystemExit(f'Missing/empty required evidence: {name}')
-if metadata.get('feature_schema_version') != 'features-v3' or schema.get('version') != 'features-v3':
-    raise SystemExit('Wrong feature schema; recollect using the frozen release')
-if set(incident['features']) != set(schema['required']) or len(schema['required']) != 24:
-    raise SystemExit('Wrong feature fields; never fill missing history with zero')
-if incident.get('context_status') != 'AVAILABLE' or incident.get('observation_quality') != 'COMPLETE':
-    raise SystemExit('Missing context or incomplete observation')
-if any(source.get(key) is not True for key in
-       ('require_clean_bucket','require_flow_counters','require_online_parity')):
-    raise SystemExit('Run used a relaxed source contract')
-
-def precise(value, naive_utc=False):
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError('missing timestamp')
-    dt = datetime.fromisoformat(value.replace('Z','+00:00'))
-    if dt.tzinfo is None:
-        if not naive_utc:
-            raise ValueError('SystemTime must include timezone')
-        dt = dt.replace(tzinfo=UTC)
-    whole = dt.astimezone(UTC).replace(microsecond=0) - datetime(1970,1,1,tzinfo=UTC)
-    fraction = re.search(r'\d{2}:\d{2}:\d{2}[.,](\d+)', value)
-    return Decimal(whole.days*86400+whole.seconds) + (Decimal('0.'+fraction[1]) if fraction else 0)
-
-checked, maximum_delta = 0, Decimal(0)
-for number, line in enumerate((evidence/'windows_events.jsonl').read_text().splitlines(),1):
-    row = json.loads(line)
-    win = row['data']['win']
-    system, fields = win['system'], win['eventdata']
-    if str(system.get('eventID')) not in {'1','3','22'}:
-        continue
-    delta = abs(precise(system.get('systemTime')) - precise(fields.get('utcTime'), True))
-    if delta > 5:
-        raise SystemExit(f'Sysmon UTC mismatch line={number} record={system.get("eventRecordID")} delta={delta}s')
-    checked += 1
-    maximum_delta = max(maximum_delta,delta)
-connections, finals = set(), set()
-if manifest['family'] == 'c2':
-    if not checked:
-        raise SystemExit('C2 has no Sysmon timestamp evidence')
-    for line in (evidence/'suricata_eve.jsonl').read_text().splitlines():
-        row = json.loads(line)
-        if row.get('event_type') in {'http','dns','tls'}:
-            connections.add(flow_connection_key(row))
-        elif row.get('event_type') == 'flow':
-            finals.add(flow_connection_key(row))
-    if not connections or None in connections or not connections <= finals:
-        raise SystemExit('Missing final-flow coverage for a selected connection')
-print(json.dumps({'run_id':run_id,'family':manifest['family'],
-                  'purpose':manifest['purpose'],'sysmon_time_rows':checked,
-                  'max_sysmon_delta_seconds':str(maximum_delta),
-                  'transaction_connections':len(connections),'final_connections':len(finals),
-                  'status':'RUN_EVIDENCE_CHECK_PASS'}, indent=2))
-PY
+.venv-ml/bin/python -m scripts.verify_run_evidence --run-id "$RUN_ID" \
+  2> >(tee "operator-logs/run-checks/$RUN_ID.error.txt" >&2) \
+  | tee "operator-logs/run-checks/$RUN_ID.json"
 ```
+
+CLI dùng cùng central clock checker với collector/online, không thay raw timestamps.
+Nó cũng kiểm riêng destination history của context capture đã đóng băng. Account có
+Security/count hợp lệ vẫn có thể VALID ở collector, trong khi supplementary check
+báo RUN_EVIDENCE_CHECK_REVIEW do enrollment C2 chưa đạt; không tính pilot hoàn chỉnh
+chỉ từ VALID. Không bỏ history lỗi hoặc tắt gate để lấy PASS.
 
 Phải thấy RUN_EVIDENCE_CHECK_PASS cùng run ID, schema/context đủ, hai trường thời
 gian Sysmon không lệch quá 5 giây và số connection có final phủ đủ transaction.
@@ -2998,8 +2995,9 @@ do validate kiểm. Với C2, DNS phải có event1 trong child process trước
 12.2; HEALTH-POLL cần tám lượt, không dùng năm lượt như export cũ. Không ghép record
 từ run khác để đủ số. Nếu kiểm bổ sung lỗi, dùng quarantine ở block ngay dưới,
 không tiếp tục run kế hoặc tính quota dù validate trước đó in VALID. Chi tiết lỗi
-được giữ trong operator-logs/run-checks/RUN_ID.error.txt; JSON kết quả có thể rỗng
-khi lỗi, không dùng sự tồn tại của file JSON để tính run đạt.
+được giữ trong JSON có status ERROR/REVIEW hoặc stderr tại
+operator-logs/run-checks/RUN_ID.error.txt. Không dùng sự tồn tại của file JSON để
+tính run đạt; phải có đúng RUN_EVIDENCE_CHECK_PASS và exit code0.
 
 Phải thấy `VALID`; `data/raw/$RUN_ID` có `scenario_manifest.json` và `incidents.jsonl`;
 evidence có Archives nguyên byte, intake checkpoint, Windows events, Suricata EVE,
@@ -3024,7 +3022,7 @@ và output tạm cùng tồn tại, giữ cả hai; không chọn/xóa một b�
 `data/quarantine`, kể cả thư mục ẩn. Không để `.RUN_ID.tmp` cũ trong `data/raw` để
 tính quota hoặc tiếp tục train.
 
-Trên đúng bản 3.7 đã cài trước khi cô lập, nhánh recovery của finalize kiểm checksum
+Trên đúng bản 3.8 đã cài trước khi cô lập, nhánh recovery của finalize kiểm checksum
 đã chốt trước, ghi quan sát tail mới riêng tại
 `operator-logs/recovery/RUN_ID/late-observation.jsonl`, kiểm candidate trước khi
 publish và nhả owner. Raw/capture/checkpoint/checksum đã chốt không bị thay đổi.
@@ -3270,6 +3268,26 @@ function Start-DatnDnsScenario(
     throw "DNS runner failed with exit code $($process.ExitCode)"
   }
 }
+function Start-DatnHttpScenario([string]$ExpectedScenario) {
+  $runner = 'C:\DATN\run_http_scenario.ps1'
+  $expectedHash = (Get-Content -LiteralPath "$runner.sha256.txt" -Raw).Trim()
+  if ($expectedHash -notmatch '^[0-9a-f]{64}$' -or
+      (Get-FileHash -LiteralPath $runner -Algorithm SHA256).Hash.ToLower() -ne $expectedHash) {
+    throw 'HTTP runner changed; restore the pinned copy before collection'
+  }
+  Start-DatnScenario $ExpectedScenario
+  $arguments = @(
+    '-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','RemoteSigned','-File',$runner,
+    '-RunNonce',[string]$DatnParameters.run_nonce,
+    '-Count',[string]$DatnParameters.expected_action_count,
+    '-GapsCsv',[string]$DatnParameters.expected_intervals_seconds,
+    '-VariantIndex',[string]$DatnParameters.variant_index,
+    '-ScenarioId',$ExpectedScenario
+  )
+  $process = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+    -ArgumentList $arguments -NoNewWindow -Wait -PassThru
+  if ($process.ExitCode -ne 0) { throw "HTTP runner failed with exit code $($process.ExitCode)" }
+}
 ```
 
 Không sửa hàm để tạo timing theo nhãn. `run_nonce` và `variant_index` phải xuất hiện
@@ -3282,18 +3300,17 @@ Giữ đúng policy `RemoteSigned` riêng cho child như block trên; không dù
 hoặc Unrestricted và không chạy `Set-ExecutionPolicy`. Nếu policy chặn file đã pin thì
 abort run và xử lý trust/signing ngoài cửa sổ thu thập, không tiếp tục để lấy mẫu thiếu DNS.
 
+Các HTTP lặp dùng runner đã pin và CSV đóng băng, khoảng nghỉ đo từ action START tới
+START kế tiếp. Request chậm không được cộng dồn sleep sau response hoặc nén khoảng
+nghỉ kế tiếp để đuổi lịch cũ. Runner dùng HTTP/1.1, Connection: close, timeout hữu hạn,
+kiểm exit code và status200, giữ parent sống5s cho Sysmon. Sai lịch/response thì abort;
+không tự tăng count. Các download một lần giữ hash payload riêng như bên dưới.
+
 ### C2-BENIGN-HEALTH-POLL
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-Start-DatnScenario 'C2-BENIGN-HEALTH-POLL'
-$gap = Get-DatnGap 30
-1..8 | ForEach-Object {
-  $uri = "http://10.40.0.10:8081/beacon?mode=health&run=$($DatnParameters.run_nonce)&v=$($DatnParameters.variant_index)&n=$_"
-  curl.exe --fail --silent --show-error --output NUL $uri
-  if ($LASTEXITCODE -ne 0) { throw 'health request failed' }
-  if ($_ -lt 8) { Start-Sleep -Seconds $gap }
-}
+Start-DatnHttpScenario 'C2-BENIGN-HEALTH-POLL'
 ```
 
 ### C2-BENIGN-SINGLE-DOWNLOAD
@@ -3315,14 +3332,7 @@ if ($hash -ne 'd3aad3cdd62be01b41e8004813eb7fb60c78590cfa520764f783f581f951c2e3'
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-Start-DatnScenario 'C2-BENIGN-IRREGULAR-API'
-$gaps = @(10,35,20) | ForEach-Object { Get-DatnGap $_ }
-for ($i=0; $i -lt 4; $i++) {
-  $uri = "http://10.40.0.10:8080/api/status?run=$($DatnParameters.run_nonce)&v=$($DatnParameters.variant_index)&n=$i"
-  curl.exe --fail --silent --show-error --output NUL $uri
-  if ($LASTEXITCODE -ne 0) { throw 'API request failed' }
-  if ($i -lt 3) { Start-Sleep -Seconds $gaps[$i] }
-}
+Start-DatnHttpScenario 'C2-BENIGN-IRREGULAR-API'
 ```
 
 ### C2-BENIGN-DNS
@@ -3337,42 +3347,21 @@ Start-DatnDnsScenario -ExpectedScenario 'C2-BENIGN-DNS' `
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-Start-DatnScenario 'C2-BENIGN-API-BURST'
-$gap = Get-DatnGap 2
-1..6 | ForEach-Object {
-  $uri = "http://10.40.0.10:8080/api/status?run=$($DatnParameters.run_nonce)&v=$($DatnParameters.variant_index)&n=$_"
-  curl.exe --fail --silent --show-error --output NUL $uri
-  if ($LASTEXITCODE -ne 0) { throw 'API burst request failed' }
-  if ($_ -lt 6) { Start-Sleep -Seconds $gap }
-}
+Start-DatnHttpScenario 'C2-BENIGN-API-BURST'
 ```
 
 ### C2-MALICIOUS-HTTP-BEACON
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-Start-DatnScenario 'C2-MALICIOUS-HTTP-BEACON'
-$gap = Get-DatnGap 15
-1..8 | ForEach-Object {
-  curl.exe --fail --silent --show-error --output NUL `
-    "http://10.40.0.10:8081/beacon?run=$($DatnParameters.run_nonce)&v=$($DatnParameters.variant_index)&n=$_"
-  if ($LASTEXITCODE -ne 0) { throw 'beacon request failed' }
-  if ($_ -lt 8) { Start-Sleep -Seconds $gap }
-}
+Start-DatnHttpScenario 'C2-MALICIOUS-HTTP-BEACON'
 ```
 
 ### C2-MALICIOUS-JITTER-BEACON
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-Start-DatnScenario 'C2-MALICIOUS-JITTER-BEACON'
-$gaps = @(8,21,13,30,11,24,17) | ForEach-Object { Get-DatnGap $_ }
-for ($i=0; $i -lt 8; $i++) {
-  curl.exe --fail --silent --show-error --output NUL `
-    "http://10.40.0.10:8081/beacon?run=$($DatnParameters.run_nonce)&v=$($DatnParameters.variant_index)&n=$i"
-  if ($LASTEXITCODE -ne 0) { throw 'jitter beacon request failed' }
-  if ($i -lt 7) { Start-Sleep -Seconds $gaps[$i] }
-}
+Start-DatnHttpScenario 'C2-MALICIOUS-JITTER-BEACON'
 ```
 
 ### C2-MALICIOUS-DNS-BEACON
@@ -3591,11 +3580,11 @@ Cổng nguồn không chứng minh accuracy hoặc thay kiểm leakage/cohort/th
 ## 15. Sao lưu và bàn giao dữ liệu gốc
 
 `data/raw/` và `evidence/scenario-runs/` bị Git bỏ qua có chủ đích; `git push` **không
-phải bản sao lưu dataset**. Backup 3.7 lưu private raw/evidence và URL/tag/SHA,
+phải bản sao lưu dataset**. Backup 3.8 lưu private raw/evidence và URL/tag/SHA,
 không đóng gói source/config/schema root; snapshot bất biến bên trong evidence vẫn
 được giữ để validate. Source restore lấy từ đúng tag GitHub, không ghi đè bằng file
 root từ tar. Checkout legacy chưa có approved tag/receipt dùng backup forensic
-R02/R03 trước bảo trì, rồi tạo backup 3.7 sau cập nhật. Sau mỗi bốn run hợp lệ và cuối mỗi buổi, chỉ sao lưu khi
+R02/R03 trước bảo trì, rồi tạo backup 3.8 sau cập nhật. Sau mỗi bốn run hợp lệ và cuối mỗi buổi, chỉ sao lưu khi
 không còn run `STARTED`/`FINALIZING` và không có lệnh collector chạy:
 
 ```bash
@@ -3696,7 +3685,7 @@ echo 'RESTORE_DRY_RUN=PASS'
 Khôi phục thật cần cửa sổ bảo trì có Internet, không có owner/STARTED/FINALIZING;
 lấy source từ GitHub theo đúng SHA đã lưu rồi mới nạp private backup. Không restore
 source giữa collection mode hoặc đè lên checkout đang thu. Backup legacy thiếu receipt/tag đã duyệt chỉ dùng forensic để bảo toàn evidence;
-không tự gắn metadata 3.7 ngược ngày để coi là restore đạt. Bản 3.7 không cần code offline.
+không tự gắn metadata 3.8 ngược ngày để coi là restore đạt. Bản 3.8 không cần code offline.
 Nếu GitHub không có tag/object/commit đã lưu thì dừng, không thay bằng main mới
 nhất. Cài dependency online từ lockfile của tag trong bảo trì rồi mới cô lập lab:
 
@@ -3758,7 +3747,7 @@ echo 'RESTORE_VALIDATION=PASS'
 ```
 
 Backup cũ không có tag/object SHA/receipt đã duyệt chỉ là forensic/hồ sơ lịch sử;
-không tự tạo metadata ngược ngày để coi là backup 3.7 đạt. Backup 3.7 không cần
+không tự tạo metadata ngược ngày để coi là backup 3.8 đạt. Backup 3.8 không cần
 wheelhouse hoặc source offline; khi mất kết nối GitHub/package index, giữ dữ liệu
 và hoãn source restore cho tới cửa sổ bảo trì có kết nối hợp lệ.
 

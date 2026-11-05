@@ -182,20 +182,49 @@ never be accepted from an untrusted source.
 
 ## 6. Activate trained inference in SHADOW mode
 
-Use the in-container package path:
+For the Colab archive, follow the final handoff cell of the notebook: it checks the
+trusted archive hash, extracts only allowed regular files into fresh staging, compares
+model and dataset provenance, and signs a new versioned directory under
+`artifacts/runtime/model-releases/`. It prints the verified absolute host path. Do not
+use the smoke verifier as acceptance of the Colab archive. A failed handoff must not be
+activated. For the Ubuntu-local training option, the trusted output is
+`ml/model-package`; freeze it once on the trusted VM before the verify step below.
+
+Load the protected environment, then set `MODEL_PACKAGE_HOST_DIR` to the **verified
+absolute host path** of the selected package (for Colab, the path printed by its
+successful handoff; for local training, `$(pwd -P)/ml/model-package`). Compose mounts
+that exact host directory at the container path `/app/ml/model-package`. Verify the
+actual host package before building and starting SHADOW:
 
 ```bash
+set -eu
+: "${MODEL_PACKAGE_HOST_DIR:?Set the verified absolute host package path}"
+: "${EXPECTED_MODEL_VERSION:?Set the model version recorded from trusted training}"
+DATN_SELECTED_PACKAGE_HOST_DIR=$(realpath -e -- "$MODEL_PACKAGE_HOST_DIR")
+DATN_EXPECTED_ACTIVATION_VERSION="$EXPECTED_MODEL_VERSION"
+readonly DATN_SELECTED_PACKAGE_HOST_DIR DATN_EXPECTED_ACTIVATION_VERSION
 set -a
 . ./.env
 set +a
-.venv-ml/bin/python -m ml.freeze_model --package-dir ml/model-package
-.venv-ml/bin/python -m ml.freeze_model --verify-only --package-dir ml/model-package
+export MODEL_PACKAGE_HOST_DIR="$DATN_SELECTED_PACKAGE_HOST_DIR"
+.venv-ml/bin/python - "$MODEL_PACKAGE_HOST_DIR" "$DATN_EXPECTED_ACTIVATION_VERSION" <<'PY'
+import json, pathlib, sys
+metadata = json.loads((pathlib.Path(sys.argv[1]) / "metadata.json").read_text())
+if metadata.get("model_version") != sys.argv[2]:
+    raise SystemExit("Selected package identity differs from trusted training version")
+PY
+.venv-ml/bin/python -m ml.freeze_model --verify-only --package-dir "$MODEL_PACKAGE_HOST_DIR"
 export MODEL_PACKAGE_DIR=/app/ml/model-package
 ./scripts/build_reproducible_image.sh datn-ai-soar-api:week3
 docker compose up -d api n8n
-curl -s http://127.0.0.1:8000/model/ready | python3 -m json.tool
-curl -s http://127.0.0.1:8000/ready | python3 -m json.tool
+curl -fsS http://127.0.0.1:8000/model/ready | python3 -c \
+ 'import json,sys; d=json.load(sys.stdin); assert d["mode"]=="trained" and d["model_version"]==sys.argv[1] and d["locked_test_status"]=="UNOPENED"; print(json.dumps(d,indent=2))' \
+ "$DATN_EXPECTED_ACTIVATION_VERSION"
+curl -fsS http://127.0.0.1:8000/ready | python3 -m json.tool
 ```
+
+The selected host path and expected version are captured before loading `.env`;
+an older `.env` selection cannot silently activate another frozen package.
 
 `/model/ready` must report `mode: trained`, the package model version, and
 `locked_test_status: UNOPENED`. The HMAC signing key is read only from the protected
@@ -206,19 +235,34 @@ directories, monitoring, analyst feedback, retraining and rollback.
 
 ## 7. Freeze before deployment; evaluate locked test only at the Week 6 gate
 
-Freezing signs the selected package and does not read the locked test. Run it once
-immediately before deployment as shown above. The following evaluator command is for
+Freezing signs the selected package and does not read the locked test. The Colab
+handoff freezes its selected release; for locally trained output, freeze it once with
+`.venv-ml/bin/python -m ml.freeze_model --package-dir "$MODEL_PACKAGE_HOST_DIR"`
+before activation. The following evaluator command is for
 the approved Week 6 gate only:
 
 ```bash
 .venv-ml/bin/python -m ml.evaluate \
-  --package-dir ml/model-package \
+  --package-dir "$MODEL_PACKAGE_HOST_DIR" \
   --locked-test data/processed/locked_test.jsonl \
   --unlock-locked-test
 ```
 
 Before `FROZEN.json` exists, both runtime and evaluator refuse the package. After
 freezing, any package modification or manifest rewrite invalidates the HMAC/hash gate.
+
+An interrupted opening reports `OPENED_INCOMPLETE`, not `UNOPENED`. Preserve the
+reservation, metrics (including incomplete output), opening record and error log;
+do not delete the reservation or rerun evaluation to hide the attempt. Stop test-based
+tuning and have the evaluation owner audit what was exposed before planning any
+further evaluation. A fresh holdout is required if the original holdout is no longer
+independent; rerunning the same package is not evidence that it was never opened.
+
+`EVIDENCE_INTEGRITY_ERROR` means the recorded evaluation evidence cannot be trusted.
+Preserve/quarantine the package and compare a complete original backup against its
+independently retained hashes. Restore original records only with that provenance;
+never recompute an opening hash or remove markers to turn the status into UNOPENED.
+Neither state authorizes automation or a model accuracy claim.
 
 ## Evidence capture checklist
 

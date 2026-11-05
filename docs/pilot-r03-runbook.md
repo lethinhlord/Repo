@@ -1,8 +1,8 @@
 # Kiên — kiểm thử bản sửa intake và chạy pilot mới sau R03
 
-Ngày 04/11/2026. Hướng dẫn và source pilot có trên GitHub tại tag
-[`pilot-v3.7-20261104`](https://github.com/lethinhlord/Repo/tree/pilot-v3.7-20261104).
-Anchor mã đã kiểm là `402d40658be416d3d6a3112afe6d63bdeca7033c`.
+Ngày 05/11/2026. Hướng dẫn và source pilot có trên GitHub tại tag
+[`pilot-v3.8-20261105`](https://github.com/lethinhlord/Repo/tree/pilot-v3.8-20261105).
+Anchor mã đã kiểm là `0d6e44ffdf4936182a4ee337db78f29116469b94`.
 Tag pilot không mở G7; dữ liệu và evidence lưu riêng tư ngoài GitHub.
 
 ## 1. Phạm vi bản sửa
@@ -14,8 +14,9 @@ lại nguồn. Bản sửa quan sát phần late tới EOF snapshot hữu hạn 
 Record thuộc bucket cũ đến muộn, record của agent cấu hình thiếu thời gian nguồn,
 JSON malformed/chưa xong, nguồn rotate/truncate hoặc prefix thay đổi vẫn bị từ chối.
 
-Không có evidence R03 thật trong các nguồn đã kiểm trên máy Thịnh, nên chưa xác
-nhận được R03 thuộc tình huống nào. Checkpoint `capturing` cũ thiếu bằng chứng đọc
+Chưa có bộ evidence đầy đủ của run lỗi intake R03 được báo ngày03/11 trong các
+nguồn đã kiểm trên máy Thịnh. Run đó khác HTTP-C2 R03 trong gói04/11; không dùng
+kết quả của HTTP-C2 để kết luận run lỗi intake cũ đã được cứu. Checkpoint `capturing` cũ thiếu bằng chứng đọc
 hoàn tất không được tạo lại hoặc ghi lùi để cứu run.
 
 Giữ **bucket 300 giây + grace 60 giây**. Các lịch C2 đang dài hơn 60 giây; account
@@ -109,19 +110,19 @@ chỉ xác minh bản sao, không chứng minh evidence ban đầu đầy đủ 
 
 ## 3. Kiểm mã local và xử lý owner
 
-Source và hướng dẫn pilot ở tag [pilot-v3.7-20261104](https://github.com/lethinhlord/Repo/tree/pilot-v3.7-20261104);
-anchor mã đã kiểm là `402d40658be416d3d6a3112afe6d63bdeca7033c`. Tag pilot
+Source và hướng dẫn pilot ở tag [pilot-v3.8-20261105](https://github.com/lethinhlord/Repo/tree/pilot-v3.8-20261105);
+anchor mã đã kiểm là `0d6e44ffdf4936182a4ee337db78f29116469b94`. Tag pilot
 không mở G7. Khi owner còn active, không fetch, checkout, cài/sửa venv hoặc nối
 Internet. Không bootstrap lại, đổi snapshot hay ghi đè
 `evidence/collection-source-commit.txt` cũ.
 
 Chỉ thử finalize tối đa một lần khi mã đã sửa được cài trước khi cô lập, checkpoint
 sealed và provenance còn nguyên. Kiểm local chỉ chấp nhận đúng anchor hoặc commit
-của tag 3.7 đã có sẵn; với tag, kiểm tổ tiên và toàn bộ cây ngoài năm file tài liệu.
+của tag 3.8 đã có sẵn; với tag, kiểm tổ tiên và toàn bộ cây ngoài tám file tài liệu.
 Nếu thiếu object hoặc tag local, không tải giữa run; đi nhánh quarantine bên dưới:
 
 ```bash
-CODE_ANCHOR=402d40658be416d3d6a3112afe6d63bdeca7033c
+CODE_ANCHOR=0d6e44ffdf4936182a4ee337db78f29116469b94
 RUN_DIR="evidence/scenario-runs/$R03_ID"
 retry_local_gate() {
   local head_sha clean
@@ -134,14 +135,16 @@ retry_local_gate() {
   head_sha=$(git rev-parse HEAD) || return 1
   git cat-file -e "$CODE_ANCHOR^{commit}" || return 1
   if [ "$head_sha" != "$CODE_ANCHOR" ]; then
-    test "$(git cat-file -t refs/tags/pilot-v3.7-20261104)" = tag || return 1
-    test "$head_sha" = "$(git rev-parse 'refs/tags/pilot-v3.7-20261104^{commit}')" || return 1
+    test "$(git cat-file -t refs/tags/pilot-v3.8-20261105)" = tag || return 1
+    test "$head_sha" = "$(git rev-parse 'refs/tags/pilot-v3.8-20261105^{commit}')" || return 1
   fi
   git merge-base --is-ancestor "$CODE_ANCHOR" "$head_sha" || return 1
   git diff --exit-code "$CODE_ANCHOR" "$head_sha" -- . \
     ':(exclude)docs/scenario-collection-runbook.md' ':(exclude)docs/current-status.md' \
     ':(exclude)docs/pilot-r02-recovery.md' ':(exclude)docs/pilot-r03-runbook.md' \
-    ':(exclude)docs/collection-integrity-validation-20261104.md' || return 1
+    ':(exclude)docs/week3-model-training-runbook.md' ':(exclude)README.md' \
+  ':(exclude)docs/dataset-handoff-20261105.md' \
+  ':(exclude)docs/audit-v38-validation-20261105.md' || return 1
   clean=$(git status --porcelain --untracked-files=all) || return 1
   test -z "$clean" || return 1
 }
@@ -185,15 +188,15 @@ fi
 Nếu lệnh lỗi, owner không đúng hoặc khóa vẫn còn, dừng và giữ evidence; không xóa
 khóa thủ công. Sau quarantine thành công, giữ forensic backup đã kiểm trên host.
 Nếu checkout cũ đã có tag annotated được duyệt và receipt hợp lệ theo
-[mục 15](https://github.com/lethinhlord/Repo/blob/pilot-v3.7-20261104/docs/scenario-collection-runbook.md#15-sao-lưu-và-bàn-giao-dữ-liệu-gốc),
+[mục 15](https://github.com/lethinhlord/Repo/blob/pilot-v3.8-20261105/docs/scenario-collection-runbook.md#15-sao-lưu-và-bàn-giao-dữ-liệu-gốc),
 làm backup/restore bình thường trước bảo trì. Với source cũ 35c, faac hoặc 9c thiếu
 receipt tag được duyệt, forensic backup vẫn giữ nguyên nhưng chưa phải bản restore
-được chứng nhận 3.7; không tự tạo receipt hay gán tag ngược cho source cũ.
+được chứng nhận 3.8; không tự tạo receipt hay gán tag ngược cho source cũ.
 
 Khi khóa đã được giải phóng, có thể dùng forensic backup đã kiểm để vào cửa sổ bảo
 trì, nối mạng và cập nhật theo
-[mục 6.3](https://github.com/lethinhlord/Repo/blob/pilot-v3.7-20261104/docs/scenario-collection-runbook.md#63-cập-nhật-source-qua-github-trong-cửa-sổ-bảo-trì).
-Sau khi cài source 3.7 và có receipt hợp lệ, làm backup và kiểm restore mục 15;
+[mục 6.3](https://github.com/lethinhlord/Repo/blob/pilot-v3.8-20261105/docs/scenario-collection-runbook.md#63-cập-nhật-source-qua-github-trong-cửa-sổ-bảo-trì).
+Sau khi cài source 3.8 và có receipt hợp lệ, làm backup và kiểm restore mục 15;
 sau đó cô lập lại, chạy preflight đầy đủ và thu pilot mới với ID/bucket mới.
 Ghi SHA cũ từ forensic backup và SHA mới vào log riêng, không suy diễn immutable
 state đã ghi SHA mã chạy. Dữ liệu/evidence được backup riêng tư ngoài GitHub.
@@ -266,7 +269,7 @@ reservations, data/raw hoặc data/quarantine tương ứng qua kênh riêng tư
 tag GitHub, SHA đầy đủ đã phân giải và checksum backup. Chạy backup/restore kiểm
 chứng theo Kiên.txt mục 15 sau pilot đạt; nếu source chưa có receipt tag được duyệt,
 đóng run và giải phóng owner rồi cập nhật trong cửa sổ bảo trì theo mục 6.3 trước
-khi thực hiện backup/restore 3.7.
+khi thực hiện backup/restore 3.8.
 Nếu bản Archives gốc vẫn còn, giữ nguyên trên SOC và gửi thêm snapshot chẩn đoán
 qua quy trình backup của lab; không chỉ gửi các dòng trùng ID hay một late fragment.
 Snapshot làm sau cutoff không thay thế được read-completion evidence trước cutoff.

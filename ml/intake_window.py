@@ -71,7 +71,7 @@ def _hash_prefix(handle, length):
     return digest.hexdigest()
 
 
-def _read_tail_snapshot(handle, cursor, offset):
+def _read_tail_once(handle, cursor, offset):
     """Observe a finite late suffix, never chasing an actively growing log."""
     _identity(handle, cursor, offset)
     end = os.fstat(handle.fileno()).st_size
@@ -89,6 +89,27 @@ def _read_tail_snapshot(handle, cursor, offset):
         _identity(handle, cursor, end)
     _identity(handle, cursor, end)
     return b"".join(parts)
+
+
+def _read_tail_snapshot(handle, cursor, offset, *, observation_path=None, required_prefix=b""):
+    """Bounded observation may finish a suffix but can never admit late bytes."""
+    late = _read_tail_once(handle, cursor, offset)
+    if not late.startswith(required_prefix):
+        raise IntakeError("source late tail was truncated or changed")
+    if observation_path is not None:
+        _save_late(observation_path, late)
+    expires = time.monotonic() + 2.0
+    for _ in range(20):
+        if not late or late.endswith(b"\n") or time.monotonic() >= expires:
+            break
+        time.sleep(min(0.1, max(0.0, expires - time.monotonic())))
+        current = _read_tail_once(handle, cursor, offset)
+        if not current.startswith(late):
+            raise IntakeError("source late tail prefix changed while awaiting completion")
+        late = current
+        if observation_path is not None:
+            _save_late(observation_path, late)
+    return late
 
 
 def _save_late(path, payload):
@@ -165,7 +186,10 @@ def verify_capture(
                     raise IntakeError("source prefix provenance mismatch")
                 if _hash_prefix(handle, offset) != checkpoint["source_sha256"]:
                     raise IntakeError("source capture provenance mismatch")
-                late = _read_tail_snapshot(handle, cursor, offset)
+                late = _read_tail_snapshot(
+                    handle, cursor, offset, observation_path=observation_path,
+                    required_prefix=saved_late,
+                )
             if not late.startswith(saved_late):
                 raise IntakeError("source late tail was truncated or changed")
             _save_late(observation_path, late)
@@ -229,7 +253,10 @@ def capture_window(
                 if completed > deadline:
                     late_path = capture_path.with_name(capture_path.stem + "-late.jsonl")
                     _save_late(late_path, pending)
-                    late = _read_tail_snapshot(source, cursor, offset)
+                    late = _read_tail_snapshot(
+                        source, cursor, offset, observation_path=late_path,
+                        required_prefix=pending,
+                    )
                     if not late.startswith(pending):
                         raise IntakeError("source late tail was truncated or changed")
                     _save_late(late_path, late)

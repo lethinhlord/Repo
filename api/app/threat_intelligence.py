@@ -178,7 +178,14 @@ class VirusTotalClient:
                 envelope.data.attributes.last_analysis_date,
                 tz=UTC,
             )
-            if self._clock() - observed_at > self._max_report_age:
+            age = self._clock() - observed_at
+            if age < timedelta(0):
+                result = _unknown(
+                    "virustotal-v3", indicator, "FUTURE_REPORT",
+                    "VirusTotal report is dated after the trusted clock; enrichment is UNKNOWN.",
+                )
+                return result.model_copy(update={"last_analysis_at": observed_at})
+            if age > self._max_report_age:
                 result = _unknown(
                     "virustotal-v3",
                     indicator,
@@ -229,7 +236,7 @@ class VirusTotalClient:
                 "INSUFFICIENT_DATA",
                 "VirusTotal has too few affirmative analysis votes; enrichment is UNKNOWN.",
             )
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError, OSError):
             return _unknown(
                 "virustotal-v3",
                 indicator,

@@ -61,6 +61,7 @@
         "PROVIDER_UNAVAILABLE",
         "INVALID_RESPONSE",
         "STALE_REPORT",
+        "FUTURE_REPORT",
         "TIMEOUT",
         "NOT_CONFIGURED",
         "DISABLED",

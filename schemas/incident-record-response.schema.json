@@ -13,7 +13,9 @@
       "enum": [
         "created",
         "updated",
-        "duplicate"
+        "duplicate",
+        "stale",
+        "retryable"
       ],
       "title": "Disposition",
       "type": "string"
@@ -21,7 +23,8 @@
     "notification_status": {
       "enum": [
         "QUEUED",
-        "ALREADY_QUEUED"
+        "ALREADY_QUEUED",
+        "RETRYABLE"
       ],
       "title": "Notification Status",
       "type": "string"

@@ -213,6 +213,19 @@
   },
   "additionalProperties": false,
   "properties": {
+    "snapshot_revision": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Snapshot Revision"
+    },
     "ingest_status": {
       "enum": [
         "new",

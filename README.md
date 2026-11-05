@@ -25,6 +25,13 @@ require `--clock-preflight` from that measured preflight; an abbreviated command
 cannot replace it. G7 remains closed until cohort/challenge/taxonomy release and
 real-lab acceptance are complete. A merged software fix is not a collection baseline.
 
+The maintained pilot release is `pilot-v3.8-20261105`; see
+[current status](docs/current-status.md) and the
+[3.8 verification record](docs/audit-v38-validation-20261105.md).
+The November handoff's eight dataset outputs now match their recorded hashes,
+but its C2 native-clock discrepancies still require source evidence. See the
+[record-level timestamp comparison](docs/dataset-handoff-20261105.md).
+
 Use `main` as the maintained entry point and the exact approved source SHA for
 collection, dataset building and training. The Colab notebook accepts
 `train.jsonl`, `validation.jsonl`, `dataset_manifest.json` and `colab-upload.sha256`,

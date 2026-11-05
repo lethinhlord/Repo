@@ -1,52 +1,46 @@
 # Trạng thái phần mềm và bàn giao hiện tại
 
-Ngày 04/11/2026. Đây là điểm vào hiện hành; các báo cáo trong `history/` và nhật ký
-`tasks/` là hồ sơ theo thời điểm, không phải chỉ dẫn chạy phiên bản cũ.
+Ngày 05/11/2026. Điểm vào vận hành là [runbook lab 4 VM](scenario-collection-runbook.md),
+pilot tag [pilot-v3.8-20261105](https://github.com/lethinhlord/Repo/tree/pilot-v3.8-20261105).
+Code anchor đã kiểm: `0d6e44ffdf4936182a4ee337db78f29116469b94`.
+Tag chỉ đổi tài liệu trong allowlist so với anchor; không mở G7.
 
-- Hướng dẫn Kiên hiện hành: [lab bốn VM và thu dữ liệu v3](scenario-collection-runbook.md).
-- Dataset mới phải có 24 feature v3, baseline/capture/checkpoint và policy thời gian
-  `last-relevant-source-v1`. Chỉ nhận evidence mới theo đúng source phát hành.
-- Pilot 3.7 lấy mã và hướng dẫn trực tiếp từ tag GitHub `pilot-v3.7-20261104`,
-  kiểm annotated tag, anchor `402d40658be416d3d6a3112afe6d63bdeca7033c` và ghi SHA đầy đủ theo mục 6.2/6.3. Không dùng
-  gói source offline hoặc file pointer; tag pilot không mở G7. GitHub chỉ truy cập
-  trong bảo trì không có owner active, trước khi cô lập collection mode.
-- Bản 3.7 sửa identity cho mọi occurrence Archives, kể cả có rule như R06; raw,
-  native ID và firedtimes giữ nguyên. Guard xung đột transport ID ở API/store vẫn
-  có hiệu lực. R06 được Kiên báo đã ABORTED: giữ nguyên evidence, không đổi state
-  để cứu mẫu; cập nhật trong bảo trì và chạy pilot mới theo mục 0.3 của runbook.
-- Collector dùng mutex hệ điều hành cho sáu thao tác thay đổi state; recovery giữ
-  checksum bất biến và validate trước publish/nhả owner. Missing target account
-  không dùng Subject làm đích; byte flow chỉ tính từ counter cuối hợp lệ.
-- Pilot R02 chưa nghiệm thu: gói chẩn đoán chỉ là trích xuất, thiếu full capture nên
-  không xác nhận được khả năng khôi phục hay bằng chứng ACCOUNT. Cần kiểm bản run
-  đầy đủ và source sửa lỗi đã phát hành trước khi thử finalize lại theo runbook.
-- Sửa archive identity và kiểm chéo ngày 03/11 được ghi trong
-  [biên bản R02](archive-replay-r02-validation-20261103.md), kèm
-  [quy trình cập nhật/khôi phục](pilot-r02-recovery.md).
-- R03: sửa phân loại late tail không xác nhận pilot đã được cứu hay nghiệm thu;
-  chưa tìm thấy evidence run R03 thực tế trong các nơi đã kiểm. Không dựng lại hoặc
-  ghi lùi checkpoint `capturing` cũ; xem [quy trình pilot R03](pilot-r03-runbook.md)
-  cho run mới sau khi source sửa lỗi được kiểm chứng và phát hành.
-- Kết quả sửa intake, kiểm kê thư mục/GitHub/Docker và sai lệch runtime v2 trên máy
-  Thịnh nằm trong [biên bản R03](pilot-r03-validation-20261103.md). Image QA v3 đã
-  kiểm riêng; stack cũ chưa được nâng cấp khi thiếu baseline/package v3 hợp lệ.
-- G7 vẫn đóng; nghiệm thu lab thực tế hiện chưa được thực hiện. Thu chính thức còn cần
-  catalog/cohort/challenge/taxonomy và pilot lab được nghiệm thu. Không dùng quota run
-  thay cho số cohort độc lập hoặc bằng chứng thống kê.
-- Workflow n8n hiện SHADOW và ingest tạm thời. API finalize-window đã có; workflow
-  đóng window tự động/decision cuối và phản ứng mạnh vẫn chưa được nghiệm thu.
-- Kiểm clock/firewall/loss/flow/restore trên bốn VM thật do Kiên thực hiện. Không có
-  lab ở máy Thịnh để thay bằng chứng đó bằng unit test hoặc container QA.
-- Train theo [runbook tuần3](week3-model-training-runbook.md) và notebook phát hành,
-  với SHA được duyệt khớp manifest builder/config, đủ bốn file staging, test khóa
-  vẫn UNOPENED. [Operations](model-operations-runbook.md) dùng schema v3.
+- 11 finding V37 đã có source fix và RED/GREEN tương ứng; xem
+  [ledger](../tasks/audit-v38-20261105.md) và [biên bản 3.8](audit-v38-validation-20261105.md).
+- Close không chứng nhận COMPLETE sau eviction/ngoài retention. Snapshot revision
+  và migration giữ provenance; completion cũ không hạ incident hoặc hủy escalation mới.
+  Feature failure retryable giữ raw/error, trả503, không chốt processed/outbox.
+- Auth thiếu target/type/source giữ uncertainty và raw; remote source thiếu không
+  alias local-console. Windows background không tự trở thành account incident.
+- Central Sysmon checker giữ timestamp gốc: selected C2 sai clock bị chặn,
+  destination history lỗi không enroll. Start/late wait giữ prefix/cutoff, không
+  bỏ fragment hoặc nhận byte late để làm mẫu đạt.
+- Cohort constraint fallback phân biệt infeasible với bounded-search unknown.
+  Locked-test reservation có trước exposure; interrupted không trở lại UNOPENED.
+  Runtime kiểm metrics integrity động, kể cả khi đã cache.
+- Notebook bàn giao model thật theo versioned host path, safe extraction và exact
+  provenance trước freeze. Smoke PASS không nghiệm thu archive Colab; host path
+  và container path được phân biệt trong runbook tuần3.
+- Windows full 749 passed/1 symlink skip; Linux 340 test case riêng biệt đạt,
+  không skip (gồm bài symlink); Ruff PASS.
+  QA n8n 2.44.6 + API thật kiểm feature503→retry200→duplicate, không gửi ra ngoài và
+  không thay stack đang chạy. QA không thay real-lab telemetry acceptance.
+- Gói bàn giao158 file, thêm8 output gốc khớp metadata 8/8. Hai account collector
+  VALID nhưng supplementary REVIEW do destination enrollment clocks. Hai C2 còn
+  native SystemTime/UtcTime mâu thuẫn; Wazuh arrival lag 0,6 s là phép đo khác.
+  [Record/dòng/hash và tiêu chí parity](dataset-handoff-20261105.md).
+- Chưa có EVTX để xác định endpoint hay forwarding/export gây mâu thuẫn. Giữ raw,
+  lưu native evidence rồi xử lý nguồn và pilot mới; không sửa timestamp/hash.
+  Source receipt phải phản ánh phiên bản thật đã chạy, không gán source mới ngược ngày.
+- G7 CLOSED: catalog/cohort/challenge/taxonomy và lab acceptance chưa phát hành làm
+  baseline trainable. Pilot không tính quota40–48, không chứng minh accuracy hoặc
+  quyền phản ứng tự động. Giữ SHADOW; auto-close workflow/decision cuối vẫn chưa nghiệm thu.
 
-Các sửa F01–F09, phạm vi kiểm, mốc source và tài nguyên đã loại bỏ được ghi trong
-biên bản nghiệm thu lượt sửa này. Không có tuyên bố model đã đạt độ chính xác hoặc
-hệ thống đã đủ điều kiện phản ứng tự động.
+Nguồn và tài liệu lấy từ GitHub tag đã pin, trong bảo trì không có run active;
+không dùng code offline sửa riêng rồi báo đã chạy release. Node.js cần cho regression
+workflow; cài trước khi cô lập. Source/runtime receipts và backup vẫn phải giữ thật.
 
-Sửa lỗi và bàn giao 3.7 được ghi trong
-[biên bản kiểm chứng 04/11](collection-integrity-validation-20261104.md).
-[Biên bản 3.6](github-handoff-validation-v3.6-20261103.md) và các biên bản R02/R03,
-3.3 trước đó là hồ sơ theo thời điểm. Mô tả bundle hoặc chỉ xử lý record thiếu rule
-trong hồ sơ cũ không phải quy trình nhận mã/replay hiện hành.
+[Runbook tuần3](week3-model-training-runbook.md), [contract](week3-data-contract.md)
+và [operations](model-operations-runbook.md) áp dụng khi gate tương ứng đạt.
+Biên bản3.7/R02/R03 cũ là lịch sử; hướng dẫn recovery hiện hành ở tag 3.8 vẫn bảo toàn
+raw và không hồi sinh ABORTED/QUARANTINED. Chưa deploy lên lab 4 VM hoặc train/test thật.

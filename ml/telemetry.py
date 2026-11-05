@@ -7,6 +7,7 @@ import json
 import re
 from contextlib import suppress
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 from ml.behavior_features import NetworkObservation, SuricataObservation
@@ -68,6 +69,71 @@ def suricata_payload(event: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def sysmon_clock_issues(event: dict[str, Any], *, maximum_skew_seconds: float = 5.0) -> list[str]:
+    """Check native Sysmon UTC evidence without changing any source timestamp.
+
+    Provider-less historical adapters may omit native clocks. When a native UTC
+    field is present it is still checked; a real Sysmon source must supply it.
+    Named Sysmon UtcTime values without an offset have a documented UTC meaning.
+    """
+    event_id, system, fields = windows_fields(event)
+    if event_id not in {"1", "3", "22"}:
+        return []
+    provider = str(system.get("providerName", "")).strip().casefold()
+    decoder = event.get("decoder")
+    decoder = str(decoder.get("name", "")) if isinstance(decoder, dict) else ""
+    declared = provider == "microsoft-windows-sysmon" or decoder.casefold() == "sysmon-c2"
+    # An explicitly different provider is not a Sysmon event-ID namespace.
+    if provider and provider != "microsoft-windows-sysmon":
+        return []
+    native_values = [value for key, value in fields.items() if key.casefold() == "utctime"]
+    message = system.get("message")
+    message_values = []
+    if isinstance(message, str):
+        message_values = re.findall(r"(?:^|[\r\n])\s*UtcTime:\s*([^\r\n]*)", message, re.IGNORECASE)
+    if not declared and not native_values and not message_values:
+        return []
+    if not 0 < maximum_skew_seconds <= 5:
+        raise ValueError("Sysmon clock skew limit must be in (0,5]")
+    def seconds(value: Any, *, system_clock: bool = False) -> Decimal | None:
+        if not isinstance(value, str):
+            return None
+        match = re.fullmatch(
+            r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.(\d{1,9}))?(Z|[+-]\d{2}:?\d{2})?",
+            value.strip(),
+        )
+        if match is None or (system_clock and match[2] is None):
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
+            if not system_clock and parsed.utcoffset().total_seconds() != 0:
+                return None
+            whole = parsed.replace(microsecond=0) - datetime(1970, 1, 1, tzinfo=UTC)
+            return Decimal(whole.days * 86400 + whole.seconds) + Decimal("0." + (match[1] or "0"))
+        except (ValueError, AttributeError, OverflowError):
+            return None
+
+    issues = []
+    system_at = seconds(system.get("systemTime"), system_clock=True)
+    if system_at is None:
+        issues.append("clock:invalid_sysmon_system_time")
+    if not native_values:
+        issues.append("clock:missing_sysmon_utc_time")
+    parsed_values = []
+    for value in native_values + message_values:
+        parsed = seconds(value)
+        if parsed is None:
+            issues.append("clock:invalid_sysmon_utc_time")
+        else:
+            parsed_values.append(parsed)
+    clocks = ([system_at] if system_at is not None else []) + parsed_values
+    if clocks and max(clocks) - min(clocks) > Decimal(str(maximum_skew_seconds)):
+        issues.append("clock:sysmon_timestamp_mismatch")
+    return sorted(set(issues))
+
+
 def event_time(event: dict[str, Any]) -> datetime | None:
     _, system, _ = windows_fields(event)
     if system:
@@ -108,14 +174,31 @@ def account_user(eventdata: dict[str, Any]) -> str:
 
 
 def account_source(eventdata: dict[str, Any]) -> str:
-    return normalize_ip(
-        eventdata.get("ipAddress")
-        or eventdata.get("IpAddress")
-        or eventdata.get("sourceIp")
-        or eventdata.get("workstationName")
-        or eventdata.get("WorkstationName")
-        or "local-console"
-    )
+    for field in ("ipAddress", "IpAddress", "sourceIp", "workstationName", "WorkstationName"):
+        value = str(eventdata.get(field) or "").strip()
+        if value and value != "-":
+            return normalize_ip(value)
+    # Only an explicitly interactive console logon proves a local source.
+    logon_type = str(eventdata.get("logonType", eventdata.get("LogonType", ""))).strip()
+    return "local-console" if logon_type == "2" else "unknown-source"
+
+
+def account_observation_issues(eventdata: dict[str, Any]) -> list[str]:
+    """Do not silently discard authentication whose scope cannot be decided."""
+    logon_type = str(eventdata.get("logonType", eventdata.get("LogonType", ""))).strip()
+    if logon_type in {"0", "4", "5", "7", "8", "9", "11", "12", "13"}:
+        return []
+    if (account_user(eventdata) and is_interactive_logon(eventdata)
+            and not account_observation_eligible(eventdata)):
+        return []  # Proven virtual OS session identity.
+    issues = []
+    if logon_type not in {"2", "3", "10"}:
+        issues.append("telemetry:missing_or_invalid_logon_type")
+    if not account_user(eventdata):
+        issues.append("telemetry:missing_target_account")
+    if account_source(eventdata) == "unknown-source":
+        issues.append("telemetry:unknown_account_source")
+    return issues
 
 
 def is_interactive_logon(

@@ -350,16 +350,56 @@ def _assign_cohort_folds(
             fold = (index + offset) % number_of_folds
             fold_by_group[group] = fold
             loads[fold] += 1
-    for fold in range(number_of_folds):
-        present = {
-            value for group, values in members.items() if fold_by_group[group] == fold
-            for value in values
-        }
-        if present != strata:
+    def covered(assignment: dict[str, int], fold: int) -> set[tuple[str, int]]:
+        return {value for group, values in members.items()
+                if assignment.get(group) == fold for value in values}
+
+    if any(covered(fold_by_group, fold) != strata for fold in range(number_of_folds)):
+        # Search the exact coverage constraints; cohorts never cross folds, so no
+        # training fold can indirectly contain another fold's cohort or scenario.
+        assignment: dict[str, int] = {}
+        nodes = 0
+        limit = 200_000
+        def search() -> bool:
+            nonlocal nodes
+            nodes += 1
+            if nodes > limit:
+                raise DatasetError(
+                    "cohort constraint search resource limit reached; feasibility unknown"
+                )
+            missing = [(fold, value) for fold in range(number_of_folds)
+                       for value in sorted(strata) if value not in covered(assignment, fold)]
+            if not missing:
+                return True
+            choices = []
+            for fold, value in missing:
+                candidates = [g for g in sorted(members)
+                              if g not in assignment and value in members[g]]
+                choices.append((len(candidates), fold, value, candidates))
+            _, fold, _, candidates = min(choices)
+            for group in candidates:
+                assignment[group] = fold
+                if search():
+                    return True
+                del assignment[group]
+            return False
+        try:
+            feasible = search()
+        except RecursionError as exc:
             raise DatasetError(
-                "cohort design cannot provide every family/label in every fold; "
-                "collect balanced matched cohorts before building"
+                "cohort constraint search recursion limit reached; feasibility unknown"
+            ) from exc
+        if not feasible:
+            raise DatasetError("cohort design is infeasible: every fold cannot cover every stratum")
+        for group in sorted(set(members) - set(assignment)):
+            fold = min(
+                range(number_of_folds), key=lambda f: (list(assignment.values()).count(f), f)
             )
+            assignment[group] = fold
+        fold_by_group = assignment
+    if any(covered(fold_by_group, fold) != strata for fold in range(number_of_folds)):
+        raise DatasetError("cohort assignment failed final coverage validation")
+
     return {run_id: fold_by_group[row.cohort_id] for run_id, row in run_rows.items()}
 
 

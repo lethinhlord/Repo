@@ -3,6 +3,12 @@ set -eu
 
 cd "$(dirname "$0")/.."
 
+if ! command -v node >/dev/null 2>&1; then
+  echo 'Node.js is required for workflow regression tests; install nodejs before isolation.' >&2
+  exit 1
+fi
+node -e 'if (Number(process.versions.node.split(".")[0]) < 18) process.exit(1)'
+
 python3 -m venv .venv-ml
 .venv-ml/bin/python -m pip install --upgrade pip
 .venv-ml/bin/python -m pip install --requirement requirements.lock

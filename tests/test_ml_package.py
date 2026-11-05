@@ -493,14 +493,147 @@ def test_locked_test_hash_is_verified_and_opening_is_recorded(tmp_path: Path) ->
     joblib.dump(bundle, package / "model.joblib")
     freeze(package)
 
-    wrong = tmp_path / "wrong.jsonl"
-    wrong.write_text(json.dumps({**row, "label": 1}) + "\n", encoding="utf-8")
-    with pytest.raises(PermissionError, match="locked test integrity"):
-        evaluate_locked_test(package, wrong, unlock_locked_test=True)
-
     result = evaluate_locked_test(package, locked, unlock_locked_test=True)
 
     assert result["locked_test_status"] == "EVALUATED"
     assert (package / "LOCKED_TEST_OPENED.json").is_file()
     runtime = ModelRuntime(package)
     assert runtime.locked_test_status == "EVALUATED"
+
+
+def test_locked_test_interruption_is_recorded_before_read(tmp_path, monkeypatch):
+    package = tmp_path / 'package'
+    create_package(package)
+    freeze(package)
+    locked = tmp_path / 'locked.jsonl'
+    locked.write_text('', encoding='utf-8')
+    import ml.evaluate as evaluation
+    def interrupt(path):
+        raise OSError('interrupted read')
+    monkeypatch.setattr(evaluation, 'file_hash', interrupt)
+    with pytest.raises(OSError, match='interrupted'):
+        evaluate_locked_test(package, locked, unlock_locked_test=True)
+    assert ModelRuntime(package).locked_test_status == 'OPENED_INCOMPLETE'
+    with pytest.raises(PermissionError, match='already'):
+        evaluate_locked_test(package, locked, unlock_locked_test=True)
+
+
+def test_legacy_visible_metrics_without_markers_never_returns_unopened(tmp_path):
+    package = tmp_path / "package"
+    create_package(package)
+    freeze(package)
+    runtime = ModelRuntime(package)
+    # Reproduce the pre-v38 crash: metrics reached disk, neither a reservation
+    # nor the final opening record exists. This is exposure evidence, not a new test.
+    (package / "metrics_locked_test.json").write_text('{"legacy_metrics_visible":true}')
+    locked = tmp_path / "locked.jsonl"
+    locked.write_text("")
+    assert runtime.locked_test_status == "OPENED_INCOMPLETE"
+    assert ModelRuntime(package).locked_test_status == "OPENED_INCOMPLETE"
+    with pytest.raises(PermissionError, match="already"):
+        evaluate_locked_test(package, locked, unlock_locked_test=True)
+
+
+def test_opening_metrics_corruption_is_visible(tmp_path):
+    package = tmp_path / 'package'
+    create_package(package)
+    freeze(package)
+    freeze_hash = hashlib.sha256((package / 'FROZEN.json').read_bytes()).hexdigest()
+    (package / 'LOCKED_TEST_OPENED.json').write_text(json.dumps({
+        'status':'EVALUATED', 'model_version':'test-model-v1',
+        'freeze_sha256':freeze_hash, 'locked_test_sha256':hashlib.sha256(b'').hexdigest(),
+        'metrics_locked_test_sha256':hashlib.sha256(b'original').hexdigest(),
+    }), encoding='utf-8')
+    (package / 'metrics_locked_test.json').write_text('{}', encoding='utf-8')
+    assert ModelRuntime(package).locked_test_status == 'EVIDENCE_INTEGRITY_ERROR'
+
+
+def test_concurrent_locked_test_opening_reserves_once(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    import ml.evaluate as evaluation
+    package = tmp_path / 'package'
+    create_package(package)
+    freeze(package)
+    locked = tmp_path / 'locked.jsonl'
+    locked.write_text('', encoding='utf-8')
+    started, finish = Event(), Event()
+    def interrupted_hash(path):
+        started.set()
+        assert finish.wait(10)
+        raise OSError('interrupted')
+    monkeypatch.setattr(evaluation, 'file_hash', interrupted_hash)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(evaluate_locked_test, package, locked, unlock_locked_test=True)
+        assert started.wait(10)
+        try:
+            with pytest.raises(PermissionError, match='already'):
+                evaluate_locked_test(package, locked, unlock_locked_test=True)
+            assert ModelRuntime(package).locked_test_status == 'OPENED_INCOMPLETE'
+        finally:
+            finish.set()
+        with pytest.raises(OSError, match='interrupted'):
+            first.result()
+
+
+def test_wrong_locked_test_hash_consumes_opening(tmp_path):
+    package = tmp_path / 'package'
+    create_package(package)
+    freeze(package)
+    wrong = tmp_path / 'wrong.jsonl'
+    wrong.write_text('wrong', encoding='utf-8')
+    with pytest.raises(PermissionError, match='locked test integrity'):
+        evaluate_locked_test(package, wrong, unlock_locked_test=True)
+    assert ModelRuntime(package).locked_test_status == 'OPENED_INCOMPLETE'
+    with pytest.raises(PermissionError, match='already'):
+        evaluate_locked_test(package, wrong, unlock_locked_test=True)
+
+
+def test_runtime_observes_opening_after_initialization(tmp_path):
+    package = tmp_path / 'package'
+    create_package(package)
+    freeze(package)
+    runtime = ModelRuntime(package)
+    assert runtime.locked_test_status == 'UNOPENED'
+    (package / 'LOCKED_TEST_RESERVED').write_text('reserved', encoding='utf-8')
+    assert runtime.locked_test_status == 'OPENED_INCOMPLETE'
+
+
+@pytest.mark.parametrize('record', [[], None, 1, 'invalid'])
+def test_invalid_locked_test_record_type_is_rejected(tmp_path, record):
+    package = tmp_path / 'package'
+    create_package(package)
+    freeze(package)
+    (package / 'LOCKED_TEST_OPENED.json').write_text(json.dumps(record), encoding='utf-8')
+    with pytest.raises(ModelPackageError, match='opening record'):
+        ModelRuntime(package)
+
+
+@pytest.mark.parametrize(
+    'corruption', ['list', 'identity', 'missing_freeze', 'missing_freeze_unopened'],
+)
+def test_cached_runtime_readiness_surfaces_opening_evidence_corruption(
+    tmp_path, monkeypatch, corruption,
+):
+    package = tmp_path / 'package'
+    create_package(package)
+    freeze(package)
+    monkeypatch.setenv('MODEL_PACKAGE_DIR', str(package))
+    monkeypatch.setenv('MODEL_MONITORING_DB', str(tmp_path / 'monitoring.db'))
+    load_model_runtime.cache_clear()
+    client = TestClient(app)
+    assert client.get('/model/ready').json()['locked_test_status'] == 'UNOPENED'
+    opened = package / 'LOCKED_TEST_OPENED.json'
+    if corruption == 'list':
+        opened.write_text('[]', encoding='utf-8')
+    elif corruption == 'identity':
+        opened.write_text(json.dumps({'model_version': 'wrong'}), encoding='utf-8')
+    else:
+        if corruption == 'missing_freeze':
+            opened.write_text('{}', encoding='utf-8')
+        (package / 'FROZEN.json').unlink()
+    response = client.get('/model/ready')
+    assert response.status_code == 200
+    assert response.json()['locked_test_status'] == 'EVIDENCE_INTEGRITY_ERROR'
+    load_model_runtime.cache_clear()

@@ -169,6 +169,7 @@ class FeatureBatchResponse(StrictModel):
 
 
 class FeatureStateResponse(StrictModel):
+    snapshot_revision: int | None = Field(default=None, ge=1)
     ingest_status: Literal["new", "duplicate"]
     stored_event_count: int = Field(ge=1)
     window_minutes: int = Field(ge=1, le=5)
@@ -283,6 +284,7 @@ ThreatReasonCode = Literal[
     "PROVIDER_UNAVAILABLE",
     "INVALID_RESPONSE",
     "STALE_REPORT",
+    "FUTURE_REPORT",
     "TIMEOUT",
     "NOT_CONFIGURED",
     "DISABLED",
@@ -379,6 +381,8 @@ class RiskEvaluation(StrictModel):
 
 
 class IncidentRecordRequest(StrictModel):
+    snapshot_revision: int | None = Field(default=None, ge=1)
+    processing_status: Literal["terminal", "retryable"] = "terminal"
     incident_id: str = Field(min_length=1, max_length=128)
     source_event_id: str = Field(min_length=1, max_length=128)
     source_payload_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
@@ -400,8 +404,8 @@ class IncidentRecordRequest(StrictModel):
 class IncidentRecordResponse(StrictModel):
     incident_id: str
     source_event_id: str
-    disposition: Literal["created", "updated", "duplicate"]
-    notification_status: Literal["QUEUED", "ALREADY_QUEUED"]
+    disposition: Literal["created", "updated", "duplicate", "stale", "retryable"]
+    notification_status: Literal["QUEUED", "ALREADY_QUEUED", "RETRYABLE"]
     notification_revision: int = Field(default=1, ge=1)
     route: Literal["shadow", "review"]
     review_required: bool
