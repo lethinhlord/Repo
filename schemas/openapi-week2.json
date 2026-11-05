@@ -1037,6 +1037,18 @@
       },
       "FeatureStateResponse": {
         "properties": {
+          "snapshot_revision": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Revision"
+          },
           "ingest_status": {
             "type": "string",
             "enum": [
@@ -1133,6 +1145,27 @@
       },
       "IncidentRecordRequest": {
         "properties": {
+          "snapshot_revision": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Revision"
+          },
+          "processing_status": {
+            "type": "string",
+            "enum": [
+              "terminal",
+              "retryable"
+            ],
+            "title": "Processing Status",
+            "default": "terminal"
+          },
           "incident_id": {
             "type": "string",
             "maxLength": 128,
@@ -1208,7 +1241,9 @@
             "enum": [
               "created",
               "updated",
-              "duplicate"
+              "duplicate",
+              "stale",
+              "retryable"
             ],
             "title": "Disposition"
           },
@@ -1216,7 +1251,8 @@
             "type": "string",
             "enum": [
               "QUEUED",
-              "ALREADY_QUEUED"
+              "ALREADY_QUEUED",
+              "RETRYABLE"
             ],
             "title": "Notification Status"
           },
@@ -2216,6 +2252,7 @@
               "PROVIDER_UNAVAILABLE",
               "INVALID_RESPONSE",
               "STALE_REPORT",
+              "FUTURE_REPORT",
               "TIMEOUT",
               "NOT_CONFIGURED",
               "DISABLED",

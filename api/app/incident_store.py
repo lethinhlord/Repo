@@ -52,6 +52,13 @@ class IncidentStore:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS retryable_events (
+                    source_event_id TEXT PRIMARY KEY,
+                    source_payload_sha256 TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    first_failed_at TEXT NOT NULL,
+                    resolved_at TEXT
+                );
                 CREATE TABLE IF NOT EXISTS processed_events (
                     source_event_id TEXT PRIMARY KEY,
                     payload_hash TEXT NOT NULL,
@@ -222,67 +229,130 @@ class IncidentStore:
                     recorded_at=now,
                 )
 
+            pending = connection.execute(
+                "SELECT source_payload_sha256 FROM retryable_events WHERE source_event_id=?",
+                (request.source_event_id,),
+            ).fetchone()
+            if pending is not None and pending[0] != request.source_payload_sha256:
+                raise ValueError(
+                    "source_event_id has a retryable failure with a different raw payload"
+                )
+            if request.processing_status == "retryable":
+                if request.source_payload_sha256 is None:
+                    raise ValueError("retryable events require a source payload hash")
+                raw = request.decision.get("raw_payload")
+                error = request.decision.get("feature_error")
+                if not isinstance(raw, dict) or not raw or not error:
+                    raise ValueError(
+                        "retryable events require raw payload and feature error evidence"
+                    )
+                connection.execute(
+                    "INSERT OR IGNORE INTO retryable_events VALUES (?,?,?,?,NULL)",
+                    (request.source_event_id, request.source_payload_sha256, payload, now_text),
+                )
+                return IncidentRecordResponse(
+                    incident_id=request.incident_id, source_event_id=request.source_event_id,
+                    disposition="retryable", notification_status="RETRYABLE",
+                    route="review", review_required=True, recorded_at=now,
+                )
+
             existing = connection.execute(
-                "SELECT payload_hash FROM incidents WHERE incident_id = ?",
+                "SELECT payload_hash,payload_json FROM incidents WHERE incident_id = ?",
                 (request.incident_id,),
             ).fetchone()
-            disposition = "created" if existing is None else "updated"
-            if existing is None:
-                connection.execute(
-                    "INSERT INTO incidents VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        request.incident_id,
-                        payload_hash,
-                        payload,
-                        request.route,
-                        int(request.review_required),
-                        now_text,
-                        now_text,
-                    ),
+            current = (
+                IncidentRecordRequest.model_validate_json(existing["payload_json"])
+                if existing else None
+            )
+            current_revision = current.snapshot_revision if current is not None else None
+            stale = current_revision is not None and (
+                request.snapshot_revision is None or request.snapshot_revision < current_revision
+            )
+            if current_revision is not None and request.snapshot_revision == current_revision:
+                # A revision identifies one immutable observation. Different source
+                # IDs may reference that snapshot, but its decision cannot change.
+                def comparable(value: IncidentRecordRequest) -> dict:
+                    document = value.model_dump(mode="json")
+                    for name in ("source_event_id", "source_payload_sha256"):
+                        document.pop(name, None)
+                        document["decision"].pop(name, None)
+                    return document
+                if comparable(current) != comparable(request):
+                    raise ValueError("snapshot revision was reused with a conflicting decision")
+                stale = True
+            if stale:
+                latest_revision = connection.execute(
+                    "SELECT MAX(revision) FROM notification_revisions WHERE incident_id=?",
+                    (request.incident_id,),
+                ).fetchone()[0]
+                result = IncidentRecordResponse(
+                    incident_id=request.incident_id, source_event_id=request.source_event_id,
+                    disposition="stale", notification_status="ALREADY_QUEUED",
+                    notification_revision=int(latest_revision), route=current.route,
+                    review_required=current.review_required, recorded_at=now,
                 )
             else:
-                connection.execute(
-                    """
-                    UPDATE incidents SET payload_hash = ?, payload_json = ?, route = ?,
-                      review_required = ?, updated_at = ? WHERE incident_id = ?
-                    """,
-                    (
-                        payload_hash,
-                        payload,
-                        request.route,
-                        int(request.review_required),
-                        now_text,
-                        request.incident_id,
-                    ),
+                disposition = "created" if existing is None else "updated"
+                if existing is None:
+                    connection.execute(
+                        "INSERT INTO incidents VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            request.incident_id,
+                            payload_hash,
+                            payload,
+                            request.route,
+                            int(request.review_required),
+                            now_text,
+                            now_text,
+                        ),
+                    )
+                else:
+                    connection.execute(
+                        """
+                        UPDATE incidents SET payload_hash = ?, payload_json = ?, route = ?,
+                          review_required = ?, updated_at = ? WHERE incident_id = ?
+                        """,
+                        (
+                            payload_hash,
+                            payload,
+                            request.route,
+                            int(request.review_required),
+                            now_text,
+                            request.incident_id,
+                        ),
+                    )
+                latest = connection.execute(
+                    "SELECT revision,decision_fingerprint FROM notification_revisions "
+                    "WHERE incident_id=? ORDER BY revision DESC LIMIT 1",
+                    (request.incident_id,),
+                ).fetchone()
+                fingerprint = self._notification_fingerprint(request)
+                queued = latest is None or latest["decision_fingerprint"] != fingerprint
+                revision = int(latest["revision"]) if latest is not None else 0
+                if queued:
+                    revision += 1
+                    connection.execute(
+                        "UPDATE notification_revisions SET status='SUPERSEDED' "
+                        "WHERE incident_id=? AND status='QUEUED'", (request.incident_id,),
+                    )
+                    connection.execute(
+                        "INSERT INTO notification_revisions "
+                        "(incident_id,revision,notification_key,decision_fingerprint,"
+                        "notification,status,created_at) VALUES (?,?,?,?,?,'QUEUED',?)",
+                        (request.incident_id, revision,
+                         f"{request.incident_id}:notification:{revision}", fingerprint,
+                         request.notification, now_text),
+                    )
+                result = IncidentRecordResponse(
+                    incident_id=request.incident_id, source_event_id=request.source_event_id,
+                    disposition=disposition,
+                    notification_status="QUEUED" if queued else "ALREADY_QUEUED",
+                    notification_revision=revision, route=request.route,
+                    review_required=request.review_required, recorded_at=now,
                 )
-            latest = connection.execute(
-                "SELECT revision,decision_fingerprint FROM notification_revisions "
-                "WHERE incident_id=? ORDER BY revision DESC LIMIT 1",
-                (request.incident_id,),
-            ).fetchone()
-            fingerprint = self._notification_fingerprint(request)
-            queued = latest is None or latest["decision_fingerprint"] != fingerprint
-            revision = int(latest["revision"]) if latest is not None else 0
-            if queued:
-                revision += 1
-                connection.execute(
-                    "UPDATE notification_revisions SET status='SUPERSEDED' "
-                    "WHERE incident_id=? AND status='QUEUED'", (request.incident_id,),
-                )
-                connection.execute(
-                    "INSERT INTO notification_revisions "
-                    "(incident_id,revision,notification_key,decision_fingerprint,"
-                    "notification,status,created_at) VALUES (?,?,?,?,?,'QUEUED',?)",
-                    (request.incident_id, revision,
-                     f"{request.incident_id}:notification:{revision}", fingerprint,
-                     request.notification, now_text),
-                )
-            result = IncidentRecordResponse(
-                incident_id=request.incident_id, source_event_id=request.source_event_id,
-                disposition=disposition,
-                notification_status="QUEUED" if queued else "ALREADY_QUEUED",
-                notification_revision=revision, route=request.route,
-                review_required=request.review_required, recorded_at=now,
+            connection.execute(
+                "UPDATE retryable_events SET resolved_at=? WHERE source_event_id=?",
+                (now_text, request.source_event_id),
             )
             connection.execute(
                 "INSERT INTO processed_events "

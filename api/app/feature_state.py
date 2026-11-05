@@ -75,11 +75,33 @@ class FeatureStateStore:
                 "incident_id TEXT PRIMARY KEY, input_hash TEXT NOT NULL, "
                 "response_json TEXT NOT NULL, closed_at REAL NOT NULL)"
             )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS feature_snapshot_sequence ("
+                "singleton INTEGER PRIMARY KEY CHECK(singleton=1), revision INTEGER NOT NULL)"
+            )
+            connection.execute("INSERT OR IGNORE INTO feature_snapshot_sequence VALUES (1,0)")
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS evicted_feature_windows ("
+                "bucket_start REAL NOT NULL, window_minutes INTEGER NOT NULL, "
+                "feature_schema_version TEXT NOT NULL, "
+                "PRIMARY KEY(bucket_start,window_minutes,feature_schema_version))"
+            )
+            closed_columns = {
+                row[1] for row in connection.execute("PRAGMA table_info(closed_feature_windows)")
+            }
+            if "legacy_response_json" not in closed_columns:
+                connection.execute(
+                    "ALTER TABLE closed_feature_windows ADD COLUMN legacy_response_json TEXT"
+                )
             columns = {row[1] for row in connection.execute("PRAGMA table_info(wazuh_alerts)")}
             # Keep legacy rows for audit/TTL; only the current feature schema
             # participates in new fixed windows.
             if "feature_response_json" not in columns:
                 connection.execute("ALTER TABLE wazuh_alerts ADD COLUMN feature_response_json TEXT")
+            if "legacy_feature_response_json" not in columns:
+                connection.execute(
+                    "ALTER TABLE wazuh_alerts ADD COLUMN legacy_feature_response_json TEXT"
+                )
             if "window_minutes" not in columns:
                 connection.execute("ALTER TABLE wazuh_alerts ADD COLUMN window_minutes INTEGER")
             if "feature_schema_version" not in columns:
@@ -87,6 +109,15 @@ class FeatureStateStore:
                     "ALTER TABLE wazuh_alerts ADD COLUMN feature_schema_version "
                     "TEXT NOT NULL DEFAULT 'features-v2'"
                 )
+
+    @staticmethod
+    def _next_revision(connection: sqlite3.Connection) -> int:
+        connection.execute(
+            "UPDATE feature_snapshot_sequence SET revision=revision+1 WHERE singleton=1"
+        )
+        return int(connection.execute(
+            "SELECT revision FROM feature_snapshot_sequence WHERE singleton=1"
+        ).fetchone()[0])
 
     @staticmethod
     def _serialize(alert: WazuhAlert) -> tuple[str, str]:
@@ -108,6 +139,19 @@ class FeatureStateStore:
 
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            # Persist loss evidence before deleting raw rows. A surviving anchor
+            # alone cannot prove the window still contains every original member.
+            connection.execute(
+                "INSERT OR IGNORE INTO evicted_feature_windows "
+                "SELECT CAST(event_timestamp/(window_minutes*60) AS INTEGER)*(window_minutes*60), "
+                "window_minutes, feature_schema_version FROM wazuh_alerts "
+                "WHERE received_at < ? AND window_minutes IS NOT NULL",
+                (now - self.retention_seconds,),
+            )
+            connection.execute(
+                "DELETE FROM evicted_feature_windows WHERE bucket_start + window_minutes*60 < ?",
+                (now - self.retention_seconds,),
+            )
             connection.execute(
                 "DELETE FROM wazuh_alerts WHERE received_at < ?",
                 (now - self.retention_seconds,),
@@ -144,15 +188,25 @@ class FeatureStateStore:
                     raise FeatureStateConflictError(
                         "cached legacy/schema response is unavailable; use persisted event outcome"
                     ) from exc
-                return original.model_copy(update={"ingest_status": "duplicate"})
-            connection.execute(
-                "INSERT INTO wazuh_alerts "
-                "(alert_id, payload_hash, payload_json, event_timestamp, "
-                "received_at, window_minutes, feature_schema_version) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (alert.id, payload_hash, payload, event_time, now, window_minutes,
-                 FEATURE_SCHEMA_VERSION),
-            )
+                if original.snapshot_revision is not None:
+                    return original.model_copy(update={"ingest_status": "duplicate"})
+                # Never label a historical cached observation as a newer snapshot.
+                # Retain its bytes for audit, then rebuild current provisional facts
+                # below from all surviving raw input under this same transaction.
+                connection.execute(
+                    "UPDATE wazuh_alerts SET legacy_feature_response_json="
+                    "COALESCE(legacy_feature_response_json,feature_response_json) WHERE alert_id=?",
+                    (alert.id,),
+                )
+            if existing is None:
+                connection.execute(
+                    "INSERT INTO wazuh_alerts "
+                    "(alert_id, payload_hash, payload_json, event_timestamp, "
+                    "received_at, window_minutes, feature_schema_version) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (alert.id, payload_hash, payload, event_time, now, window_minutes,
+                     FEATURE_SCHEMA_VERSION),
+                )
             rows = connection.execute(
                 """
                 SELECT payload_json FROM wazuh_alerts
@@ -176,17 +230,21 @@ class FeatureStateStore:
             reason = "window:open" if receipt_timely(
                 datetime.fromtimestamp(now, UTC), datetime.fromtimestamp(close_at, UTC),
             ) else "window:late_arrival"
+            legacy_reasons = ["window:legacy_rebuilt"] if existing is not None else []
             # Ingest responses are provisional, not a window-close watermark.
             # A later explicit close/reconciliation must approve a final decision.
             feature = feature.model_copy(update={
                 "quality_status": "PARTIAL",
                 "incident": feature.incident.model_copy(update={
                     "observation_quality": "PARTIAL",
-                    "review_reasons": sorted(set([*feature.incident.review_reasons, reason])),
+                    "review_reasons": sorted(set([
+                        *feature.incident.review_reasons, reason, *legacy_reasons,
+                    ])),
                 }),
             })
             result = FeatureStateResponse(
-                ingest_status="new",
+                snapshot_revision=self._next_revision(connection),
+                ingest_status="duplicate" if existing is not None else "new",
                 stored_event_count=sum(
                     value.startswith("wazuh-alert:") for value in feature.incident.raw_refs
                 ),
@@ -221,6 +279,14 @@ class FeatureStateStore:
             start = window_start(alert, window_minutes=window_minutes).timestamp()
             end = start + window_minutes * 60
             close_at = end + self.late_arrival_grace_seconds
+            if start < now - self.retention_seconds or connection.execute(
+                "SELECT 1 FROM evicted_feature_windows WHERE bucket_start=? "
+                "AND window_minutes=? AND feature_schema_version=?",
+                (start, window_minutes, FEATURE_SCHEMA_VERSION),
+            ).fetchone() is not None:
+                raise FeatureStateConflictError(
+                    "window exceeds raw retention or contains evicted input; recollect"
+                )
             if now < close_at:
                 raise FeatureStateConflictError("window close watermark has not been reached")
             rows = connection.execute(
@@ -255,15 +321,29 @@ class FeatureStateStore:
             if previous is not None:
                 if previous['input_hash'] != digest:
                     raise FeatureStateConflictError("raw input changed after window closure")
-                return FeatureStateResponse.model_validate_json(
-                    previous['response_json'],
-                ).model_copy(update={'ingest_status': 'duplicate'})
+                original = FeatureStateResponse.model_validate_json(previous['response_json'])
+                if original.snapshot_revision is not None:
+                    return original.model_copy(update={'ingest_status': 'duplicate'})
+                # A legacy close may be migrated only after the same full raw
+                # digest and watermark checks above succeed. Rebuild its current
+                # facts rather than assigning a new revision to historical JSON.
             result = FeatureStateResponse(
-                ingest_status='new', stored_event_count=len(members),
+                snapshot_revision=self._next_revision(connection),
+                ingest_status='duplicate' if previous is not None else 'new',
+                stored_event_count=len(members),
                 window_minutes=window_minutes, feature=feature,
             )
-            connection.execute(
-                "INSERT INTO closed_feature_windows VALUES (?,?,?,?)",
-                (feature.incident.incident_id, digest, result.model_dump_json(), now),
-            )
+            if previous is None:
+                connection.execute(
+                    "INSERT INTO closed_feature_windows "
+                    "(incident_id,input_hash,response_json,closed_at) VALUES (?,?,?,?)",
+                    (feature.incident.incident_id, digest, result.model_dump_json(), now),
+                )
+            else:
+                connection.execute(
+                    "UPDATE closed_feature_windows SET legacy_response_json="
+                    "COALESCE(legacy_response_json,response_json),response_json=? "
+                    "WHERE incident_id=?",
+                    (result.model_dump_json(), feature.incident.incident_id),
+                )
             return result

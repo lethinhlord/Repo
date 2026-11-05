@@ -114,7 +114,7 @@ class WebhookAuthenticator:
             try:
                 connection.execute(
                     "INSERT INTO webhook_nonces VALUES (?, ?, ?)",
-                    (request.nonce, now, now + self.max_skew_seconds),
+                    (request.nonce, now, max(now, request.timestamp) + self.max_skew_seconds),
                 )
             except sqlite3.IntegrityError as exc:
                 raise WebhookAuthenticationError("webhook nonce was already used") from exc

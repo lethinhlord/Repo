@@ -226,7 +226,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const state = $node[\"Extract Incident Features\"].json ?? {};\nconst feature = state.feature ?? {};\nconst prediction = $node[\"Call AI Model\"].json ?? {};\nconst ti = $node[\"Lookup Threat Intelligence\"].json ?? {};\nconst asset = $node[\"Load Asset Context\"].json ?? {};\nconst risk = $node[\"Evaluate Risk\"].json ?? {};\nconst ingress = $node[\"Verify Signed Ingress\"].json ?? {};\nconst complete = Boolean(ingress.verified === true && feature.incident && prediction.model_version && ti.policy_revision && asset.context_revision && risk.policy_revision);\nconst reviewRequired = !complete || feature.quality_status !== 'COMPLETE' || prediction.automation_eligible !== true || prediction.review_required !== false || ti.status === 'UNKNOWN' || ti.status === 'MALICIOUS' || asset.status === 'UNKNOWN' || asset.review_required === true || risk.review_required === true;\nreturn [{ json: { route: reviewRequired ? 'review' : 'shadow', incident_id: feature.incident?.incident_id ?? `UNAVAILABLE-${ingress.source_event_id ?? 'EVENT'}`, source_event_id: ingress.source_event_id ?? 'unavailable', source_payload_sha256: ingress.payload_sha256, feature_schema_version: feature.feature_schema_version ?? null, feature_quality: feature.quality_status ?? 'PARTIAL', observation_context: { status: feature.incident?.context_status ?? 'MISSING', revision: feature.incident?.context_revision ?? null, quality: feature.incident?.observation_quality ?? 'PARTIAL' }, review_reasons: [...new Set([...(feature.incident?.review_reasons ?? []), ...(prediction.review_reasons ?? [])])], evidence_quality: feature.evidence_quality ?? 0, prediction: complete ? prediction : null, ti_context: complete ? ti : null, asset_context: complete ? asset : null, risk: risk.policy_revision ? risk : null, automation_state: 'SHADOW', selected_playbook: 'persist_incident_queue_review', strong_action_allowed: false, review_required: reviewRequired, rationale: reviewRequired ? ['A safety or completeness gate requires analyst review.', 'No strong response action was executed.'] : ['All required context and model gates passed.', 'SHADOW guard prohibits strong actions.'], audit: { workflow_revision: 'week2-shadow-v4-context', outcome: 'PERSIST_PENDING' } } }];"
+        "jsCode": "const state = $node[\"Extract Incident Features\"].json ?? {};\nconst feature = state.feature ?? {};\nconst prediction = $node[\"Call AI Model\"].json ?? {};\nconst ti = $node[\"Lookup Threat Intelligence\"].json ?? {};\nconst asset = $node[\"Load Asset Context\"].json ?? {};\nconst risk = $node[\"Evaluate Risk\"].json ?? {};\nconst ingress = $node[\"Verify Signed Ingress\"].json ?? {};\nconst complete = Boolean(ingress.verified === true && feature.incident && prediction.model_version && ti.policy_revision && asset.context_revision && risk.policy_revision);\nconst reviewRequired = !complete || feature.quality_status !== 'COMPLETE' || prediction.automation_eligible !== true || prediction.review_required !== false || ti.status === 'UNKNOWN' || ti.status === 'MALICIOUS' || asset.status === 'UNKNOWN' || asset.review_required === true || risk.review_required === true;\nreturn [{ json: { route: reviewRequired ? 'review' : 'shadow', incident_id: feature.incident?.incident_id ?? `UNAVAILABLE-${ingress.source_event_id ?? 'EVENT'}`, source_event_id: ingress.source_event_id ?? 'unavailable', source_payload_sha256: ingress.payload_sha256, snapshot_revision: state.snapshot_revision ?? null, feature_schema_version: feature.feature_schema_version ?? null, feature_quality: feature.quality_status ?? 'PARTIAL', observation_context: { status: feature.incident?.context_status ?? 'MISSING', revision: feature.incident?.context_revision ?? null, quality: feature.incident?.observation_quality ?? 'PARTIAL' }, review_reasons: [...new Set([...(feature.incident?.review_reasons ?? []), ...(prediction.review_reasons ?? [])])], evidence_quality: feature.evidence_quality ?? 0, prediction: complete ? prediction : null, ti_context: complete ? ti : null, asset_context: complete ? asset : null, risk: risk.policy_revision ? risk : null, automation_state: 'SHADOW', selected_playbook: 'persist_incident_queue_review', strong_action_allowed: false, review_required: reviewRequired, rationale: reviewRequired ? ['A safety or completeness gate requires analyst review.', 'No strong response action was executed.'] : ['All required context and model gates passed.', 'SHADOW guard prohibits strong actions.'], audit: { workflow_revision: 'week2-shadow-v4-context', outcome: 'PERSIST_PENDING' } } }];"
       },
       "id": "5dc84d8d-3372-4697-b46d-d51e66adee0d",
       "name": "Enforce Shadow Gate",
@@ -271,7 +271,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const decision = $json;\nreturn [{ json: { incident_id: decision.incident_id, source_event_id: decision.source_event_id, source_payload_sha256: decision.source_payload_sha256, route: 'shadow', review_required: false, notification: `[SHADOW] Incident ${decision.incident_id}: risk ${decision.risk?.display ?? 'N/A'}/10, class ${decision.prediction?.predicted_class ?? 'unknown'}.`, decision } }];"
+        "jsCode": "const decision = $json;\nreturn [{ json: { incident_id: decision.incident_id, source_event_id: decision.source_event_id, source_payload_sha256: decision.source_payload_sha256, snapshot_revision: decision.snapshot_revision, route: 'shadow', review_required: false, notification: `[SHADOW] Incident ${decision.incident_id}: risk ${decision.risk?.display ?? 'N/A'}/10, class ${decision.prediction?.predicted_class ?? 'unknown'}.`, decision } }];"
       },
       "id": "9d40d1ef-217f-41fb-aa4d-bcc082ae21c6",
       "name": "Build Shadow Decision",
@@ -284,7 +284,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const decision = $json;\nreturn [{ json: { incident_id: decision.incident_id, source_event_id: decision.source_event_id, source_payload_sha256: decision.source_payload_sha256, route: 'review', review_required: true, notification: `[REVIEW] Incident ${decision.incident_id}: manual review required; no strong response action was executed.`, decision } }];"
+        "jsCode": "const decision = $json;\nreturn [{ json: { incident_id: decision.incident_id, source_event_id: decision.source_event_id, source_payload_sha256: decision.source_payload_sha256, snapshot_revision: decision.snapshot_revision, route: 'review', review_required: true, notification: `[REVIEW] Incident ${decision.incident_id}: manual review required; no strong response action was executed.`, decision } }];"
       },
       "id": "75711b39-57d0-49ae-9aa9-4896a1ac9602",
       "name": "Build Review Decision",
@@ -495,6 +495,87 @@
         1150,
         -440
       ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "feature-snapshot-available-v38-condition",
+              "leftValue": "={{ Boolean($json.feature?.incident && Number.isSafeInteger($json.snapshot_revision) && $json.snapshot_revision > 0) }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "feature-snapshot-available-v38",
+      "name": "Feature Snapshot Available?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -180,
+        -420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ingress = $node[\"Verify Signed Ingress\"].json ?? {};\nconst raw = $node[\"Wazuh Alert Webhook v2\"].json.body ?? {};\nconst featureError = $node[\"Extract Incident Features\"].json ?? {};\nreturn [{ json: { incident_id: `UNAVAILABLE-${ingress.source_event_id}`, source_event_id: ingress.source_event_id, source_payload_sha256: ingress.payload_sha256, processing_status: 'retryable', route: 'review', review_required: true, notification: '[RETRYABLE] Feature extraction unavailable; event remains pending.', decision: { raw_payload: raw, feature_error: featureError, automation_state: 'SHADOW', strong_action_allowed: false, review_required: true } } }];"
+      },
+      "id": "build-retryable-feature-failure-v38",
+      "name": "Build Retryable Feature Failure",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        20,
+        -600
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://api:8000/incidents/record",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "persist-retryable-feature-failure-v38",
+      "name": "Persist Retryable Feature Failure",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        200,
+        -600
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const saved = $json;\nconst durable = saved.disposition === 'retryable' && saved.notification_status === 'RETRYABLE';\nreturn [{ json: { response_code: 503, status: durable ? 'feature_retryable' : 'persistence_failed', retryable: true, source_event_id: saved.source_event_id ?? null, review_required: true, automation_state: 'SHADOW', strong_action_allowed: false, message: durable ? 'Raw event and feature error retained for retry; resend with a fresh signed nonce.' : 'Feature failure could not be retained; resend with a fresh signed nonce.' } }];"
+      },
+      "id": "build-feature-retry-response-v38",
+      "name": "Build Feature Retry Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        -600
+      ]
     }
   ],
   "connections": {
@@ -571,7 +652,7 @@
       "main": [
         [
           {
-            "node": "Call AI Model",
+            "node": "Feature Snapshot Available?",
             "type": "main",
             "index": 0
           }
@@ -780,6 +861,57 @@
         [
           {
             "node": "Dispatch Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Feature Snapshot Available?": {
+      "main": [
+        [
+          {
+            "node": "Call AI Model",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Retryable Feature Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Retryable Feature Failure": {
+      "main": [
+        [
+          {
+            "node": "Persist Retryable Feature Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Retryable Feature Failure": {
+      "main": [
+        [
+          {
+            "node": "Build Feature Retry Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Feature Retry Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
             "type": "main",
             "index": 0
           }
