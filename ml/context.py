@@ -1,7 +1,9 @@
 """Independent, immutable-as-of history; no scenario labels or inferred approval."""
 from __future__ import annotations
 
+import hashlib
 import ipaddress
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -276,6 +278,59 @@ def context_observation_as_of(events: list[dict], *, fallback: datetime) -> date
     """
     return max((at for event in events if (at := event_time(event)) is not None),
                default=fallback)
+
+
+def verify_baseline_capture(
+    snapshot: BaselineSnapshot,
+    capture: bytes,
+    *,
+    windows_agent_name: str = "WIN11-TARGET",
+) -> None:
+    if hashlib.sha256(capture).hexdigest() != snapshot.source_capture_sha256:
+        raise ValueError("enrollment capture digest differs from the baseline")
+    events = [json.loads(s) for s in capture.decode("utf-8").splitlines() if s.strip()]
+    rebuilt = build_baseline(
+        events,
+        revision=snapshot.revision,
+        captured_at=snapshot.captured_at,
+        valid_until=snapshot.valid_until,
+        source_capture_sha256=snapshot.source_capture_sha256,
+        windows_agent_name=windows_agent_name,
+    )
+    suffixes = [item.destination for item in snapshot.destinations if item.match == "dns_suffix"]
+    if suffixes:
+        rebuilt = with_dns_suffix_history(rebuilt, suffixes)
+    if rebuilt.model_dump(mode="json") != snapshot.model_dump(mode="json"):
+        raise ValueError("raw enrollment capture does not reproduce the frozen baseline history")
+
+
+def verify_lab_enrollment(snapshot: BaselineSnapshot, capture: bytes) -> None:
+    """Check actual prior observations for every account/route used by the lab profiles."""
+    from ml.execution_profile import LAB_ACCOUNTS
+
+    local, remote = set(), set()
+    for line in capture.decode("utf-8").splitlines():
+        if not line.strip():
+            continue
+        event = json.loads(line)
+        if (event.get("agent") or {}).get("name") != "WIN11-TARGET":
+            continue
+        event_id, _, fields = windows_fields(event)
+        if event_id == "4624":
+            user = account_user(fields)
+            if str(fields.get("logonType")) == "2":
+                local.add(user)
+            elif str(fields.get("logonType")) == "3" and account_source(fields) == "10.40.0.10":
+                remote.add(user)
+    if not local >= LAB_ACCOUNTS or not remote >= LAB_ACCOUNTS:
+        raise ValueError("enroll all three disposable accounts with both local and Kali success")
+    if not any(x.destination == "10.40.0.10" and x.port == 8081 for x in snapshot.destinations):
+        raise ValueError("enrollment lacks the shared HTTP service")
+    if not any(
+        x.destination == "datn.test" and x.port == 53 and x.match == "dns_suffix"
+        for x in snapshot.destinations
+    ):
+        raise ValueError("enrollment lacks the declared datn.test DNS inventory")
 
 
 def context_from_events(

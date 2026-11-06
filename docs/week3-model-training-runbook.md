@@ -6,7 +6,7 @@ This pipeline benchmarks Logistic Regression, Random Forest, and XGBoost indepen
 for `account` and `c2`. It selects candidates on grouped inner cross-validation of TRAIN,
 then reports independent VALIDATION diagnostics and selects the final threshold there.
 The precision target is at least 0.90. Grouped bootstrap uncertainty is estimated only
-with at least three independent validation scenarios per label; otherwise intervals
+with at least three independent validation cohorts per label; otherwise intervals
 are null, `uncertainty.status` is `INSUFFICIENT_INDEPENDENT_GROUPS`, and the package is
 ineligible for automation. Accuracy is not a selection metric.
 
@@ -16,10 +16,10 @@ metrics must never be presented as model quality.
 ## 1. Verify the environment
 
 Run in the Ubuntu VM from the checked-out repository (example
-`$HOME/datn-ai-soar`):
+`$HOME/datn-ai-soar-v4`):
 
 ```bash
-cd "$HOME/datn-ai-soar"
+cd "$HOME/datn-ai-soar-v4"
 python3 --version
 .venv-ml/bin/python -c "import sklearn, xgboost; print(sklearn.__version__, xgboost.__version__)"
 git status --short
@@ -37,7 +37,7 @@ bash scripts/bootstrap_ml.sh
 ## 2. Run the non-scientific pipeline smoke test
 
 ```bash
-cd "$HOME/datn-ai-soar"
+cd "$HOME/datn-ai-soar-v4"
 mkdir -p evidence
 set -o pipefail
 bash scripts/verify_week3_model.sh | tee evidence/week3-model-smoke.log
@@ -53,10 +53,13 @@ Artifacts are written under `artifacts/runtime/` and are ignored by Git.
 
 ## 3. Collect and review real scenario data
 
-G7 remains closed until the owner approves the cohort/challenge design, source release
-and independent collection acceptance. Pilot/synthetic evidence does not authorize
-official collection or automation. Use the approved cohort grouping and frozen split
-contract; the current `scenario_id` default is pilot configuration.
+The collection candidate implements the paired design and defaults to cohort_id.
+Follow [the four-VM runbook](scenario-collection-runbook.md) for source pinning,
+enrollment, four new pilots, preflight replay, real backup restore and per-lab acceptance.
+Only that evidence-bound acceptance opens official collection. Synthetic/pilot runs
+never count toward the40–48quota. The target is controlled lab activity profiles,
+not unobservable intent. Five cohorts per family leave one validation cohort per label,
+so uncertainty remains insufficient and automation ineligible.
 
 Follow [week3-data-contract.md](week3-data-contract.md). Store each execution under
 `data/raw/<run_id>/`. Review manifests and incident lines before building partitions.
@@ -89,7 +92,7 @@ the approved Week 6 gate. Check only manifest integrity/counts; do not print tes
 
 Rebuild partitions using the current builder before the first training run after this
 upgrade. `dataset-manifest-v2` binds each partition's SHA-256 and row count, the active
-feature schema, collection-contract hash, builder commit and training configuration.
+feature schema, collection-contract hash, builder commit, training configuration and predeclared collection-design hash.
 The trainer verifies TRAIN and VALIDATION against these bindings before fitting; it
 does not open the locked-test file. Older manifests or edited partition files are
 rejected. Correct the source/build process and rebuild; do not edit hashes by hand.

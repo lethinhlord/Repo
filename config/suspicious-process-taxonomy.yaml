@@ -1,4 +1,6 @@
 revision: datn-process-taxonomy-v1
+# The collection design shares these markers across both labels. A match is
+# observable process context, never a ground-truth label or intent verdict.
 rules:
   - name: powershell-http-beacon
     image_suffix: powershell.exe

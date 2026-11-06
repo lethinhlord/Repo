@@ -1,164 +1,217 @@
-version: scenario-catalog-v1
+version: "scenario-catalog-v1"
 lab_only: true
 scenarios:
-  - scenario_id: ACCOUNT-BENIGN-NORMAL-LOGON
-    family: account
-    label: benign
-    expected_behavior: One successful interactive logon by the dedicated benign lab account.
+  -
+    scenario_id: "ACCOUNT-BENIGN-TWO-TYPOS-THEN-SUCCESS"
+    family: "account"
+    label: "benign"
+    purpose: "trainable"
+    cohort_id: "ACCOUNT-PAIR-01"
+    expected_behavior: "Authorized recovery/maintenance: 2 failed and 1 successful console authentications; exact account/order/cadence are frozen in execution_profile."
+    execution_profile:
+      transport: "console"
+      accounts_csv: "datn_lab01"
+      attempts_csv: "datn_lab01:fail,datn_lab01:fail,datn_lab01:success"
+      base_intervals_seconds: "20,20"
+      expected_action_count: 3
     attribution:
-      account_names: [datn_benign]
-    quality_gates:
-      min_account_failures: 0
-      max_account_failures: 0
-      min_account_successes: 1
-      max_account_successes: 1
-      require_success_after_failure: false
-    preconditions:
-      - The local account datn_benign exists and is enabled on WIN11-TARGET.
-      - Security log auditing for Logon/Logoff is enabled.
-    execution_steps:
-      - Sign out of datn_benign and sign in once with the correct password at the VM console.
-    expected_observables:
-      - Windows Security event 4624 for datn_benign inside the run window.
-    cleanup_steps:
-      - Sign out and return WIN11-TARGET to the clean lab desktop.
-
-  - scenario_id: ACCOUNT-BENIGN-TYPO-THEN-SUCCESS
-    family: account
-    label: benign
-    expected_behavior: One accidental password typo followed by a successful interactive logon.
-    attribution:
-      account_names: [datn_benign]
-    quality_gates:
-      min_account_failures: 1
-      max_account_failures: 1
-      min_account_successes: 1
-      max_account_successes: 1
-      require_success_after_failure: true
-    preconditions:
-      - The local account datn_benign exists and is enabled on WIN11-TARGET.
-      - Security log auditing for Logon/Logoff is enabled.
-    execution_steps:
-      - Enter one incorrect password for datn_benign, then enter the correct password once.
-    expected_observables:
-      - One event 4625 followed by event 4624 for datn_benign.
-    cleanup_steps:
-      - Sign out and return WIN11-TARGET to the clean lab desktop.
-
-  - scenario_id: ACCOUNT-BENIGN-TWO-TYPOS-THEN-SUCCESS
-    family: account
-    label: benign
-    expected_behavior: Two accidental password typos followed by a successful interactive logon.
-    attribution:
-      account_names: [datn_benign]
+      account_names:
+        - "datn_lab01"
+      logon_types:
+        - 2
     quality_gates:
       min_account_failures: 2
       max_account_failures: 2
       min_account_successes: 1
       max_account_successes: 1
       require_success_after_failure: true
+      require_all_accounts_observed: false
     preconditions:
-      - The dedicated lab target has account lockout disabled for the collection window.
-      - Security log auditing for Logon/Logoff is enabled.
+      - "Use only disposable datn_lab01/datn_lab02/datn_lab03 accounts on WIN11-TARGET; same accounts serve both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member. Restore the same baseline/context condition before each repetition."
+      - "Record the lab lockout policy and verify sufficient attempts are possible; never change production authentication policy."
     execution_steps:
-      - Enter two incorrect passwords for datn_benign, then enter the correct password once.
+      - "Execute the frozen attempts_csv in order, using the frozen intervals between action starts; incorrect passwords must be known-wrong lab values."
+      - "For SMB, close each connection/session before the next action so cached credentials do not suppress events. For console successes, sign out before the next action."
+      - "Record actual receipts; any extra/missing authentication event or missed timing deadline invalidates the run."
     expected_observables:
-      - Two events 4625 followed by event 4624 for datn_benign.
+      - "Exact 4624/4625 counts and declared accounts/logon type; observed feature vector must agree with full-bucket online replay."
     cleanup_steps:
-      - Sign out and return WIN11-TARGET to the clean lab desktop.
-
-  - scenario_id: ACCOUNT-BENIGN-RUNAS
-    family: account
-    label: benign
-    expected_behavior: A legitimate secondary logon starts whoami under the benign lab account.
+      - "Close lab sessions, verify accounts are unlocked and restore the documented baseline before the next run."
+  -
+    scenario_id: "ACCOUNT-MALICIOUS-BURST-THEN-SUCCESS"
+    family: "account"
+    label: "malicious"
+    purpose: "trainable"
+    cohort_id: "ACCOUNT-PAIR-01"
+    expected_behavior: "Controlled abusive authentication profile: 8 failed and 1 successful console authentications; exact account/order/cadence are frozen in execution_profile."
+    execution_profile:
+      transport: "console"
+      accounts_csv: "datn_lab01"
+      attempts_csv: "datn_lab01:fail,datn_lab01:fail,datn_lab01:fail,datn_lab01:fail,datn_lab01:fail,datn_lab01:fail,datn_lab01:fail,datn_lab01:fail,datn_lab01:success"
+      base_intervals_seconds: "2,2,2,2,2,2,2,2"
+      expected_action_count: 9
     attribution:
-      account_names: [datn_benign]
+      account_names:
+        - "datn_lab01"
+      logon_types:
+        - 2
     quality_gates:
-      min_account_failures: 0
-      max_account_failures: 0
-      min_account_successes: 1
-      max_account_successes: 1
-      require_success_after_failure: false
-    preconditions:
-      - The local account datn_benign exists and its password is known to the operator.
-      - Security log auditing for Logon/Logoff is enabled.
-    execution_steps:
-      - Run runas /user:.\datn_benign "cmd /c whoami" and enter the correct lab password.
-    expected_observables:
-      - A successful Security logon event 4624 for datn_benign.
-    cleanup_steps:
-      - Close the spawned command window.
-
-  - scenario_id: ACCOUNT-BENIGN-THREE-TYPOS-THEN-SUCCESS
-    family: account
-    label: benign
-    expected_behavior: Three accidental password typos followed by a successful interactive logon.
-    attribution:
-      account_names: [datn_benign]
-    quality_gates:
-      min_account_failures: 3
-      max_account_failures: 3
+      min_account_failures: 8
+      max_account_failures: 8
       min_account_successes: 1
       max_account_successes: 1
       require_success_after_failure: true
+      require_all_accounts_observed: false
     preconditions:
-      - The dedicated lab target has account lockout disabled for the collection window.
-      - Security log auditing for Logon/Logoff is enabled.
+      - "Use only disposable datn_lab01/datn_lab02/datn_lab03 accounts on WIN11-TARGET; same accounts serve both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member. Restore the same baseline/context condition before each repetition."
+      - "Record the lab lockout policy and verify sufficient attempts are possible; never change production authentication policy."
     execution_steps:
-      - Enter three incorrect passwords for datn_benign, then enter the correct password once.
+      - "Execute the frozen attempts_csv in order, using the frozen intervals between action starts; incorrect passwords must be known-wrong lab values."
+      - "For SMB, close each connection/session before the next action so cached credentials do not suppress events. For console successes, sign out before the next action."
+      - "Record actual receipts; any extra/missing authentication event or missed timing deadline invalidates the run."
     expected_observables:
-      - Three events 4625 followed by event 4624 for datn_benign.
+      - "Exact 4624/4625 counts and declared accounts/logon type; observed feature vector must agree with full-bucket online replay."
     cleanup_steps:
-      - Sign out and return WIN11-TARGET to the clean lab desktop.
-
-  - scenario_id: ACCOUNT-MALICIOUS-REPEATED-FAILURES-6
-    family: account
-    label: malicious
-    expected_behavior: Six controlled invalid password attempts against one decoy lab account.
+      - "Close lab sessions, verify accounts are unlocked and restore the documented baseline before the next run."
+  -
+    scenario_id: "ACCOUNT-BENIGN-REMOTE-SESSIONS"
+    family: "account"
+    label: "benign"
+    purpose: "trainable"
+    cohort_id: "ACCOUNT-PAIR-02"
+    expected_behavior: "Authorized recovery/maintenance: 0 failed and 6 successful SMB authentications; exact account/order/cadence are frozen in execution_profile."
+    execution_profile:
+      transport: "smb"
+      accounts_csv: "datn_lab01"
+      attempts_csv: "datn_lab01:success,datn_lab01:success,datn_lab01:success,datn_lab01:success,datn_lab01:success,datn_lab01:success"
+      base_intervals_seconds: "2,3,7,11,17"
+      expected_action_count: 6
     attribution:
-      account_names: [datn_attack]
+      account_names:
+        - "datn_lab01"
+      logon_types:
+        - 3
+      source_ips:
+        - "10.40.0.10"
+    quality_gates:
+      min_account_failures: 0
+      max_account_failures: 0
+      min_account_successes: 6
+      max_account_successes: 6
+      require_success_after_failure: false
+      require_all_accounts_observed: false
+    preconditions:
+      - "Use only disposable datn_lab01/datn_lab02/datn_lab03 accounts on WIN11-TARGET; same accounts serve both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member. Restore the same baseline/context condition before each repetition."
+      - "Record the lab lockout policy and verify sufficient attempts are possible; never change production authentication policy."
+    execution_steps:
+      - "Execute the frozen attempts_csv in order, using the frozen intervals between action starts; incorrect passwords must be known-wrong lab values."
+      - "For SMB, close each connection/session before the next action so cached credentials do not suppress events. For console successes, sign out before the next action."
+      - "Record actual receipts; any extra/missing authentication event or missed timing deadline invalidates the run."
+    expected_observables:
+      - "Exact 4624/4625 counts and declared accounts/logon type; observed feature vector must agree with full-bucket online replay."
+    cleanup_steps:
+      - "Close lab sessions, verify accounts are unlocked and restore the documented baseline before the next run."
+  -
+    scenario_id: "ACCOUNT-MALICIOUS-REPEATED-FAILURES-6"
+    family: "account"
+    label: "malicious"
+    purpose: "trainable"
+    cohort_id: "ACCOUNT-PAIR-02"
+    expected_behavior: "Controlled abusive authentication profile: 6 failed and 0 successful SMB authentications; exact account/order/cadence are frozen in execution_profile."
+    execution_profile:
+      transport: "smb"
+      accounts_csv: "datn_lab01"
+      attempts_csv: "datn_lab01:fail,datn_lab01:fail,datn_lab01:fail,datn_lab01:fail,datn_lab01:fail,datn_lab01:fail"
+      base_intervals_seconds: "2,3,7,11,17"
+      expected_action_count: 6
+    attribution:
+      account_names:
+        - "datn_lab01"
+      logon_types:
+        - 3
+      source_ips:
+        - "10.40.0.10"
     quality_gates:
       min_account_failures: 6
       max_account_failures: 6
       min_account_successes: 0
       max_account_successes: 0
+      require_success_after_failure: false
+      require_all_accounts_observed: false
     preconditions:
-      - The disposable local account datn_attack exists.
-      - The dedicated lab target has account lockout disabled for the collection window.
+      - "Use only disposable datn_lab01/datn_lab02/datn_lab03 accounts on WIN11-TARGET; same accounts serve both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member. Restore the same baseline/context condition before each repetition."
+      - "Record the lab lockout policy and verify sufficient attempts are possible; never change production authentication policy."
     execution_steps:
-      - At the VM console, submit six known-wrong passwords for datn_attack and do not enter a correct password.
+      - "Execute the frozen attempts_csv in order, using the frozen intervals between action starts; incorrect passwords must be known-wrong lab values."
+      - "For SMB, close each connection/session before the next action so cached credentials do not suppress events. For console successes, sign out before the next action."
+      - "Record actual receipts; any extra/missing authentication event or missed timing deadline invalidates the run."
     expected_observables:
-      - Six Security events 4625 and no later 4624 for datn_attack in the run window.
+      - "Exact 4624/4625 counts and declared accounts/logon type; observed feature vector must agree with full-bucket online replay."
     cleanup_steps:
-      - Stop attempts and verify the account is not unintentionally locked.
-
-  - scenario_id: ACCOUNT-MALICIOUS-REPEATED-FAILURES-10
-    family: account
-    label: malicious
-    expected_behavior: Ten controlled invalid password attempts against one decoy lab account.
+      - "Close lab sessions, verify accounts are unlocked and restore the documented baseline before the next run."
+  -
+    scenario_id: "ACCOUNT-BENIGN-MULTIACCOUNT-MAINTENANCE"
+    family: "account"
+    label: "benign"
+    purpose: "trainable"
+    cohort_id: "ACCOUNT-PAIR-03"
+    expected_behavior: "Authorized recovery/maintenance: 0 failed and 3 successful console authentications; exact account/order/cadence are frozen in execution_profile."
+    execution_profile:
+      transport: "console"
+      accounts_csv: "datn_lab01,datn_lab02,datn_lab03"
+      attempts_csv: "datn_lab01:success,datn_lab02:success,datn_lab03:success"
+      base_intervals_seconds: "15,15"
+      expected_action_count: 3
     attribution:
-      account_names: [datn_attack]
+      account_names:
+        - "datn_lab01"
+        - "datn_lab02"
+        - "datn_lab03"
+      logon_types:
+        - 2
     quality_gates:
-      min_account_failures: 10
-      max_account_failures: 10
-      min_account_successes: 0
-      max_account_successes: 0
+      min_account_failures: 0
+      max_account_failures: 0
+      min_account_successes: 3
+      max_account_successes: 3
+      require_success_after_failure: false
+      require_all_accounts_observed: true
     preconditions:
-      - The disposable local account datn_attack exists.
-      - The dedicated lab target has account lockout disabled for the collection window.
+      - "Use only disposable datn_lab01/datn_lab02/datn_lab03 accounts on WIN11-TARGET; same accounts serve both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member. Restore the same baseline/context condition before each repetition."
+      - "Record the lab lockout policy and verify sufficient attempts are possible; never change production authentication policy."
     execution_steps:
-      - At the VM console, submit ten known-wrong passwords for datn_attack and do not enter a correct password.
+      - "Execute the frozen attempts_csv in order, using the frozen intervals between action starts; incorrect passwords must be known-wrong lab values."
+      - "For SMB, close each connection/session before the next action so cached credentials do not suppress events. For console successes, sign out before the next action."
+      - "Record actual receipts; any extra/missing authentication event or missed timing deadline invalidates the run."
     expected_observables:
-      - Ten Security events 4625 and no later 4624 for datn_attack in the run window.
+      - "Exact 4624/4625 counts and declared accounts/logon type; observed feature vector must agree with full-bucket online replay."
     cleanup_steps:
-      - Verify datn_attack is unlocked; keep the documented lab collection policy until the dataset closes.
-
-  - scenario_id: ACCOUNT-MALICIOUS-PASSWORD-SPRAY
-    family: account
-    label: malicious
-    expected_behavior: A controlled password-spray simulation tests three decoy accounts and records one lab credential compromise after the failed spray attempts.
+      - "Close lab sessions, verify accounts are unlocked and restore the documented baseline before the next run."
+  -
+    scenario_id: "ACCOUNT-MALICIOUS-PASSWORD-SPRAY"
+    family: "account"
+    label: "malicious"
+    purpose: "trainable"
+    cohort_id: "ACCOUNT-PAIR-03"
+    expected_behavior: "Controlled abusive authentication profile: 3 failed and 1 successful console authentications; exact account/order/cadence are frozen in execution_profile."
+    execution_profile:
+      transport: "console"
+      accounts_csv: "datn_lab01,datn_lab02,datn_lab03"
+      attempts_csv: "datn_lab01:fail,datn_lab02:fail,datn_lab03:fail,datn_lab03:success"
+      base_intervals_seconds: "4,4,4"
+      expected_action_count: 4
     attribution:
-      account_names: [datn_spray01, datn_spray02, datn_spray03]
+      account_names:
+        - "datn_lab01"
+        - "datn_lab02"
+        - "datn_lab03"
+      logon_types:
+        - 2
     quality_gates:
       min_account_failures: 3
       max_account_failures: 3
@@ -167,23 +220,617 @@ scenarios:
       require_success_after_failure: true
       require_all_accounts_observed: true
     preconditions:
-      - Three disposable local decoy accounts exist and contain no real data.
-      - The test remains inside the isolated Windows lab VM.
+      - "Use only disposable datn_lab01/datn_lab02/datn_lab03 accounts on WIN11-TARGET; same accounts serve both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member. Restore the same baseline/context condition before each repetition."
+      - "Record the lab lockout policy and verify sufficient attempts are possible; never change production authentication policy."
     execution_steps:
-      - Submit one known-wrong interactive password for each of datn_spray01, datn_spray02 and datn_spray03, then perform one successful interactive logon to datn_spray03 using its isolated lab password.
+      - "Execute the frozen attempts_csv in order, using the frozen intervals between action starts; incorrect passwords must be known-wrong lab values."
+      - "For SMB, close each connection/session before the next action so cached credentials do not suppress events. For console successes, sign out before the next action."
+      - "Record actual receipts; any extra/missing authentication event or missed timing deadline invalidates the run."
     expected_observables:
-      - One Security event 4625 for each declared account followed by one event 4624 for datn_spray03.
+      - "Exact 4624/4625 counts and declared accounts/logon type; observed feature vector must agree with full-bucket online replay."
     cleanup_steps:
-      - Verify no decoy account is locked and record the actual event count.
-
-  - scenario_id: ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS
-    family: account
-    label: malicious
-    expected_behavior: One controlled invalid attempt followed by one successful logon to simulate a low-noise account compromise.
+      - "Close lab sessions, verify accounts are unlocked and restore the documented baseline before the next run."
+  -
+    scenario_id: "ACCOUNT-BENIGN-STALE-CREDENTIAL"
+    family: "account"
+    label: "benign"
+    purpose: "trainable"
+    cohort_id: "ACCOUNT-PAIR-04"
+    expected_behavior: "Authorized recovery/maintenance: 6 failed and 0 successful SMB authentications; exact account/order/cadence are frozen in execution_profile."
+    execution_profile:
+      transport: "smb"
+      accounts_csv: "datn_lab01"
+      attempts_csv: "datn_lab01:fail,datn_lab01:fail,datn_lab01:fail,datn_lab01:fail,datn_lab01:fail,datn_lab01:fail"
+      base_intervals_seconds: "30,30,30,30,30"
+      expected_action_count: 6
     attribution:
-      account_names: [datn_attack]
-      source_ips: [10.40.0.10]
-      logon_types: [3]
+      account_names:
+        - "datn_lab01"
+      logon_types:
+        - 3
+      source_ips:
+        - "10.40.0.10"
+    quality_gates:
+      min_account_failures: 6
+      max_account_failures: 6
+      min_account_successes: 0
+      max_account_successes: 0
+      require_success_after_failure: false
+      require_all_accounts_observed: false
+    preconditions:
+      - "Use only disposable datn_lab01/datn_lab02/datn_lab03 accounts on WIN11-TARGET; same accounts serve both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member. Restore the same baseline/context condition before each repetition."
+      - "Record the lab lockout policy and verify sufficient attempts are possible; never change production authentication policy."
+    execution_steps:
+      - "Execute the frozen attempts_csv in order, using the frozen intervals between action starts; incorrect passwords must be known-wrong lab values."
+      - "For SMB, close each connection/session before the next action so cached credentials do not suppress events. For console successes, sign out before the next action."
+      - "Record actual receipts; any extra/missing authentication event or missed timing deadline invalidates the run."
+    expected_observables:
+      - "Exact 4624/4625 counts and declared accounts/logon type; observed feature vector must agree with full-bucket online replay."
+    cleanup_steps:
+      - "Close lab sessions, verify accounts are unlocked and restore the documented baseline before the next run."
+  -
+    scenario_id: "ACCOUNT-MALICIOUS-RAPID-GUESSING"
+    family: "account"
+    label: "malicious"
+    purpose: "trainable"
+    cohort_id: "ACCOUNT-PAIR-04"
+    expected_behavior: "Controlled abusive authentication profile: 6 failed and 0 successful SMB authentications; exact account/order/cadence are frozen in execution_profile."
+    execution_profile:
+      transport: "smb"
+      accounts_csv: "datn_lab01"
+      attempts_csv: "datn_lab01:fail,datn_lab01:fail,datn_lab01:fail,datn_lab01:fail,datn_lab01:fail,datn_lab01:fail"
+      base_intervals_seconds: "2,2,2,2,2"
+      expected_action_count: 6
+    attribution:
+      account_names:
+        - "datn_lab01"
+      logon_types:
+        - 3
+      source_ips:
+        - "10.40.0.10"
+    quality_gates:
+      min_account_failures: 6
+      max_account_failures: 6
+      min_account_successes: 0
+      max_account_successes: 0
+      require_success_after_failure: false
+      require_all_accounts_observed: false
+    preconditions:
+      - "Use only disposable datn_lab01/datn_lab02/datn_lab03 accounts on WIN11-TARGET; same accounts serve both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member. Restore the same baseline/context condition before each repetition."
+      - "Record the lab lockout policy and verify sufficient attempts are possible; never change production authentication policy."
+    execution_steps:
+      - "Execute the frozen attempts_csv in order, using the frozen intervals between action starts; incorrect passwords must be known-wrong lab values."
+      - "For SMB, close each connection/session before the next action so cached credentials do not suppress events. For console successes, sign out before the next action."
+      - "Record actual receipts; any extra/missing authentication event or missed timing deadline invalidates the run."
+    expected_observables:
+      - "Exact 4624/4625 counts and declared accounts/logon type; observed feature vector must agree with full-bucket online replay."
+    cleanup_steps:
+      - "Close lab sessions, verify accounts are unlocked and restore the documented baseline before the next run."
+  -
+    scenario_id: "ACCOUNT-BENIGN-MULTIACCOUNT-RECOVERY"
+    family: "account"
+    label: "benign"
+    purpose: "trainable"
+    cohort_id: "ACCOUNT-PAIR-05"
+    expected_behavior: "Authorized recovery/maintenance: 3 failed and 3 successful SMB authentications; exact account/order/cadence are frozen in execution_profile."
+    execution_profile:
+      transport: "smb"
+      accounts_csv: "datn_lab01,datn_lab02,datn_lab03"
+      attempts_csv: "datn_lab01:fail,datn_lab01:success,datn_lab02:fail,datn_lab02:success,datn_lab03:fail,datn_lab03:success"
+      base_intervals_seconds: "8,8,8,8,8"
+      expected_action_count: 6
+    attribution:
+      account_names:
+        - "datn_lab01"
+        - "datn_lab02"
+        - "datn_lab03"
+      logon_types:
+        - 3
+      source_ips:
+        - "10.40.0.10"
+    quality_gates:
+      min_account_failures: 3
+      max_account_failures: 3
+      min_account_successes: 3
+      max_account_successes: 3
+      require_success_after_failure: true
+      require_all_accounts_observed: true
+    preconditions:
+      - "Use only disposable datn_lab01/datn_lab02/datn_lab03 accounts on WIN11-TARGET; same accounts serve both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member. Restore the same baseline/context condition before each repetition."
+      - "Record the lab lockout policy and verify sufficient attempts are possible; never change production authentication policy."
+    execution_steps:
+      - "Execute the frozen attempts_csv in order, using the frozen intervals between action starts; incorrect passwords must be known-wrong lab values."
+      - "For SMB, close each connection/session before the next action so cached credentials do not suppress events. For console successes, sign out before the next action."
+      - "Record actual receipts; any extra/missing authentication event or missed timing deadline invalidates the run."
+    expected_observables:
+      - "Exact 4624/4625 counts and declared accounts/logon type; observed feature vector must agree with full-bucket online replay."
+    cleanup_steps:
+      - "Close lab sessions, verify accounts are unlocked and restore the documented baseline before the next run."
+  -
+    scenario_id: "ACCOUNT-MALICIOUS-MULTIACCOUNT-GUESSING"
+    family: "account"
+    label: "malicious"
+    purpose: "trainable"
+    cohort_id: "ACCOUNT-PAIR-05"
+    expected_behavior: "Controlled abusive authentication profile: 9 failed and 3 successful SMB authentications; exact account/order/cadence are frozen in execution_profile."
+    execution_profile:
+      transport: "smb"
+      accounts_csv: "datn_lab01,datn_lab02,datn_lab03"
+      attempts_csv: "datn_lab01:fail,datn_lab02:fail,datn_lab03:fail,datn_lab01:fail,datn_lab02:fail,datn_lab03:fail,datn_lab01:fail,datn_lab02:fail,datn_lab03:fail,datn_lab01:success,datn_lab02:success,datn_lab03:success"
+      base_intervals_seconds: "3,3,3,3,3,3,3,3,3,3,3"
+      expected_action_count: 12
+    attribution:
+      account_names:
+        - "datn_lab01"
+        - "datn_lab02"
+        - "datn_lab03"
+      logon_types:
+        - 3
+      source_ips:
+        - "10.40.0.10"
+    quality_gates:
+      min_account_failures: 9
+      max_account_failures: 9
+      min_account_successes: 3
+      max_account_successes: 3
+      require_success_after_failure: true
+      require_all_accounts_observed: true
+    preconditions:
+      - "Use only disposable datn_lab01/datn_lab02/datn_lab03 accounts on WIN11-TARGET; same accounts serve both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member. Restore the same baseline/context condition before each repetition."
+      - "Record the lab lockout policy and verify sufficient attempts are possible; never change production authentication policy."
+    execution_steps:
+      - "Execute the frozen attempts_csv in order, using the frozen intervals between action starts; incorrect passwords must be known-wrong lab values."
+      - "For SMB, close each connection/session before the next action so cached credentials do not suppress events. For console successes, sign out before the next action."
+      - "Record actual receipts; any extra/missing authentication event or missed timing deadline invalidates the run."
+    expected_observables:
+      - "Exact 4624/4625 counts and declared accounts/logon type; observed feature vector must agree with full-bucket online replay."
+    cleanup_steps:
+      - "Close lab sessions, verify accounts are unlocked and restore the documented baseline before the next run."
+  -
+    scenario_id: "C2-BENIGN-HEALTH-POLL"
+    family: "c2"
+    label: "benign"
+    purpose: "trainable"
+    cohort_id: "C2-PAIR-01"
+    expected_behavior: "Authorized lab activity profile: 8 HTTP actions at frozen gaps [25, 25, 25, 25, 25, 25, 25] seconds. Same endpoint, identity and harmless response as the opposite-label cohort member; label denotes this lab profile, not inferable real-world intent."
+    execution_profile:
+      transport: "http"
+      base_intervals_seconds: "25,25,25,25,25,25,25"
+      expected_action_count: 8
+      endpoint: "http://10.40.0.10:8081/beacon"
+    attribution:
+      process_names:
+        - "curl.exe"
+      source_ips:
+        - "10.20.0.10"
+      destination_ips:
+        - "10.40.0.10"
+      destination_ports:
+        - 8081
+      command_contains_any:
+        - "/beacon"
+    quality_gates:
+      min_process_events: 8
+      min_network_events: 8
+      min_suricata_events: 8
+      required_suricata_signature_ids:
+        - 900001
+    preconditions:
+      - "Kali serves the same harmless fixed body at /beacon on 10.40.0.10:8081 for every HTTP scenario; DNS wildcard www.datn.test resolves to 10.40.0.10."
+      - "WIN11-TARGET traffic traverses NET-SENSOR; Suricata local canary signatures are identical for both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member; native Sysmon clocks and full-bucket parity must pass."
+    execution_steps:
+      - "Execute the frozen profile using scripts/run_training_http.ps1 for HTTP or scripts/run_dns_scenario.ps1 for DNS; launch one nonce-traceable child powershell.exe for DNS."
+      - "HTTP uses curl.exe, one fresh connection per action, identical /beacon URI template and response content for both labels. DNS uses the same nonce-qualified unique-name format and suffix for both labels."
+      - "Stop at expected_action_count; retain real action receipts and raw telemetry. Do not substitute generated feature rows."
+    expected_observables:
+      - "Sysmon process/network or DNS records plus matching Suricata records; identical canary signatures are evidence, never label-specific gates."
+      - "All 24 features remain unchanged. Counts and cadence are measured from raw telemetry, not copied from this profile."
+    cleanup_steps:
+      - "Stop the runner; preserve receipts, service logs and immutable raw evidence; reset only lab context/cache as prescribed before the next run."
+  -
+    scenario_id: "C2-MALICIOUS-HTTP-BEACON"
+    family: "c2"
+    label: "malicious"
+    purpose: "trainable"
+    cohort_id: "C2-PAIR-01"
+    expected_behavior: "Controlled C2-like activity profile: 8 HTTP actions at frozen gaps [15, 15, 15, 15, 15, 15, 15] seconds. Same endpoint, identity and harmless response as the opposite-label cohort member; label denotes this lab profile, not inferable real-world intent."
+    execution_profile:
+      transport: "http"
+      base_intervals_seconds: "15,15,15,15,15,15,15"
+      expected_action_count: 8
+      endpoint: "http://10.40.0.10:8081/beacon"
+    attribution:
+      process_names:
+        - "curl.exe"
+      source_ips:
+        - "10.20.0.10"
+      destination_ips:
+        - "10.40.0.10"
+      destination_ports:
+        - 8081
+      command_contains_any:
+        - "/beacon"
+    quality_gates:
+      min_process_events: 8
+      min_network_events: 8
+      min_suricata_events: 8
+      required_suricata_signature_ids:
+        - 900001
+    preconditions:
+      - "Kali serves the same harmless fixed body at /beacon on 10.40.0.10:8081 for every HTTP scenario; DNS wildcard www.datn.test resolves to 10.40.0.10."
+      - "WIN11-TARGET traffic traverses NET-SENSOR; Suricata local canary signatures are identical for both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member; native Sysmon clocks and full-bucket parity must pass."
+    execution_steps:
+      - "Execute the frozen profile using scripts/run_training_http.ps1 for HTTP or scripts/run_dns_scenario.ps1 for DNS; launch one nonce-traceable child powershell.exe for DNS."
+      - "HTTP uses curl.exe, one fresh connection per action, identical /beacon URI template and response content for both labels. DNS uses the same nonce-qualified unique-name format and suffix for both labels."
+      - "Stop at expected_action_count; retain real action receipts and raw telemetry. Do not substitute generated feature rows."
+    expected_observables:
+      - "Sysmon process/network or DNS records plus matching Suricata records; identical canary signatures are evidence, never label-specific gates."
+      - "All 24 features remain unchanged. Counts and cadence are measured from raw telemetry, not copied from this profile."
+    cleanup_steps:
+      - "Stop the runner; preserve receipts, service logs and immutable raw evidence; reset only lab context/cache as prescribed before the next run."
+  -
+    scenario_id: "C2-BENIGN-SINGLE-DOWNLOAD"
+    family: "c2"
+    label: "benign"
+    purpose: "trainable"
+    cohort_id: "C2-PAIR-02"
+    expected_behavior: "Authorized lab activity profile: 1 HTTP actions at frozen gaps [] seconds. Same endpoint, identity and harmless response as the opposite-label cohort member; label denotes this lab profile, not inferable real-world intent."
+    execution_profile:
+      transport: "http"
+      base_intervals_seconds: ""
+      expected_action_count: 1
+      endpoint: "http://10.40.0.10:8081/beacon"
+    attribution:
+      process_names:
+        - "curl.exe"
+      source_ips:
+        - "10.20.0.10"
+      destination_ips:
+        - "10.40.0.10"
+      destination_ports:
+        - 8081
+      command_contains_any:
+        - "/beacon"
+    quality_gates:
+      min_process_events: 1
+      min_network_events: 1
+      min_suricata_events: 1
+      required_suricata_signature_ids:
+        - 900001
+    preconditions:
+      - "Kali serves the same harmless fixed body at /beacon on 10.40.0.10:8081 for every HTTP scenario; DNS wildcard www.datn.test resolves to 10.40.0.10."
+      - "WIN11-TARGET traffic traverses NET-SENSOR; Suricata local canary signatures are identical for both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member; native Sysmon clocks and full-bucket parity must pass."
+    execution_steps:
+      - "Execute the frozen profile using scripts/run_training_http.ps1 for HTTP or scripts/run_dns_scenario.ps1 for DNS; launch one nonce-traceable child powershell.exe for DNS."
+      - "HTTP uses curl.exe, one fresh connection per action, identical /beacon URI template and response content for both labels. DNS uses the same nonce-qualified unique-name format and suffix for both labels."
+      - "Stop at expected_action_count; retain real action receipts and raw telemetry. Do not substitute generated feature rows."
+    expected_observables:
+      - "Sysmon process/network or DNS records plus matching Suricata records; identical canary signatures are evidence, never label-specific gates."
+      - "All 24 features remain unchanged. Counts and cadence are measured from raw telemetry, not copied from this profile."
+    cleanup_steps:
+      - "Stop the runner; preserve receipts, service logs and immutable raw evidence; reset only lab context/cache as prescribed before the next run."
+  -
+    scenario_id: "C2-MALICIOUS-STAGED-TRANSFER"
+    family: "c2"
+    label: "malicious"
+    purpose: "trainable"
+    cohort_id: "C2-PAIR-02"
+    expected_behavior: "Controlled C2-like activity profile: 8 HTTP actions at frozen gaps [2, 2, 2, 2, 2, 2, 2] seconds. Same endpoint, identity and harmless response as the opposite-label cohort member; label denotes this lab profile, not inferable real-world intent."
+    execution_profile:
+      transport: "http"
+      base_intervals_seconds: "2,2,2,2,2,2,2"
+      expected_action_count: 8
+      endpoint: "http://10.40.0.10:8081/beacon"
+    attribution:
+      process_names:
+        - "curl.exe"
+      source_ips:
+        - "10.20.0.10"
+      destination_ips:
+        - "10.40.0.10"
+      destination_ports:
+        - 8081
+      command_contains_any:
+        - "/beacon"
+    quality_gates:
+      min_process_events: 8
+      min_network_events: 8
+      min_suricata_events: 8
+      required_suricata_signature_ids:
+        - 900001
+    preconditions:
+      - "Kali serves the same harmless fixed body at /beacon on 10.40.0.10:8081 for every HTTP scenario; DNS wildcard www.datn.test resolves to 10.40.0.10."
+      - "WIN11-TARGET traffic traverses NET-SENSOR; Suricata local canary signatures are identical for both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member; native Sysmon clocks and full-bucket parity must pass."
+    execution_steps:
+      - "Execute the frozen profile using scripts/run_training_http.ps1 for HTTP or scripts/run_dns_scenario.ps1 for DNS; launch one nonce-traceable child powershell.exe for DNS."
+      - "HTTP uses curl.exe, one fresh connection per action, identical /beacon URI template and response content for both labels. DNS uses the same nonce-qualified unique-name format and suffix for both labels."
+      - "Stop at expected_action_count; retain real action receipts and raw telemetry. Do not substitute generated feature rows."
+    expected_observables:
+      - "Sysmon process/network or DNS records plus matching Suricata records; identical canary signatures are evidence, never label-specific gates."
+      - "All 24 features remain unchanged. Counts and cadence are measured from raw telemetry, not copied from this profile."
+    cleanup_steps:
+      - "Stop the runner; preserve receipts, service logs and immutable raw evidence; reset only lab context/cache as prescribed before the next run."
+  -
+    scenario_id: "C2-BENIGN-DNS"
+    family: "c2"
+    label: "benign"
+    purpose: "trainable"
+    cohort_id: "C2-PAIR-03"
+    expected_behavior: "Authorized lab activity profile: 4 DNS actions at frozen gaps [7, 19, 11] seconds. Same endpoint, identity and harmless response as the opposite-label cohort member; label denotes this lab profile, not inferable real-world intent."
+    execution_profile:
+      transport: "dns"
+      base_intervals_seconds: "7,19,11"
+      expected_action_count: 4
+      domain_suffix: "www.datn.test"
+      dns_server: "10.40.0.10"
+    attribution:
+      process_names:
+        - "powershell.exe"
+        - "pwsh.exe"
+      source_ips:
+        - "10.20.0.10"
+      dns_suffixes:
+        - "www.datn.test"
+      command_contains_any:
+        - "www.datn.test"
+    quality_gates:
+      min_process_events: 1
+      min_dns_events: 4
+      min_suricata_events: 4
+      required_suricata_signature_ids:
+        - 900004
+    preconditions:
+      - "Kali serves the same harmless fixed body at /beacon on 10.40.0.10:8081 for every HTTP scenario; DNS wildcard www.datn.test resolves to 10.40.0.10."
+      - "WIN11-TARGET traffic traverses NET-SENSOR; Suricata local canary signatures are identical for both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member; native Sysmon clocks and full-bucket parity must pass."
+    execution_steps:
+      - "Execute the frozen profile using scripts/run_training_http.ps1 for HTTP or scripts/run_dns_scenario.ps1 for DNS; launch one nonce-traceable child powershell.exe for DNS."
+      - "HTTP uses curl.exe, one fresh connection per action, identical /beacon URI template and response content for both labels. DNS uses the same nonce-qualified unique-name format and suffix for both labels."
+      - "Stop at expected_action_count; retain real action receipts and raw telemetry. Do not substitute generated feature rows."
+    expected_observables:
+      - "Sysmon process/network or DNS records plus matching Suricata records; identical canary signatures are evidence, never label-specific gates."
+      - "All 24 features remain unchanged. Counts and cadence are measured from raw telemetry, not copied from this profile."
+    cleanup_steps:
+      - "Stop the runner; preserve receipts, service logs and immutable raw evidence; reset only lab context/cache as prescribed before the next run."
+  -
+    scenario_id: "C2-MALICIOUS-DNS-BEACON"
+    family: "c2"
+    label: "malicious"
+    purpose: "trainable"
+    cohort_id: "C2-PAIR-03"
+    expected_behavior: "Controlled C2-like activity profile: 8 DNS actions at frozen gaps [15, 15, 15, 15, 15, 15, 15] seconds. Same endpoint, identity and harmless response as the opposite-label cohort member; label denotes this lab profile, not inferable real-world intent."
+    execution_profile:
+      transport: "dns"
+      base_intervals_seconds: "15,15,15,15,15,15,15"
+      expected_action_count: 8
+      domain_suffix: "www.datn.test"
+      dns_server: "10.40.0.10"
+    attribution:
+      process_names:
+        - "powershell.exe"
+        - "pwsh.exe"
+      source_ips:
+        - "10.20.0.10"
+      dns_suffixes:
+        - "www.datn.test"
+      command_contains_any:
+        - "www.datn.test"
+    quality_gates:
+      min_process_events: 1
+      min_dns_events: 8
+      min_suricata_events: 8
+      required_suricata_signature_ids:
+        - 900004
+    preconditions:
+      - "Kali serves the same harmless fixed body at /beacon on 10.40.0.10:8081 for every HTTP scenario; DNS wildcard www.datn.test resolves to 10.40.0.10."
+      - "WIN11-TARGET traffic traverses NET-SENSOR; Suricata local canary signatures are identical for both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member; native Sysmon clocks and full-bucket parity must pass."
+    execution_steps:
+      - "Execute the frozen profile using scripts/run_training_http.ps1 for HTTP or scripts/run_dns_scenario.ps1 for DNS; launch one nonce-traceable child powershell.exe for DNS."
+      - "HTTP uses curl.exe, one fresh connection per action, identical /beacon URI template and response content for both labels. DNS uses the same nonce-qualified unique-name format and suffix for both labels."
+      - "Stop at expected_action_count; retain real action receipts and raw telemetry. Do not substitute generated feature rows."
+    expected_observables:
+      - "Sysmon process/network or DNS records plus matching Suricata records; identical canary signatures are evidence, never label-specific gates."
+      - "All 24 features remain unchanged. Counts and cadence are measured from raw telemetry, not copied from this profile."
+    cleanup_steps:
+      - "Stop the runner; preserve receipts, service logs and immutable raw evidence; reset only lab context/cache as prescribed before the next run."
+  -
+    scenario_id: "C2-BENIGN-IRREGULAR-API"
+    family: "c2"
+    label: "benign"
+    purpose: "trainable"
+    cohort_id: "C2-PAIR-04"
+    expected_behavior: "Authorized lab activity profile: 4 HTTP actions at frozen gaps [10, 35, 20] seconds. Same endpoint, identity and harmless response as the opposite-label cohort member; label denotes this lab profile, not inferable real-world intent."
+    execution_profile:
+      transport: "http"
+      base_intervals_seconds: "10,35,20"
+      expected_action_count: 4
+      endpoint: "http://10.40.0.10:8081/beacon"
+    attribution:
+      process_names:
+        - "curl.exe"
+      source_ips:
+        - "10.20.0.10"
+      destination_ips:
+        - "10.40.0.10"
+      destination_ports:
+        - 8081
+      command_contains_any:
+        - "/beacon"
+    quality_gates:
+      min_process_events: 4
+      min_network_events: 4
+      min_suricata_events: 4
+      required_suricata_signature_ids:
+        - 900001
+    preconditions:
+      - "Kali serves the same harmless fixed body at /beacon on 10.40.0.10:8081 for every HTTP scenario; DNS wildcard www.datn.test resolves to 10.40.0.10."
+      - "WIN11-TARGET traffic traverses NET-SENSOR; Suricata local canary signatures are identical for both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member; native Sysmon clocks and full-bucket parity must pass."
+    execution_steps:
+      - "Execute the frozen profile using scripts/run_training_http.ps1 for HTTP or scripts/run_dns_scenario.ps1 for DNS; launch one nonce-traceable child powershell.exe for DNS."
+      - "HTTP uses curl.exe, one fresh connection per action, identical /beacon URI template and response content for both labels. DNS uses the same nonce-qualified unique-name format and suffix for both labels."
+      - "Stop at expected_action_count; retain real action receipts and raw telemetry. Do not substitute generated feature rows."
+    expected_observables:
+      - "Sysmon process/network or DNS records plus matching Suricata records; identical canary signatures are evidence, never label-specific gates."
+      - "All 24 features remain unchanged. Counts and cadence are measured from raw telemetry, not copied from this profile."
+    cleanup_steps:
+      - "Stop the runner; preserve receipts, service logs and immutable raw evidence; reset only lab context/cache as prescribed before the next run."
+  -
+    scenario_id: "C2-MALICIOUS-JITTER-BEACON"
+    family: "c2"
+    label: "malicious"
+    purpose: "trainable"
+    cohort_id: "C2-PAIR-04"
+    expected_behavior: "Controlled C2-like activity profile: 8 HTTP actions at frozen gaps [8, 21, 13, 30, 11, 24, 17] seconds. Same endpoint, identity and harmless response as the opposite-label cohort member; label denotes this lab profile, not inferable real-world intent."
+    execution_profile:
+      transport: "http"
+      base_intervals_seconds: "8,21,13,30,11,24,17"
+      expected_action_count: 8
+      endpoint: "http://10.40.0.10:8081/beacon"
+    attribution:
+      process_names:
+        - "curl.exe"
+      source_ips:
+        - "10.20.0.10"
+      destination_ips:
+        - "10.40.0.10"
+      destination_ports:
+        - 8081
+      command_contains_any:
+        - "/beacon"
+    quality_gates:
+      min_process_events: 8
+      min_network_events: 8
+      min_suricata_events: 8
+      required_suricata_signature_ids:
+        - 900001
+    preconditions:
+      - "Kali serves the same harmless fixed body at /beacon on 10.40.0.10:8081 for every HTTP scenario; DNS wildcard www.datn.test resolves to 10.40.0.10."
+      - "WIN11-TARGET traffic traverses NET-SENSOR; Suricata local canary signatures are identical for both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member; native Sysmon clocks and full-bucket parity must pass."
+    execution_steps:
+      - "Execute the frozen profile using scripts/run_training_http.ps1 for HTTP or scripts/run_dns_scenario.ps1 for DNS; launch one nonce-traceable child powershell.exe for DNS."
+      - "HTTP uses curl.exe, one fresh connection per action, identical /beacon URI template and response content for both labels. DNS uses the same nonce-qualified unique-name format and suffix for both labels."
+      - "Stop at expected_action_count; retain real action receipts and raw telemetry. Do not substitute generated feature rows."
+    expected_observables:
+      - "Sysmon process/network or DNS records plus matching Suricata records; identical canary signatures are evidence, never label-specific gates."
+      - "All 24 features remain unchanged. Counts and cadence are measured from raw telemetry, not copied from this profile."
+    cleanup_steps:
+      - "Stop the runner; preserve receipts, service logs and immutable raw evidence; reset only lab context/cache as prescribed before the next run."
+  -
+    scenario_id: "C2-BENIGN-API-BURST"
+    family: "c2"
+    label: "benign"
+    purpose: "trainable"
+    cohort_id: "C2-PAIR-05"
+    expected_behavior: "Authorized lab activity profile: 6 HTTP actions at frozen gaps [2, 2, 2, 2, 2] seconds. Same endpoint, identity and harmless response as the opposite-label cohort member; label denotes this lab profile, not inferable real-world intent."
+    execution_profile:
+      transport: "http"
+      base_intervals_seconds: "2,2,2,2,2"
+      expected_action_count: 6
+      endpoint: "http://10.40.0.10:8081/beacon"
+    attribution:
+      process_names:
+        - "curl.exe"
+      source_ips:
+        - "10.20.0.10"
+      destination_ips:
+        - "10.40.0.10"
+      destination_ports:
+        - 8081
+      command_contains_any:
+        - "/beacon"
+    quality_gates:
+      min_process_events: 6
+      min_network_events: 6
+      min_suricata_events: 6
+      required_suricata_signature_ids:
+        - 900001
+    preconditions:
+      - "Kali serves the same harmless fixed body at /beacon on 10.40.0.10:8081 for every HTTP scenario; DNS wildcard www.datn.test resolves to 10.40.0.10."
+      - "WIN11-TARGET traffic traverses NET-SENSOR; Suricata local canary signatures are identical for both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member; native Sysmon clocks and full-bucket parity must pass."
+    execution_steps:
+      - "Execute the frozen profile using scripts/run_training_http.ps1 for HTTP or scripts/run_dns_scenario.ps1 for DNS; launch one nonce-traceable child powershell.exe for DNS."
+      - "HTTP uses curl.exe, one fresh connection per action, identical /beacon URI template and response content for both labels. DNS uses the same nonce-qualified unique-name format and suffix for both labels."
+      - "Stop at expected_action_count; retain real action receipts and raw telemetry. Do not substitute generated feature rows."
+    expected_observables:
+      - "Sysmon process/network or DNS records plus matching Suricata records; identical canary signatures are evidence, never label-specific gates."
+      - "All 24 features remain unchanged. Counts and cadence are measured from raw telemetry, not copied from this profile."
+    cleanup_steps:
+      - "Stop the runner; preserve receipts, service logs and immutable raw evidence; reset only lab context/cache as prescribed before the next run."
+  -
+    scenario_id: "C2-MALICIOUS-STAGED-TRANSFER-RETRY"
+    family: "c2"
+    label: "malicious"
+    purpose: "trainable"
+    cohort_id: "C2-PAIR-05"
+    expected_behavior: "Controlled C2-like activity profile: 3 HTTP actions at frozen gaps [20, 20] seconds. Same endpoint, identity and harmless response as the opposite-label cohort member; label denotes this lab profile, not inferable real-world intent."
+    execution_profile:
+      transport: "http"
+      base_intervals_seconds: "20,20"
+      expected_action_count: 3
+      endpoint: "http://10.40.0.10:8081/beacon"
+    attribution:
+      process_names:
+        - "curl.exe"
+      source_ips:
+        - "10.20.0.10"
+      destination_ips:
+        - "10.40.0.10"
+      destination_ports:
+        - 8081
+      command_contains_any:
+        - "/beacon"
+    quality_gates:
+      min_process_events: 3
+      min_network_events: 3
+      min_suricata_events: 3
+      required_suricata_signature_ids:
+        - 900001
+    preconditions:
+      - "Kali serves the same harmless fixed body at /beacon on 10.40.0.10:8081 for every HTTP scenario; DNS wildcard www.datn.test resolves to 10.40.0.10."
+      - "WIN11-TARGET traffic traverses NET-SENSOR; Suricata local canary signatures are identical for both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member; native Sysmon clocks and full-bucket parity must pass."
+    execution_steps:
+      - "Execute the frozen profile using scripts/run_training_http.ps1 for HTTP or scripts/run_dns_scenario.ps1 for DNS; launch one nonce-traceable child powershell.exe for DNS."
+      - "HTTP uses curl.exe, one fresh connection per action, identical /beacon URI template and response content for both labels. DNS uses the same nonce-qualified unique-name format and suffix for both labels."
+      - "Stop at expected_action_count; retain real action receipts and raw telemetry. Do not substitute generated feature rows."
+    expected_observables:
+      - "Sysmon process/network or DNS records plus matching Suricata records; identical canary signatures are evidence, never label-specific gates."
+      - "All 24 features remain unchanged. Counts and cadence are measured from raw telemetry, not copied from this profile."
+    cleanup_steps:
+      - "Stop the runner; preserve receipts, service logs and immutable raw evidence; reset only lab context/cache as prescribed before the next run."
+  -
+    scenario_id: "ACCOUNT-CHALLENGE-LOW-NOISE-BENIGN"
+    family: "account"
+    label: "benign"
+    purpose: "challenge"
+    cohort_id: "ACCOUNT-PAIR-01"
+    expected_behavior: "Intent-only matched counterexample: opposite labels share the same observable action profile. Expected REVIEW; excluded from training, quotas, selection and threshold tuning."
+    execution_profile:
+      transport: "smb"
+      accounts_csv: "datn_lab01"
+      attempts_csv: "datn_lab01:fail,datn_lab01:success"
+      base_intervals_seconds: "3"
+      expected_action_count: 2
+    attribution:
+      account_names:
+        - "datn_lab01"
+      source_ips:
+        - "10.40.0.10"
+      logon_types:
+        - 3
     quality_gates:
       min_account_failures: 1
       max_account_failures: 1
@@ -191,281 +838,298 @@ scenarios:
       max_account_successes: 1
       require_success_after_failure: true
     preconditions:
-      - The disposable local account datn_attack exists and its correct password is available.
-      - The disposable account is unlocked before the run.
-      - The Kali attack VM can reach the Windows SMB service inside the isolated lab.
+      - "Use only disposable datn_lab01/datn_lab02/datn_lab03 accounts on WIN11-TARGET; same accounts serve both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member. Restore the same baseline/context condition before each repetition."
+      - "Record the lab lockout policy and verify sufficient attempts are possible; never change production authentication policy."
     execution_steps:
-      - From Kali, perform one failed SMB authentication for datn_attack, wait the draft attempt_delay_seconds, then perform one successful SMB authentication.
+      - "Execute the frozen attempts_csv in order, using the frozen intervals between action starts; incorrect passwords must be known-wrong lab values."
+      - "For SMB, close each connection/session before the next action so cached credentials do not suppress events. For console successes, sign out before the next action."
+      - "Record actual receipts; any extra/missing authentication event or missed timing deadline invalidates the run."
     expected_observables:
-      - One network-logon event 4625 followed by one network-logon event 4624 (LogonType 3) for datn_attack from the same lab source.
+      - "Exact 4624/4625 counts and declared accounts/logon type; observed feature vector must agree with full-bucket online replay."
     cleanup_steps:
-      - Sign out of datn_attack and restore the clean snapshot if required.
-
-  - scenario_id: ACCOUNT-MALICIOUS-REPEATED-FAILURES-3
-    family: account
-    label: malicious
-    expected_behavior: Three controlled invalid attempts against a decoy account without a successful logon.
+      - "Close lab sessions, verify accounts are unlocked and restore the documented baseline before the next run."
+  -
+    scenario_id: "ACCOUNT-CHALLENGE-LOW-NOISE-MALICIOUS"
+    family: "account"
+    label: "malicious"
+    purpose: "challenge"
+    cohort_id: "ACCOUNT-PAIR-01"
+    expected_behavior: "Intent-only matched counterexample: opposite labels share the same observable action profile. Expected REVIEW; excluded from training, quotas, selection and threshold tuning."
+    execution_profile:
+      transport: "smb"
+      accounts_csv: "datn_lab01"
+      attempts_csv: "datn_lab01:fail,datn_lab01:success"
+      base_intervals_seconds: "3"
+      expected_action_count: 2
     attribution:
-      account_names: [datn_attack]
+      account_names:
+        - "datn_lab01"
+      source_ips:
+        - "10.40.0.10"
+      logon_types:
+        - 3
     quality_gates:
-      min_account_failures: 3
-      max_account_failures: 3
+      min_account_failures: 1
+      max_account_failures: 1
+      min_account_successes: 1
+      max_account_successes: 1
+      require_success_after_failure: true
+    preconditions:
+      - "Use only disposable datn_lab01/datn_lab02/datn_lab03 accounts on WIN11-TARGET; same accounts serve both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member. Restore the same baseline/context condition before each repetition."
+      - "Record the lab lockout policy and verify sufficient attempts are possible; never change production authentication policy."
+    execution_steps:
+      - "Execute the frozen attempts_csv in order, using the frozen intervals between action starts; incorrect passwords must be known-wrong lab values."
+      - "For SMB, close each connection/session before the next action so cached credentials do not suppress events. For console successes, sign out before the next action."
+      - "Record actual receipts; any extra/missing authentication event or missed timing deadline invalidates the run."
+    expected_observables:
+      - "Exact 4624/4625 counts and declared accounts/logon type; observed feature vector must agree with full-bucket online replay."
+    cleanup_steps:
+      - "Close lab sessions, verify accounts are unlocked and restore the documented baseline before the next run."
+  -
+    scenario_id: "ACCOUNT-CHALLENGE-FAST-RETRIES-BENIGN"
+    family: "account"
+    label: "benign"
+    purpose: "challenge"
+    cohort_id: "ACCOUNT-PAIR-04"
+    expected_behavior: "Intent-only matched counterexample: opposite labels share the same observable action profile. Expected REVIEW; excluded from training, quotas, selection and threshold tuning."
+    execution_profile:
+      transport: "smb"
+      accounts_csv: "datn_lab01"
+      attempts_csv: "datn_lab01:fail,datn_lab01:fail,datn_lab01:fail,datn_lab01:fail,datn_lab01:fail,datn_lab01:fail"
+      base_intervals_seconds: "2,2,2,2,2"
+      expected_action_count: 6
+    attribution:
+      account_names:
+        - "datn_lab01"
+      logon_types:
+        - 3
+      source_ips:
+        - "10.40.0.10"
+    quality_gates:
+      min_account_failures: 6
+      max_account_failures: 6
       min_account_successes: 0
       max_account_successes: 0
+      require_success_after_failure: false
+      require_all_accounts_observed: false
     preconditions:
-      - The disposable local account datn_attack exists.
-      - The dedicated lab target has account lockout disabled for the collection window.
+      - "Use only disposable datn_lab01/datn_lab02/datn_lab03 accounts on WIN11-TARGET; same accounts serve both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member. Restore the same baseline/context condition before each repetition."
+      - "Record the lab lockout policy and verify sufficient attempts are possible; never change production authentication policy."
     execution_steps:
-      - Submit three known-wrong passwords for datn_attack and do not enter a correct password.
+      - "Execute the frozen attempts_csv in order, using the frozen intervals between action starts; incorrect passwords must be known-wrong lab values."
+      - "For SMB, close each connection/session before the next action so cached credentials do not suppress events. For console successes, sign out before the next action."
+      - "Record actual receipts; any extra/missing authentication event or missed timing deadline invalidates the run."
     expected_observables:
-      - Exactly three Security events 4625 and no 4624 for datn_attack in the run window.
+      - "Exact 4624/4625 counts and declared accounts/logon type; observed feature vector must agree with full-bucket online replay."
     cleanup_steps:
-      - Stop attempts and verify the account is not locked.
-
-  - scenario_id: C2-BENIGN-HEALTH-POLL
-    family: c2
-    label: benign
-    expected_behavior: Authorized monitoring polls a legacy /beacon health endpoint, intentionally exercising a documented false-positive signature.
+      - "Close lab sessions, verify accounts are unlocked and restore the documented baseline before the next run."
+  -
+    scenario_id: "ACCOUNT-CHALLENGE-FAST-RETRIES-MALICIOUS"
+    family: "account"
+    label: "malicious"
+    purpose: "challenge"
+    cohort_id: "ACCOUNT-PAIR-04"
+    expected_behavior: "Intent-only matched counterexample: opposite labels share the same observable action profile. Expected REVIEW; excluded from training, quotas, selection and threshold tuning."
+    execution_profile:
+      transport: "smb"
+      accounts_csv: "datn_lab01"
+      attempts_csv: "datn_lab01:fail,datn_lab01:fail,datn_lab01:fail,datn_lab01:fail,datn_lab01:fail,datn_lab01:fail"
+      base_intervals_seconds: "2,2,2,2,2"
+      expected_action_count: 6
     attribution:
-      process_names: [curl.exe]
-      source_ips: [10.20.0.10]
-      destination_ips: [10.40.0.10]
-      destination_ports: [8081]
-      command_contains_any: [/beacon]
+      account_names:
+        - "datn_lab01"
+      logon_types:
+        - 3
+      source_ips:
+        - "10.40.0.10"
+    quality_gates:
+      min_account_failures: 6
+      max_account_failures: 6
+      min_account_successes: 0
+      max_account_successes: 0
+      require_success_after_failure: false
+      require_all_accounts_observed: false
+    preconditions:
+      - "Use only disposable datn_lab01/datn_lab02/datn_lab03 accounts on WIN11-TARGET; same accounts serve both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member. Restore the same baseline/context condition before each repetition."
+      - "Record the lab lockout policy and verify sufficient attempts are possible; never change production authentication policy."
+    execution_steps:
+      - "Execute the frozen attempts_csv in order, using the frozen intervals between action starts; incorrect passwords must be known-wrong lab values."
+      - "For SMB, close each connection/session before the next action so cached credentials do not suppress events. For console successes, sign out before the next action."
+      - "Record actual receipts; any extra/missing authentication event or missed timing deadline invalidates the run."
+    expected_observables:
+      - "Exact 4624/4625 counts and declared accounts/logon type; observed feature vector must agree with full-bucket online replay."
+    cleanup_steps:
+      - "Close lab sessions, verify accounts are unlocked and restore the documented baseline before the next run."
+  -
+    scenario_id: "C2-CHALLENGE-POLL-INTENT-BENIGN"
+    family: "c2"
+    label: "benign"
+    purpose: "challenge"
+    cohort_id: "C2-PAIR-01"
+    expected_behavior: "Intent-only matched counterexample: opposite labels share the same observable action profile. Expected REVIEW; excluded from training, quotas, selection and threshold tuning."
+    execution_profile:
+      transport: "http"
+      base_intervals_seconds: "15,15,15,15,15,15,15"
+      expected_action_count: 8
+      endpoint: "http://10.40.0.10:8081/beacon"
+    attribution:
+      process_names:
+        - "curl.exe"
+      source_ips:
+        - "10.20.0.10"
+      destination_ips:
+        - "10.40.0.10"
+      destination_ports:
+        - 8081
+      command_contains_any:
+        - "/beacon"
     quality_gates:
       min_process_events: 8
       min_network_events: 8
       min_suricata_events: 8
-      required_suricata_signature_ids: [900001]
+      required_suricata_signature_ids:
+        - 900001
     preconditions:
-      - Kali serves the isolated legacy monitoring endpoint on 10.40.0.10 port 8081.
-      - Traffic from 10.20.0.10 to 10.40.0.10 is routed through NET-SENSOR.
+      - "Kali serves the same harmless fixed body at /beacon on 10.40.0.10:8081 for every HTTP scenario; DNS wildcard www.datn.test resolves to 10.40.0.10."
+      - "WIN11-TARGET traffic traverses NET-SENSOR; Suricata local canary signatures are identical for both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member; native Sysmon clocks and full-bucket parity must pass."
     execution_steps:
-      - In Windows PowerShell, run 8 authorized curl.exe requests to /beacon?mode=health using the draft nonce and the 30-second base interval scaled by the frozen draft jitter.
+      - "Execute the frozen profile using scripts/run_training_http.ps1 for HTTP or scripts/run_dns_scenario.ps1 for DNS; launch one nonce-traceable child powershell.exe for DNS."
+      - "HTTP uses curl.exe, one fresh connection per action, identical /beacon URI template and response content for both labels. DNS uses the same nonce-qualified unique-name format and suffix for both labels."
+      - "Stop at expected_action_count; retain real action receipts and raw telemetry. Do not substitute generated feature rows."
     expected_observables:
-      - Sysmon event 1/3 and matching Suricata HTTP records for port 8081, including the expected false-positive SID 900001.
+      - "Sysmon process/network or DNS records plus matching Suricata records; identical canary signatures are evidence, never label-specific gates."
+      - "All 24 features remain unchanged. Counts and cadence are measured from raw telemetry, not copied from this profile."
     cleanup_steps:
-      - Stop the loop and leave the Kali benign service available for the next run.
-
-  - scenario_id: C2-BENIGN-SINGLE-DOWNLOAD
-    family: c2
-    label: benign
-    expected_behavior: One approved curl download of a harmless text artifact from the Kali lab web service.
+      - "Stop the runner; preserve receipts, service logs and immutable raw evidence; reset only lab context/cache as prescribed before the next run."
+  -
+    scenario_id: "C2-CHALLENGE-POLL-INTENT-MALICIOUS"
+    family: "c2"
+    label: "malicious"
+    purpose: "challenge"
+    cohort_id: "C2-PAIR-01"
+    expected_behavior: "Intent-only matched counterexample: opposite labels share the same observable action profile. Expected REVIEW; excluded from training, quotas, selection and threshold tuning."
+    execution_profile:
+      transport: "http"
+      base_intervals_seconds: "15,15,15,15,15,15,15"
+      expected_action_count: 8
+      endpoint: "http://10.40.0.10:8081/beacon"
     attribution:
-      process_names: [curl.exe]
-      source_ips: [10.20.0.10]
-      destination_ips: [10.40.0.10]
-      destination_ports: [8080]
-      command_contains_any: [/payload-benign.txt]
+      process_names:
+        - "curl.exe"
+      source_ips:
+        - "10.20.0.10"
+      destination_ips:
+        - "10.40.0.10"
+      destination_ports:
+        - 8081
+      command_contains_any:
+        - "/beacon"
+    quality_gates:
+      min_process_events: 8
+      min_network_events: 8
+      min_suricata_events: 8
+      required_suricata_signature_ids:
+        - 900001
+    preconditions:
+      - "Kali serves the same harmless fixed body at /beacon on 10.40.0.10:8081 for every HTTP scenario; DNS wildcard www.datn.test resolves to 10.40.0.10."
+      - "WIN11-TARGET traffic traverses NET-SENSOR; Suricata local canary signatures are identical for both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member; native Sysmon clocks and full-bucket parity must pass."
+    execution_steps:
+      - "Execute the frozen profile using scripts/run_training_http.ps1 for HTTP or scripts/run_dns_scenario.ps1 for DNS; launch one nonce-traceable child powershell.exe for DNS."
+      - "HTTP uses curl.exe, one fresh connection per action, identical /beacon URI template and response content for both labels. DNS uses the same nonce-qualified unique-name format and suffix for both labels."
+      - "Stop at expected_action_count; retain real action receipts and raw telemetry. Do not substitute generated feature rows."
+    expected_observables:
+      - "Sysmon process/network or DNS records plus matching Suricata records; identical canary signatures are evidence, never label-specific gates."
+      - "All 24 features remain unchanged. Counts and cadence are measured from raw telemetry, not copied from this profile."
+    cleanup_steps:
+      - "Stop the runner; preserve receipts, service logs and immutable raw evidence; reset only lab context/cache as prescribed before the next run."
+  -
+    scenario_id: "C2-CHALLENGE-DOWNLOAD-INTENT-BENIGN"
+    family: "c2"
+    label: "benign"
+    purpose: "challenge"
+    cohort_id: "C2-PAIR-02"
+    expected_behavior: "Intent-only matched counterexample: opposite labels share the same observable action profile. Expected REVIEW; excluded from training, quotas, selection and threshold tuning."
+    execution_profile:
+      transport: "http"
+      base_intervals_seconds: ""
+      expected_action_count: 1
+      endpoint: "http://10.40.0.10:8081/beacon"
+    attribution:
+      process_names:
+        - "curl.exe"
+      source_ips:
+        - "10.20.0.10"
+      destination_ips:
+        - "10.40.0.10"
+      destination_ports:
+        - 8081
+      command_contains_any:
+        - "/beacon"
     quality_gates:
       min_process_events: 1
       min_network_events: 1
       min_suricata_events: 1
-      forbidden_suricata_signature_ids: [900001, 900002]
+      required_suricata_signature_ids:
+        - 900001
     preconditions:
-      - Kali serves payload-benign.txt on 10.40.0.10 port 8080.
-      - The file contains only a fixed harmless marker string.
+      - "Kali serves the same harmless fixed body at /beacon on 10.40.0.10:8081 for every HTTP scenario; DNS wildcard www.datn.test resolves to 10.40.0.10."
+      - "WIN11-TARGET traffic traverses NET-SENSOR; Suricata local canary signatures are identical for both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member; native Sysmon clocks and full-bucket parity must pass."
     execution_steps:
-      - Run curl.exe against payload-benign.txt once with the frozen draft nonce and save the harmless fixed file to $env:TEMP\\payload-benign.txt.
+      - "Execute the frozen profile using scripts/run_training_http.ps1 for HTTP or scripts/run_dns_scenario.ps1 for DNS; launch one nonce-traceable child powershell.exe for DNS."
+      - "HTTP uses curl.exe, one fresh connection per action, identical /beacon URI template and response content for both labels. DNS uses the same nonce-qualified unique-name format and suffix for both labels."
+      - "Stop at expected_action_count; retain real action receipts and raw telemetry. Do not substitute generated feature rows."
     expected_observables:
-      - One or more Sysmon event 3 records and matching Suricata flow or HTTP records.
+      - "Sysmon process/network or DNS records plus matching Suricata records; identical canary signatures are evidence, never label-specific gates."
+      - "All 24 features remain unchanged. Counts and cadence are measured from raw telemetry, not copied from this profile."
     cleanup_steps:
-      - Delete $env:TEMP\\payload-benign.txt and verify its SHA-256 if retained as evidence.
-
-  - scenario_id: C2-BENIGN-IRREGULAR-API
-    family: c2
-    label: benign
-    expected_behavior: Four approved API requests with deliberately irregular gaps.
+      - "Stop the runner; preserve receipts, service logs and immutable raw evidence; reset only lab context/cache as prescribed before the next run."
+  -
+    scenario_id: "C2-CHALLENGE-DOWNLOAD-INTENT-MALICIOUS"
+    family: "c2"
+    label: "malicious"
+    purpose: "challenge"
+    cohort_id: "C2-PAIR-02"
+    expected_behavior: "Intent-only matched counterexample: opposite labels share the same observable action profile. Expected REVIEW; excluded from training, quotas, selection and threshold tuning."
+    execution_profile:
+      transport: "http"
+      base_intervals_seconds: ""
+      expected_action_count: 1
+      endpoint: "http://10.40.0.10:8081/beacon"
     attribution:
-      process_names: [curl.exe]
-      source_ips: [10.20.0.10]
-      destination_ips: [10.40.0.10]
-      destination_ports: [8080]
-      command_contains_any: [/api/status]
-    quality_gates:
-      min_process_events: 4
-      min_network_events: 4
-      min_suricata_events: 4
-      forbidden_suricata_signature_ids: [900001, 900002]
-    preconditions:
-      - Kali serves the benign web root on 10.40.0.10 port 8080.
-      - NET-SENSOR is recording EVE flow and HTTP events.
-    execution_steps:
-      - Request /api/status four times using the draft nonce and base gaps 10, 35 and 20 seconds scaled by the frozen draft jitter.
-    expected_observables:
-      - At least four matching network records with a lower periodicity score than the regular poll.
-    cleanup_steps:
-      - Stop the command after the fourth request.
-
-  - scenario_id: C2-BENIGN-DNS
-    family: c2
-    label: benign
-    expected_behavior: Approved DNS lookups for a benign lab-only name through the Kali DNS service.
-    attribution:
-      process_names: [powershell.exe, pwsh.exe]
-      source_ips: [10.20.0.10]
-      dns_suffixes: [www.datn.test]
-      command_contains_any: [www.datn.test]
-    quality_gates:
-      min_process_events: 1
-      min_dns_events: 4
-      min_suricata_events: 4
-      required_suricata_signature_ids: [900004]
-    preconditions:
-      - Kali dnsmasq answers www.datn.test on 10.40.0.10.
-      - Windows can route UDP and TCP port 53 through NET-SENSOR.
-    execution_steps:
-      - Launch one child powershell.exe with scripts/run_dns_scenario.ps1 and pass the frozen run nonce, www.datn.test domain, expected action count, interval CSV and variant index as command-line arguments; the child issues four lab-only queries through 10.40.0.10.
-    expected_observables:
-      - Four Sysmon event 22 and matching Suricata DNS records, including local benign-canary SID 900004.
-    cleanup_steps:
-      - Clear only the lab DNS cache with Clear-DnsClientCache if needed.
-
-  - scenario_id: C2-BENIGN-API-BURST
-    family: c2
-    label: benign
-    expected_behavior: Six approved API health requests in a short administrative burst.
-    attribution:
-      process_names: [curl.exe]
-      source_ips: [10.20.0.10]
-      destination_ips: [10.40.0.10]
-      destination_ports: [8080]
-      command_contains_any: [/api/status]
-    quality_gates:
-      min_process_events: 6
-      min_network_events: 6
-      min_suricata_events: 6
-      forbidden_suricata_signature_ids: [900001, 900002]
-    preconditions:
-      - Kali serves /api/status on 10.40.0.10 port 8080.
-      - NET-SENSOR is recording EVE flow and HTTP events.
-    execution_steps:
-      - Send six curl.exe requests to /api/status using the draft nonce and the two-second base interval scaled by the frozen draft jitter.
-    expected_observables:
-      - Six Sysmon process/network records and matching Suricata HTTP records without a DATN malicious SID.
-    cleanup_steps:
-      - Stop after exactly six requests.
-
-  - scenario_id: C2-MALICIOUS-HTTP-BEACON
-    family: c2
-    label: malicious
-    expected_behavior: A safe lab-only periodic HTTP beacon simulation to the Kali listener.
-    attribution:
-      process_names: [curl.exe, powershell.exe, pwsh.exe]
-      source_ips: [10.20.0.10]
-      destination_ips: [10.40.0.10]
-      destination_ports: [8081]
-      command_contains_any: [/beacon]
-    quality_gates:
-      min_process_events: 8
-      min_network_events: 8
-      min_suricata_events: 8
-      required_suricata_signature_ids: [900001]
-    preconditions:
-      - Kali serves the isolated beacon web root on 10.40.0.10 port 8081.
-      - The custom Suricata HTTP beacon rule is loaded.
-    execution_steps:
-      - Send 8 curl.exe requests to /beacon using the draft nonce and the 15-second base interval scaled by the frozen draft jitter.
-    expected_observables:
-      - Periodic Sysmon event 3 records, Suricata flow or HTTP records and at least one local alert.
-    cleanup_steps:
-      - Stop the loop and preserve the Kali access log as optional supporting evidence.
-
-  - scenario_id: C2-MALICIOUS-JITTER-BEACON
-    family: c2
-    label: malicious
-    expected_behavior: A safe lab-only HTTP beacon simulation with deterministic jitter.
-    attribution:
-      process_names: [curl.exe, powershell.exe, pwsh.exe]
-      source_ips: [10.20.0.10]
-      destination_ips: [10.40.0.10]
-      destination_ports: [8081]
-      command_contains_any: [/beacon]
-    quality_gates:
-      min_process_events: 8
-      min_network_events: 8
-      min_suricata_events: 8
-      required_suricata_signature_ids: [900001]
-    preconditions:
-      - Kali serves the isolated beacon web root on 10.40.0.10 port 8081.
-      - The custom Suricata HTTP beacon rule is loaded.
-    execution_steps:
-      - Send 8 /beacon requests using the draft nonce and base gaps 8, 21, 13, 30, 11, 24 and 17 seconds scaled by the frozen draft jitter.
-    expected_observables:
-      - Matching Sysmon and Suricata evidence with a lower periodicity score than the fixed beacon.
-    cleanup_steps:
-      - Stop after exactly eight requests.
-
-  - scenario_id: C2-MALICIOUS-DNS-BEACON
-    family: c2
-    label: malicious
-    expected_behavior: A safe lab-only DNS beacon simulation using unique subdomains.
-    attribution:
-      process_names: [powershell.exe, pwsh.exe]
-      source_ips: [10.20.0.10]
-      dns_suffixes: [beacon.datn.test]
-      command_contains_any: [beacon.datn.test]
-    quality_gates:
-      min_process_events: 1
-      min_dns_events: 8
-      min_suricata_events: 8
-      required_suricata_signature_ids: [900002]
-    preconditions:
-      - Kali dnsmasq answers the beacon.datn.test lab zone on 10.40.0.10.
-      - The custom Suricata DNS beacon rule is loaded.
-    execution_steps:
-      - Launch one child powershell.exe with scripts/run_dns_scenario.ps1 and pass the frozen run nonce, beacon.datn.test domain, expected action count, interval CSV and variant index as command-line arguments; the child issues eight lab-only queries through 10.40.0.10.
-    expected_observables:
-      - Sysmon event 22, matching Suricata DNS records and at least one local alert.
-    cleanup_steps:
-      - Stop after eight unique lab-only queries and clear the lab DNS cache if required.
-
-  - scenario_id: C2-MALICIOUS-STAGED-TRANSFER
-    family: c2
-    label: malicious
-    expected_behavior: A safe lab-only staged-transfer simulation downloads a harmless fixed test file.
-    attribution:
-      process_names: [curl.exe, powershell.exe, pwsh.exe]
-      source_ips: [10.20.0.10]
-      destination_ips: [10.40.0.10]
-      destination_ports: [9001]
-      command_contains_any: [/stage.bin]
+      process_names:
+        - "curl.exe"
+      source_ips:
+        - "10.20.0.10"
+      destination_ips:
+        - "10.40.0.10"
+      destination_ports:
+        - 8081
+      command_contains_any:
+        - "/beacon"
     quality_gates:
       min_process_events: 1
       min_network_events: 1
       min_suricata_events: 1
-      forbidden_suricata_signature_ids: [900001, 900002, 900004]
+      required_suricata_signature_ids:
+        - 900001
     preconditions:
-      - Kali serves a harmless fixed stage.bin marker file on 10.40.0.10 port 9001.
-      - No custom Suricata signature targets stage.bin; only flow or HTTP telemetry is expected.
+      - "Kali serves the same harmless fixed body at /beacon on 10.40.0.10:8081 for every HTTP scenario; DNS wildcard www.datn.test resolves to 10.40.0.10."
+      - "WIN11-TARGET traffic traverses NET-SENSOR; Suricata local canary signatures are identical for both labels."
+      - "Freeze an AVAILABLE as-of baseline before either cohort member; native Sysmon clocks and full-bucket parity must pass."
     execution_steps:
-      - Download the fixed harmless stage.bin once with curl.exe using the frozen draft nonce.
+      - "Execute the frozen profile using scripts/run_training_http.ps1 for HTTP or scripts/run_dns_scenario.ps1 for DNS; launch one nonce-traceable child powershell.exe for DNS."
+      - "HTTP uses curl.exe, one fresh connection per action, identical /beacon URI template and response content for both labels. DNS uses the same nonce-qualified unique-name format and suffix for both labels."
+      - "Stop at expected_action_count; retain real action receipts and raw telemetry. Do not substitute generated feature rows."
     expected_observables:
-      - Sysmon process/network evidence and Suricata HTTP or flow evidence without a DATN local alert.
+      - "Sysmon process/network or DNS records plus matching Suricata records; identical canary signatures are evidence, never label-specific gates."
+      - "All 24 features remain unchanged. Counts and cadence are measured from raw telemetry, not copied from this profile."
     cleanup_steps:
-      - Delete $env:TEMP\\stage.bin and verify no executable content was introduced.
-
-  - scenario_id: C2-MALICIOUS-STAGED-TRANSFER-RETRY
-    family: c2
-    label: malicious
-    expected_behavior: Three repeated downloads of a harmless staged marker simulate retry behavior without a signature alert.
-    attribution:
-      process_names: [curl.exe, powershell.exe, pwsh.exe]
-      source_ips: [10.20.0.10]
-      destination_ips: [10.40.0.10]
-      destination_ports: [9001]
-      command_contains_any: [/stage.bin]
-    quality_gates:
-      min_process_events: 3
-      min_network_events: 3
-      min_suricata_events: 3
-      forbidden_suricata_signature_ids: [900001, 900002, 900004]
-    preconditions:
-      - Kali serves the harmless fixed stage.bin marker on 10.40.0.10 port 9001.
-      - No DATN local signature targets stage.bin.
-    execution_steps:
-      - Download stage.bin three times with the draft nonce to distinct temporary names using the 20-second base interval scaled by the frozen draft jitter.
-    expected_observables:
-      - Three Sysmon process/network records and matching Suricata HTTP or flow evidence without a DATN local alert.
-    cleanup_steps:
-      - Delete all three temporary marker files.
+      - "Stop the runner; preserve receipts, service logs and immutable raw evidence; reset only lab context/cache as prescribed before the next run."

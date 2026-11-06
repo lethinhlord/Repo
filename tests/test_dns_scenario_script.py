@@ -24,9 +24,7 @@ def _runbook_section(start: str, end: str) -> str:
 def _catalog_scenario(scenario_id: str) -> dict:
     catalog = yaml.safe_load(CATALOG_PATH.read_text(encoding="utf-8"))
     return next(
-        scenario
-        for scenario in catalog["scenarios"]
-        if scenario["scenario_id"] == scenario_id
+        scenario for scenario in catalog["scenarios"] if scenario["scenario_id"] == scenario_id
     )
 
 
@@ -43,27 +41,17 @@ def test_dns_scenarios_use_one_traceable_child_powershell_process() -> None:
 
 def test_dns_runbook_passes_frozen_values_on_child_command_line() -> None:
     runbook = RUNBOOK_PATH.read_text(encoding="utf-8")
-    benign = _runbook_section(
-        "### C2-BENIGN-DNS", "### C2-BENIGN-API-BURST"
-    )
-    malicious = _runbook_section(
-        "### C2-MALICIOUS-DNS-BEACON", "### C2-MALICIOUS-STAGED-TRANSFER"
-    )
-
-    assert "function Start-DatnDnsScenario" in runbook
-    assert "powershell.exe" in runbook
-    assert "run_dns_scenario.ps1" in runbook
+    wrapper = (PROJECT_ROOT / "scripts/run_frozen_windows.ps1").read_text(encoding="utf-8")
+    assert "run_frozen_windows.ps1 -ParametersFile" in runbook
+    assert "scripts.export_run_parameters" in runbook and "--format json" in runbook
+    assert "ExpectedFileSha256" in runbook
     for argument in ("-RunNonce", "-DomainSuffix", "-Count", "-GapsCsv"):
-        assert argument in runbook
-
-    for section, suffix in (
-        (benign, "www.datn.test"),
-        (malicious, "beacon.datn.test"),
-    ):
-        assert "Start-DatnDnsScenario" in section
-        assert "-DomainSuffix" in section
-        assert suffix in section
-        assert "Resolve-DnsName" not in section
+        assert argument in wrapper
+    for scenario_id in ("C2-BENIGN-DNS", "C2-MALICIOUS-DNS-BEACON"):
+        profile = _catalog_scenario(scenario_id)["execution_profile"]
+        assert profile["domain_suffix"] == "www.datn.test"
+    assert "powershell.exe" in wrapper
+    assert "run_dns_scenario.ps1" in wrapper
 
 
 def test_dns_script_validates_and_executes_only_lab_dns_queries() -> None:
@@ -90,7 +78,9 @@ def test_dns_script_validates_and_executes_only_lab_dns_queries() -> None:
 def test_dns_runbook_uses_child_only_remotesigned_policy() -> None:
     runbook = RUNBOOK_PATH.read_text(encoding="utf-8")
 
-    assert "'-ExecutionPolicy','RemoteSigned'" in runbook
+    assert "-ExecutionPolicy RemoteSigned" in runbook
+    wrapper = (PROJECT_ROOT / "scripts/run_frozen_windows.ps1").read_text()
+    assert "-ExecutionPolicy RemoteSigned" in wrapper
     assert "Get-ExecutionPolicy -List" in runbook
     assert "Zone.Identifier" in runbook
     assert "AllSigned" in runbook
@@ -105,10 +95,7 @@ def test_remotesigned_child_runs_dns_runner_with_mocked_resolver(tmp_path: Path)
         pytest.skip("Windows PowerShell is unavailable")
 
     environment = os.environ.copy()
-    windows_modules = (
-        Path(powershell).parents[3]
-        / "System32/WindowsPowerShell/v1.0/Modules"
-    )
+    windows_modules = Path(powershell).parents[3] / "System32/WindowsPowerShell/v1.0/Modules"
     environment["PSModulePath"] = os.pathsep.join(
         (str(windows_modules), environment.get("PSModulePath", ""))
     )
@@ -198,19 +185,15 @@ function Start-Sleep { param([int]$Milliseconds) }
 
 
 def test_health_poll_runbook_executes_all_eight_frozen_actions() -> None:
-    health = _runbook_section(
-        "### C2-BENIGN-HEALTH-POLL", "### C2-BENIGN-SINGLE-DOWNLOAD"
-    )
     scenario = _catalog_scenario("C2-BENIGN-HEALTH-POLL")
-
     assert scenario["quality_gates"]["min_process_events"] == 8
     assert scenario["quality_gates"]["min_network_events"] == 8
-    assert "Start-DatnHttpScenario 'C2-BENIGN-HEALTH-POLL'" in health
+    assert scenario["execution_profile"]["expected_action_count"] == 8
     runbook = RUNBOOK_PATH.read_text(encoding="utf-8")
-    assert "'-Count',[string]$DatnParameters.expected_action_count" in runbook
-    assert "'-GapsCsv',[string]$DatnParameters.expected_intervals_seconds" in runbook
-    runner = (PROJECT_ROOT / "scripts/run_http_scenario.ps1").read_text(encoding="utf-8")
-    assert "'C2-BENIGN-HEALTH-POLL'=8" in runner
+    wrapper = (PROJECT_ROOT / "scripts/run_frozen_windows.ps1").read_text(encoding="utf-8")
+    assert "run_frozen_windows.ps1 -ParametersFile" in runbook
+    assert "-Count $p.expected_action_count" in wrapper
+    assert "-GapsCsv $p.expected_intervals_seconds" in wrapper
 
 
 def test_account_unlock_uses_supported_winnt_adsi_and_cim_verification() -> None:

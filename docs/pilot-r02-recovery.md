@@ -1,5 +1,8 @@
 # Cập nhật mã và đánh giá phục hồi pilot R02
 
+> Tài liệu lịch sử để điều tra nguyên trạng R02. Thu mới dùng
+> [runbook hiện hành](scenario-collection-runbook.md); không dùng baseline này.
+
 Ngày 05/11/2026. Áp dụng cho run
 `ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS-R02-20261103` trên SOC-AI của Kiên.
 Hướng dẫn này không xác nhận run đã được cứu hoặc đạt VALID.

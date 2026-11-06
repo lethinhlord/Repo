@@ -43,18 +43,15 @@ def build_dataset(config_path: Path) -> dict[str, object]:
             minimum_runs=int(data_config["minimum_runs"]),
             target_runs=int(data_config["target_runs"]),
             minimum_scenarios=int(data_config.get("minimum_scenarios", 5)),
-            maximum_scenario_share=float(
-                data_config.get("maximum_scenario_share", 0.30)
-            ),
+            maximum_scenario_share=float(data_config.get("maximum_scenario_share", 0.30)),
             scenario_catalog_path=Path(data_config["scenario_catalog"]),
             source_config_path=Path(
                 data_config.get("source_config", "config/collection-sources.yaml")
             ),
             taxonomy_path=Path(
-                data_config.get(
-                    "taxonomy", "config/suspicious-process-taxonomy.yaml"
-                )
+                data_config.get("taxonomy", "config/suspicious-process-taxonomy.yaml")
             ),
+            group_key=str(data_config.get("group_key", "scenario_id")),
         )
         if report["status"] not in {"READY", "TARGET_MET"}:
             raise ValueError(
@@ -68,7 +65,20 @@ def build_dataset(config_path: Path) -> dict[str, object]:
             "audit_version": report["audit_version"],
             "report_sha256": _sha256(audit_report_path),
             "collection_contract_sha256": report["collection_contract_sha256"],
+            "collection_design_sha256": report.get("collection_design_sha256"),
+            "collection_candidate": report.get("collection_candidate"),
         }
+        candidate = report.get("collection_candidate")
+        if candidate is not None:
+            from ml.collection_release import capture_candidate
+
+            if (
+                candidate["commit"] != _git_commit()
+                or capture_candidate(Path.cwd(), candidate["tag"]) != candidate
+            ):
+                raise ValueError(
+                    "builder source/runtime differs from accepted collection candidate"
+                )
     records = discover_records(
         Path(data_config["raw_dir"]),
         data_config["manifest_name"],
@@ -81,8 +91,7 @@ def build_dataset(config_path: Path) -> dict[str, object]:
     if group_key not in {"run_id", "scenario_id", "cohort_id"}:
         raise ValueError("data.group_key must be run_id, scenario_id or cohort_id")
     group_strata = {
-        (getattr(record, group_key), f"{record.family}:{record.label}")
-        for record in records
+        (getattr(record, group_key), f"{record.family}:{record.label}") for record in records
     }
     stratum_counts = Counter(stratum for _, stratum in group_strata)
     sparse = {name: count for name, count in stratum_counts.items() if count < minimum_groups}
@@ -119,7 +128,9 @@ def build_dataset(config_path: Path) -> dict[str, object]:
         write_jsonl(output_dir / f"{partition}.jsonl", subset)
 
     challenge = discover_records(
-        Path(data_config["raw_dir"]), data_config["manifest_name"], data_config["records_name"],
+        Path(data_config["raw_dir"]),
+        data_config["manifest_name"],
+        data_config["records_name"],
         include_purposes=("challenge",),
     )
     validate_feature_contract(challenge, schema)
@@ -158,6 +169,9 @@ def build_dataset(config_path: Path) -> dict[str, object]:
             "collection_mode": "REAL_LAB" if audit_summary is not None else "SMOKE_ONLY",
             "collection_contract_sha256": (
                 audit_summary["collection_contract_sha256"] if audit_summary else None
+            ),
+            "collection_design_sha256": (
+                audit_summary["collection_design_sha256"] if audit_summary else None
             ),
         },
         "group_key": group_key,

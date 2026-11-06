@@ -21,7 +21,10 @@ def test_verifier_cli_accepts_signed_active_package(tmp_path, monkeypatch):
     freeze(package)
     result = subprocess.run(
         [sys.executable, "-m", "scripts.verify_model_package", "--package-dir", str(package)],
-        cwd=ROOT, env=os.environ.copy(), capture_output=True, text=True,
+        cwd=ROOT,
+        env=os.environ.copy(),
+        capture_output=True,
+        text=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "PASS:" in result.stdout
@@ -32,11 +35,11 @@ def test_notebook_preinstall_source_binding():
     code = "\n".join("".join(c["source"]) for c in notebook["cells"] if c["cell_type"] == "code")
     before_install = code.split("%pip")[0]
     assert "EXPECTED_TRAINING_COMMIT" in before_install
-    assert 'builder_git_commit' in before_install
-    assert 'builder_config_sha256' in before_install
+    assert "builder_git_commit" in before_install
+    assert "builder_config_sha256" in before_install
     assert 'checkout", "--detach"' in before_install
-    assert 'PROJECT_DIR.exists()' in before_install
-    assert 'feature/week3-model-training' not in code
+    assert "PROJECT_DIR.exists()" in before_install
+    assert "feature/week3-model-training" not in code
 
 
 def test_notebook_gate_rejects_unapproved_or_mismatched_source(tmp_path, monkeypatch):
@@ -57,18 +60,26 @@ def test_notebook_gate_rejects_unapproved_or_mismatched_source(tmp_path, monkeyp
     names = ("train.jsonl", "validation.jsonl", "dataset_manifest.json")
     (stage / names[0]).write_text("synthetic-train")
     (stage / names[1]).write_text("synthetic-validation")
-    (stage / names[2]).write_text(json.dumps({
-        "locked_test_status": "UNOPENED",
-        "provenance": {"builder_git_commit": "a" * 40},
-    }))
-    (stage / "colab-upload.sha256").write_text("".join(
-        f"{hashlib.sha256((stage / name).read_bytes()).hexdigest()}  {name}\n"
-        for name in names
-    ))
+    (stage / names[2]).write_text(
+        json.dumps(
+            {
+                "locked_test_status": "UNOPENED",
+                "provenance": {"builder_git_commit": "a" * 40},
+            }
+        )
+    )
+    (stage / "colab-upload.sha256").write_text(
+        "".join(
+            f"{hashlib.sha256((stage / name).read_bytes()).hexdigest()}  {name}\n" for name in names
+        )
+    )
     namespace = {
-        "DRIVE_DATA_DIR": stage, "PROJECT_DIR": tmp_path / "fresh-project",
-        "EXPECTED_TRAINING_COMMIT": "", "EXPECTED_FILES": (*names, "colab-upload.sha256"),
-        "EXPECTED_DATA_FILES": names, "CHECKSUM_FILE": "colab-upload.sha256",
+        "DRIVE_DATA_DIR": stage,
+        "PROJECT_DIR": tmp_path / "fresh-project",
+        "EXPECTED_TRAINING_COMMIT": "",
+        "EXPECTED_FILES": (*names, "colab-upload.sha256"),
+        "EXPECTED_DATA_FILES": names,
+        "CHECKSUM_FILE": "colab-upload.sha256",
     }
     with pytest.raises(RuntimeError, match="owner-approved"):
         exec(gate, namespace)
@@ -81,19 +92,32 @@ def test_notebook_gate_rejects_unapproved_or_mismatched_source(tmp_path, monkeyp
         exec(gate, namespace)
 
 
-@pytest.mark.parametrize("fault", [None, "checksum", "config"])
+@pytest.mark.parametrize("fault", [None, "checksum", "config", "design", "cohort", "audit_design"])
 def test_notebook_checks_real_detached_checkout_before_install(tmp_path, monkeypatch, fault):
     """Run the exact notebook cell against local Git, without Drive or pip."""
     source = tmp_path / "trusted-source"
     source.mkdir()
     (source / "ml").mkdir()
+    (source / "config").mkdir()
     (source / ".gitattributes").write_bytes((ROOT / ".gitattributes").read_bytes())
     config = b"synthetic-config: true\n"
     (source / "ml/training_config.yaml").write_bytes(config)
+    design = b"synthetic-design: true\n"
+    (source / "config/collection-design.yaml").write_bytes(design)
+    design_hash = hashlib.sha256(design).hexdigest()
     commands = [
-        ["git", "init", "-b", "main"], ["git", "add", "."],
-        ["git", "-c", "user.name=Synthetic QA", "-c", "user.email=qa@example.invalid",
-         "commit", "-m", "Synthetic source, not lab evidence"],
+        ["git", "init", "-b", "main"],
+        ["git", "add", "."],
+        [
+            "git",
+            "-c",
+            "user.name=Synthetic QA",
+            "-c",
+            "user.email=qa@example.invalid",
+            "commit",
+            "-m",
+            "Synthetic source, not lab evidence",
+        ],
     ]
     for command in commands:
         subprocess.run(command, cwd=source, check=True, capture_output=True)
@@ -103,16 +127,27 @@ def test_notebook_checks_real_detached_checkout_before_install(tmp_path, monkeyp
     names = ("train.jsonl", "validation.jsonl", "dataset_manifest.json")
     (staging / names[0]).write_text("SYNTHETIC-NOT-LAB\n")
     (staging / names[1]).write_text("SYNTHETIC-NOT-LAB\n")
-    manifest = {"locked_test_status": "UNOPENED", "provenance": {
-        "builder_git_commit": sha,
-        "builder_config_sha256": hashlib.sha256(config).hexdigest() if fault != "config"
-        else "0" * 64,
-    }}
+    manifest = {
+        "locked_test_status": "UNOPENED",
+        "group_key": "scenario_id" if fault == "cohort" else "cohort_id",
+        "collection_audit": {
+            "collection_design_sha256": "0" * 64 if fault == "audit_design" else design_hash
+        },
+        "provenance": {
+            "builder_git_commit": sha,
+            "builder_config_sha256": hashlib.sha256(config).hexdigest()
+            if fault != "config"
+            else "0" * 64,
+            "collection_design_sha256": "0" * 64 if fault == "design" else design_hash,
+        },
+    }
     (staging / names[2]).write_text(json.dumps(manifest))
-    (staging / "colab-upload.sha256").write_text("".join(
-        f"{hashlib.sha256((staging / name).read_bytes()).hexdigest()}  {name}\n"
-        for name in names
-    ))
+    (staging / "colab-upload.sha256").write_text(
+        "".join(
+            f"{hashlib.sha256((staging / name).read_bytes()).hexdigest()}  {name}\n"
+            for name in names
+        )
+    )
     if fault == "checksum":
         (staging / names[0]).write_text("changed-after-checksum")
     google = types.ModuleType("google")
@@ -121,17 +156,32 @@ def test_notebook_checks_real_detached_checkout_before_install(tmp_path, monkeyp
     monkeypatch.setitem(sys.modules, "google", google)
     monkeypatch.setitem(sys.modules, "google.colab", colab)
     monkeypatch.chdir(tmp_path)
-    namespace = {"DRIVE_DATA_DIR": staging, "PROJECT_DIR": tmp_path / "checkout",
-                 "EXPECTED_TRAINING_COMMIT": sha, "BRANCH": "main", "REPO_URL": str(source),
-                 "EXPECTED_FILES": (*names, "colab-upload.sha256"),
-                 "EXPECTED_DATA_FILES": names, "CHECKSUM_FILE": "colab-upload.sha256"}
+    namespace = {
+        "DRIVE_DATA_DIR": staging,
+        "PROJECT_DIR": tmp_path / "checkout",
+        "EXPECTED_TRAINING_COMMIT": sha,
+        "BRANCH": "main",
+        "REPO_URL": str(source),
+        "EXPECTED_FILES": (*names, "colab-upload.sha256"),
+        "EXPECTED_DATA_FILES": names,
+        "CHECKSUM_FILE": "colab-upload.sha256",
+    }
     notebook = json.loads((ROOT / "notebooks/week3_train_colab.ipynb").read_text("utf-8"))
     gate = "".join(notebook["cells"][4]["source"])
     if fault:
-        with pytest.raises(RuntimeError, match="SHA-256 mismatch|Training config differs"):
+        with pytest.raises(
+            RuntimeError,
+            match="SHA-256 mismatch|Training config differs|Official collection design",
+        ):
             exec(gate, namespace)
     else:
         exec(gate, namespace)
         assert namespace["commit"] == sha
-        assert subprocess.run(["git", "symbolic-ref", "-q", "HEAD"],
-                              cwd=namespace["PROJECT_DIR"], capture_output=True).returncode != 0
+        assert (
+            subprocess.run(
+                ["git", "symbolic-ref", "-q", "HEAD"],
+                cwd=namespace["PROJECT_DIR"],
+                capture_output=True,
+            ).returncode
+            != 0
+        )

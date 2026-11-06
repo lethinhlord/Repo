@@ -1,0 +1,232 @@
+version: "collection-design-v1"
+candidate_tag: "collection-v4.0.0-candidate.1"
+scope: "Exploratory classification of predeclared lab activity profiles; not real-world malicious intent or general C2 detection."
+feature_schema: "features-v3"
+feature_count: 24
+group_key: "cohort_id"
+gate_status: "DESIGN_IMPLEMENTED_LAB_ACCEPTANCE_PENDING"
+automation_eligible: false
+quota:
+  minimum_runs_per_stratum: 10
+  target_runs_per_stratum: 12
+  minimum_scenarios_per_stratum: 5
+  minimum_cohorts_per_stratum: 5
+  minimum_repetitions_per_scenario: 2
+  target_extra_repetition_cohort_suffixes:
+    - "01"
+    - "02"
+  challenge_runs_count_toward_quota: false
+audit_policy:
+  nuisance_features:
+    account:
+      - "remote_logon_ratio"
+      - "source_history_known"
+      - "new_source_for_user"
+    c2:
+      - "suspicious_process"
+      - "destination_port_count"
+      - "destination_history_known"
+      - "new_destination"
+      - "suricata_severity_score"
+  behavioral_features:
+    account:
+      - "failed_login_count"
+      - "successful_login_count"
+      - "success_after_fail"
+      - "unique_target_account_count"
+      - "unique_source_count"
+      - "failure_window_seconds"
+      - "attempt_rate_per_minute"
+    c2:
+      - "periodicity_score"
+      - "connection_interval_cv"
+      - "mean_interval_seconds"
+      - "suricata_alert_count"
+      - "outbound_connection_count"
+      - "unique_destination_count"
+      - "dns_query_count"
+      - "dns_unique_query_ratio"
+      - "flow_total_bytes_log1p"
+  nuisance_separation: "ERROR"
+  behavioral_separation: "WARNING"
+  cross_label_collision: "ERROR"
+  forbidden_feature: "ERROR"
+  legacy_without_design: "strict_unchanged"
+shared_entities:
+  account_names:
+    - "datn_lab01"
+    - "datn_lab02"
+    - "datn_lab03"
+  remote_source_ip: "10.40.0.10"
+  windows_source_ip: "10.20.0.10"
+  http_endpoint: "http://10.40.0.10:8081/beacon"
+  http_process: "curl.exe"
+  dns_suffix: "www.datn.test"
+  dns_server: "10.40.0.10"
+  dns_processes:
+    - "powershell.exe"
+    - "pwsh.exe"
+  http_canary_signature: 900001
+  dns_canary_signature: 900004
+collection:
+  predeclare_purpose: true
+  randomize_label_order_within_cohort: true
+  independent_seed_per_run: true
+  jitter_percent_min: 10
+  jitter_percent_max: 30
+  jitter_directions:
+    - -1
+    - 1
+  same_jitter_distribution_both_labels: true
+  one_fresh_bucket_per_run: true
+  context: "AVAILABLE as-of baseline frozen before action; matched history values within each pair; no post-event enrollment"
+  nonce: "Unique attribution token with the same format on both labels; never a feature"
+  reuse_raw_as_new_run: false
+cohorts:
+  -
+    cohort_id: "ACCOUNT-PAIR-01"
+    family: "account"
+    scenario_ids:
+      - "ACCOUNT-BENIGN-TWO-TYPOS-THEN-SUCCESS"
+      - "ACCOUNT-MALICIOUS-BURST-THEN-SUCCESS"
+    minimum_runs_per_scenario: 2
+    target_runs_per_scenario: 3
+  -
+    cohort_id: "ACCOUNT-PAIR-02"
+    family: "account"
+    scenario_ids:
+      - "ACCOUNT-BENIGN-REMOTE-SESSIONS"
+      - "ACCOUNT-MALICIOUS-REPEATED-FAILURES-6"
+    minimum_runs_per_scenario: 2
+    target_runs_per_scenario: 3
+  -
+    cohort_id: "ACCOUNT-PAIR-03"
+    family: "account"
+    scenario_ids:
+      - "ACCOUNT-BENIGN-MULTIACCOUNT-MAINTENANCE"
+      - "ACCOUNT-MALICIOUS-PASSWORD-SPRAY"
+    minimum_runs_per_scenario: 2
+    target_runs_per_scenario: 2
+  -
+    cohort_id: "ACCOUNT-PAIR-04"
+    family: "account"
+    scenario_ids:
+      - "ACCOUNT-BENIGN-STALE-CREDENTIAL"
+      - "ACCOUNT-MALICIOUS-RAPID-GUESSING"
+    minimum_runs_per_scenario: 2
+    target_runs_per_scenario: 2
+  -
+    cohort_id: "ACCOUNT-PAIR-05"
+    family: "account"
+    scenario_ids:
+      - "ACCOUNT-BENIGN-MULTIACCOUNT-RECOVERY"
+      - "ACCOUNT-MALICIOUS-MULTIACCOUNT-GUESSING"
+    minimum_runs_per_scenario: 2
+    target_runs_per_scenario: 2
+  -
+    cohort_id: "C2-PAIR-01"
+    family: "c2"
+    scenario_ids:
+      - "C2-BENIGN-HEALTH-POLL"
+      - "C2-MALICIOUS-HTTP-BEACON"
+    minimum_runs_per_scenario: 2
+    target_runs_per_scenario: 3
+  -
+    cohort_id: "C2-PAIR-02"
+    family: "c2"
+    scenario_ids:
+      - "C2-BENIGN-SINGLE-DOWNLOAD"
+      - "C2-MALICIOUS-STAGED-TRANSFER"
+    minimum_runs_per_scenario: 2
+    target_runs_per_scenario: 3
+  -
+    cohort_id: "C2-PAIR-03"
+    family: "c2"
+    scenario_ids:
+      - "C2-BENIGN-DNS"
+      - "C2-MALICIOUS-DNS-BEACON"
+    minimum_runs_per_scenario: 2
+    target_runs_per_scenario: 2
+  -
+    cohort_id: "C2-PAIR-04"
+    family: "c2"
+    scenario_ids:
+      - "C2-BENIGN-IRREGULAR-API"
+      - "C2-MALICIOUS-JITTER-BEACON"
+    minimum_runs_per_scenario: 2
+    target_runs_per_scenario: 2
+  -
+    cohort_id: "C2-PAIR-05"
+    family: "c2"
+    scenario_ids:
+      - "C2-BENIGN-API-BURST"
+      - "C2-MALICIOUS-STAGED-TRANSFER-RETRY"
+    minimum_runs_per_scenario: 2
+    target_runs_per_scenario: 2
+challenge_expectations:
+  -
+    scenario_id: "ACCOUNT-CHALLENGE-LOW-NOISE-BENIGN"
+    cohort_id: "ACCOUNT-PAIR-01"
+    expected_decision: "REVIEW"
+    reason: "intent_not_observable"
+    training_eligible: false
+  -
+    scenario_id: "ACCOUNT-CHALLENGE-LOW-NOISE-MALICIOUS"
+    cohort_id: "ACCOUNT-PAIR-01"
+    expected_decision: "REVIEW"
+    reason: "intent_not_observable"
+    training_eligible: false
+  -
+    scenario_id: "ACCOUNT-CHALLENGE-FAST-RETRIES-BENIGN"
+    cohort_id: "ACCOUNT-PAIR-04"
+    expected_decision: "REVIEW"
+    reason: "intent_not_observable"
+    training_eligible: false
+  -
+    scenario_id: "ACCOUNT-CHALLENGE-FAST-RETRIES-MALICIOUS"
+    cohort_id: "ACCOUNT-PAIR-04"
+    expected_decision: "REVIEW"
+    reason: "intent_not_observable"
+    training_eligible: false
+  -
+    scenario_id: "C2-CHALLENGE-POLL-INTENT-BENIGN"
+    cohort_id: "C2-PAIR-01"
+    expected_decision: "REVIEW"
+    reason: "intent_not_observable"
+    training_eligible: false
+  -
+    scenario_id: "C2-CHALLENGE-POLL-INTENT-MALICIOUS"
+    cohort_id: "C2-PAIR-01"
+    expected_decision: "REVIEW"
+    reason: "intent_not_observable"
+    training_eligible: false
+  -
+    scenario_id: "C2-CHALLENGE-DOWNLOAD-INTENT-BENIGN"
+    cohort_id: "C2-PAIR-02"
+    expected_decision: "REVIEW"
+    reason: "intent_not_observable"
+    training_eligible: false
+  -
+    scenario_id: "C2-CHALLENGE-DOWNLOAD-INTENT-MALICIOUS"
+    cohort_id: "C2-PAIR-02"
+    expected_decision: "REVIEW"
+    reason: "intent_not_observable"
+    training_eligible: false
+challenge_evaluation:
+  purpose: "challenge"
+  expected_decision: "REVIEW"
+  post_freeze_only: true
+  threshold_tuning_allowed: false
+  report:
+    - "review_rate"
+    - "confident_benign_rate"
+    - "confident_malicious_rate"
+    - "coverage"
+    - "pair_agreement"
+  limitation: "Expected REVIEW is an evaluation requirement, not a claim that current inference already guarantees it; identical vectors cannot receive opposite correct labels."
+limitations:
+  - "Five cohorts are workflow/template groups on one lab topology, not five independent sites or hosts."
+  - "40-48 valid runs are an initial exploratory training set. Repetitions do not add independent validation cohorts."
+  - "The 3/1/1 outer split leaves one validation cohort per family/label; grouped uncertainty is insufficient and automation remains ineligible."
+  - "Count/cadence signatures may be shared by legitimate and malicious real traffic. Such intent-only cases require review/context beyond these features."
+  - "No actual four-VM acceptance, new pilot, clock correction, runtime REVIEW coverage or model quality is asserted by this file."

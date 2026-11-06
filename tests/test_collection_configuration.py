@@ -76,10 +76,10 @@ def test_collection_runbook_is_portable_isolated_and_failure_safe() -> None:
     assert "LogonType=2" in runbook
     assert "LogonType=3" in runbook
     assert "scripts.export_run_parameters" in runbook
-    assert "DATN_ATTEMPT_DELAY_SECONDS" in runbook
+    assert "pre_action_delay_seconds" in runbook
     assert "payload_size_bytes" not in runbook
-    assert "3-2-2-2-2" in runbook
-    assert "LEGACY_DATASET_NOT_ACCEPTED=PASS" in runbook
+    assert "3-3-2-2-2" in runbook
+    assert "data cũ" in runbook
     assert "events_raw.jsonl" in runbook
     assert "WIN11-01" in runbook
     assert "incompatible raw dataset layout" in runbook
@@ -152,6 +152,8 @@ def test_scenario_catalog_covers_four_strata_with_five_scenarios_each() -> None:
     )
     strata: dict[str, list[str]] = {}
     for scenario in catalog.scenarios:
+        if scenario.purpose != "trainable":
+            continue
         strata.setdefault(f"{scenario.family}:{scenario.label}", []).append(
             scenario.scenario_id
         )
@@ -167,7 +169,7 @@ def test_scenario_catalog_covers_four_strata_with_five_scenarios_each() -> None:
     smb_scenario = next(
         item
         for item in catalog.scenarios
-        if item.scenario_id == "ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS"
+        if item.scenario_id == "ACCOUNT-MALICIOUS-RAPID-GUESSING"
     )
     assert smb_scenario.attribution.logon_types == [3]
     assert smb_scenario.attribution.source_ips == ["10.40.0.10"]
@@ -203,7 +205,8 @@ def test_scenario_catalog_has_enforceable_quality_gates_and_alert_overlap() -> N
         if item.family == "c2" and item.label == "malicious"
     ]
     assert any(item.quality_gates.required_suricata_signature_ids for item in benign_c2)
-    assert any(not item.quality_gates.required_suricata_signature_ids for item in malicious_c2)
+    assert any(item.quality_gates.required_suricata_signature_ids for item in malicious_c2)
+    # Alert presence is shared across both labels, never a ground-truth label.
 
 
 def test_catalog_design_does_not_encode_labels_in_known_low_cardinality_pairs() -> None:
@@ -256,7 +259,10 @@ def test_catalog_design_does_not_encode_labels_in_known_low_cardinality_pairs() 
 
 def test_create_run_draft_uses_catalog_without_copying_execution_commands(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
+    # This unit checks serialization; release authorization has separate tests.
+    monkeypatch.setattr("ml.scenario_collection._release_snapshots", lambda *args: {})
     output = tmp_path / "run.yaml"
     result = create_run_draft(
         catalog_path=PROJECT_ROOT / "config/scenario-catalog.yaml",
@@ -318,7 +324,10 @@ def test_clock_preflight_rejects_stale_measurements() -> None:
         ClockPreflight.model_validate(payload)
 
 
-def test_run_parameters_are_deterministic_for_the_recorded_seed(tmp_path: Path) -> None:
+def test_run_parameters_are_deterministic_for_the_recorded_seed(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    monkeypatch.setattr("ml.scenario_collection._release_snapshots", lambda *args: {})
     outputs = [tmp_path / "first.yaml", tmp_path / "second.yaml"]
     for output in outputs:
         create_run_draft(

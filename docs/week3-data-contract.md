@@ -1,9 +1,10 @@
 # Week 3 ML data contract
 
-Implementation status (31 October 2026): features-v3 is implemented. Official collection
-must wait for the catalog/cohort and four-VM acceptance gates in
-[current status](current-status.md).
-This specification does not certify the existing datasets or a trained model.
+Implementation status (6 November 2026): features-v3 and the paired collection
+design are implemented. Official collection requires the candidate's evidence-bound
+acceptance on the actual four VMs; repository tests and old pilots cannot replace it.
+See [current status](current-status.md) and [collection design](collection-training-design.md).
+This specification does not certify a trained model.
 
 ## Scope
 
@@ -26,8 +27,8 @@ data/raw/
 `run_id` is the atomic collection boundary: every real execution gets a new run ID and
 cannot contain mixed families, labels or scenarios. `cohort_id` identifies a shared
 behavior template or matched counterexample, including templates with both labels.
-All runs in one cohort must stay in one partition. The builder supports this mode;
-the baseline catalog/config still require migration before the collection freeze.
+All runs in one cohort must stay in one partition. The official catalog/config use
+cohort_id: five paired cohorts per family, twenty trainable and eight challenge profiles.
 Legacy `scenario_id` splitting remains for smoke/backward compatibility only.
 
 Example `scenario_manifest.json`:
@@ -94,6 +95,14 @@ policy must be recollected; do not retrofit metadata onto an older dataset.
 The dataset auditor compares every run's source-config and taxonomy hashes, as well as
 its catalog and feature-schema hashes, with the canonical files in the checked-out
 collection commit. A dataset assembled from mixed collection contracts is not ready.
+
+The official start contract additionally binds the full annotated candidate/source/runtime
+inventory and, for trainable runs, the accepted lab evidence snapshot. Enrollment is
+rebuilt from its exact frozen capture; source continuity, cutoff and full capture remain
+mandatory. Design-role exceptions are predeclared, hashed and fixed in code: nuisance
+separation and cross-label vector collisions block; behavioral separation remains a
+visible diagnostic warning. The dataset manifest binds collection_design_sha256 in both
+collection_audit and provenance. These hashes must match the pinned source on Colab.
 
 ## Collection minimum
 

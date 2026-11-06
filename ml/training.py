@@ -46,6 +46,7 @@ def verify_training_partitions(
     schema_path: Path,
     *,
     require_collection_audit: bool = True,
+    collection_design_path: Path | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     """Validate the builder's contract without reading the locked-test partition."""
     manifest = json.loads((processed_dir / "dataset_manifest.json").read_text(encoding="utf-8"))
@@ -66,11 +67,22 @@ def verify_training_partitions(
             "dataset manifest integrity/schema contract is invalid; rebuild partitions"
         )
     provenance = manifest.get("provenance")
-    if not isinstance(provenance, dict) or not _is_sha256(
-        provenance.get("builder_config_sha256")
-    ) or not provenance.get("builder_git_commit"):
+    if (
+        not isinstance(provenance, dict)
+        or not _is_sha256(provenance.get("builder_config_sha256"))
+        or not provenance.get("builder_git_commit")
+    ):
         raise ValueError("dataset builder provenance is missing or invalid")
     collection = manifest.get("collection_audit", {})
+    if collection_design_path is not None:
+        design_hash = hashlib.sha256(collection_design_path.read_bytes()).hexdigest()
+        if (
+            manifest.get("group_key") != "cohort_id"
+            or provenance.get("collection_design_sha256") != design_hash
+            or not isinstance(collection, dict)
+            or collection.get("collection_design_sha256") != design_hash
+        ):
+            raise ValueError("collection design/cohort differs from the pinned source")
     if require_collection_audit and (
         not isinstance(collection, dict)
         or collection.get("status") not in {"READY", "TARGET_MET"}
@@ -99,8 +111,10 @@ def verify_training_partitions(
         ):
             raise ValueError(f"{name} partition integrity check failed")
         rows = [json.loads(line) for line in payload.decode("utf-8").splitlines() if line.strip()]
-        if not rows or len(rows) != contract.get("record_count") or len(rows) != record_counts.get(
-            name
+        if (
+            not rows
+            or len(rows) != contract.get("record_count")
+            or len(rows) != record_counts.get(name)
         ):
             raise ValueError(f"{name} partition record count integrity check failed")
         try:
@@ -299,6 +313,12 @@ def train(config_path: Path) -> dict[str, Any]:
         processed_dir,
         Path(config["feature_schema"]),
         require_collection_audit=bool(config["data"].get("require_collection_audit", True)),
+        collection_design_path=(
+            Path(config["data"]["collection_design"])
+            if config["data"].get("collection_design")
+            and config["data"].get("require_collection_audit", True)
+            else None
+        ),
     )
     audit = leakage_audit(train_rows, validation_rows)
     if not audit["passed"]:
@@ -327,9 +347,7 @@ def train(config_path: Path) -> dict[str, Any]:
             validation_rows, family, feature_order
         )
         family_results: dict[str, Any] = {}
-        candidates = build_candidates(
-            config, random_seed=int(config["random_seed"])
-        )
+        candidates = build_candidates(config, random_seed=int(config["random_seed"]))
         inner_splits = _inner_splits(
             y_train,
             train_groups,
@@ -399,9 +417,7 @@ def train(config_path: Path) -> dict[str, Any]:
         )
         metrics["uncertainty"] = grouped_uncertainty_status(y_validation, validation_groups)
         metrics["latency"] = measure_latency_ms(
-            lambda estimator=calibrated, matrix=x_validation: estimator.predict_proba(matrix)[
-                :, 1
-            ],
+            lambda estimator=calibrated, matrix=x_validation: estimator.predict_proba(matrix)[:, 1],
             repeats=int(config["selection"]["latency_repeats"]),
         )
         metrics["scenario_diagnostics"] = _scenario_diagnostics(

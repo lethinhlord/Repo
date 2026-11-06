@@ -1,5 +1,8 @@
 # Kiên — kiểm thử bản sửa intake và chạy pilot mới sau R03
 
+> Tài liệu lịch sử cho pilot 3.8. Thu mới dùng
+> [runbook hiện hành](scenario-collection-runbook.md); không dùng baseline này.
+
 Ngày 05/11/2026. Hướng dẫn và source pilot có trên GitHub tại tag
 [`pilot-v3.8-20261105`](https://github.com/lethinhlord/Repo/tree/pilot-v3.8-20261105).
 Anchor mã đã kiểm là `0d6e44ffdf4936182a4ee337db78f29116469b94`.
