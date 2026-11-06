@@ -42,7 +42,11 @@ from ml.dataset import (
     load_feature_schema,
     validate_feature_contract,
 )
-from ml.feature_pipeline import aggregate_wazuh_alerts
+from ml.feature_pipeline import (
+    _process_creation_index,
+    _process_observation_matches,
+    aggregate_wazuh_alerts,
+)
 from ml.intake_window import IntakeError, capture_window, verify_capture
 from ml.telemetry import (
     account_observation_eligible,
@@ -861,11 +865,15 @@ def _is_interactive_logon(eventdata: dict[str, Any], attribution: Attribution) -
     return account_observation_eligible(eventdata, attribution.logon_types)
 
 
-def _matches_network(eventdata: dict[str, Any], attribution: Attribution) -> bool:
+def _matches_network(
+    eventdata: dict[str, Any], attribution: Attribution, *, process_image: str | None = None,
+) -> bool:
     if not network_is_outbound(eventdata):
         return False
     process_names = _casefold_set(attribution.process_names)
-    if process_names and _basename(eventdata.get("image")) not in process_names:
+    if process_names and _basename(
+        eventdata.get("image") if process_image is None else process_image
+    ) not in process_names:
         return False
     source_ips = {normalize_ip(value) for value in attribution.source_ips}
     source_ip = normalize_ip(eventdata.get("sourceIp") or eventdata.get("SourceIp") or "")
@@ -1060,14 +1068,10 @@ def _derive_c2(
     attributed_process_guids: set[str] = set()
     process_names = _casefold_set(draft.attribution.process_names)
     command_terms = [term.casefold() for term in draft.attribution.command_contains_any]
-    for event in events:
-        if str((event.get("agent") or {}).get("name")) != source.windows_agent_name:
-            continue
-        event_id, _, eventdata = _windows_fields(event)
+    processes = _process_creation_index(events, source.windows_agent_name)
+    for guid, event in processes.items():
+        _, _, eventdata = _windows_fields(event)
         command_line = str(eventdata.get("commandLine", "")).casefold()
-        guid = _process_guid(eventdata)
-        if event_id != "1":
-            continue
         if (
             (not process_names or _basename(eventdata.get("image")) in process_names)
             and (not command_terms or any(term in command_line for term in command_terms))
@@ -1087,14 +1091,20 @@ def _derive_c2(
             continue
         event_id, _, eventdata = _windows_fields(event)
         guid = _process_guid(eventdata)
+        timestamp = _event_time(event)
+        if (
+            guid not in attributed_process_guids
+            or timestamp is None
+            or not _process_observation_matches(event_id, eventdata, timestamp, processes[guid])
+        ):
+            continue
         if (
             event_id == "3"
-            and _matches_network(eventdata, draft.attribution)
-            and guid in attributed_process_guids
+            and _matches_network(
+                eventdata, draft.attribution,
+                process_image=str(_windows_fields(processes[guid])[2].get("image", "")),
+            )
         ):
-            timestamp = _event_time(event)
-            if timestamp is None:
-                continue
             _validate_attributed_clock(event)
             windows.append(event)
             destination = normalize_ip(eventdata.get("destinationIp"))
@@ -1116,11 +1126,7 @@ def _derive_c2(
             event_id == "22"
             and _matches_dns(eventdata, draft.attribution)
             and nonce in str(eventdata.get("queryName", "")).strip(".").casefold()
-            and guid in attributed_process_guids
         ):
-            timestamp = _event_time(event)
-            if timestamp is None:
-                continue
             _validate_attributed_clock(event)
             windows.append(event)
             dns_events += 1

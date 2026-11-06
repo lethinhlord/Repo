@@ -55,6 +55,57 @@ from ml.telemetry import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
+_UNKNOWN_PROCESS_IMAGES = {"<unknown process>", "&lt;unknown process&gt;"}
+
+
+def _process_creation_index(
+    events: list[dict[str, Any]], windows_agent: str,
+) -> dict[str, dict[str, Any]]:
+    """Index known Event 1 identities, excluding conflicting reuse of a GUID."""
+    creations: dict[str, dict[str, Any]] = {}
+    conflicting: set[str] = set()
+    for event in events:
+        if str((event.get("agent") or {}).get("name")) != windows_agent:
+            continue
+        event_id, _, fields = windows_fields(event)
+        guid = process_guid(fields)
+        if event_id != "1" or not guid:
+            continue
+        previous = creations.get(guid)
+        if previous is not None and (
+            windows_fields(previous)[2] != fields or event_time(previous) != event_time(event)
+        ):
+            conflicting.add(guid)
+        creations.setdefault(guid, event)
+    return {
+        guid: event for guid, event in creations.items()
+        if guid not in conflicting
+        and event_time(event) is not None
+        and basename(windows_fields(event)[2].get("image"))
+        and basename(windows_fields(event)[2].get("image")).strip() not in _UNKNOWN_PROCESS_IMAGES
+    }
+
+
+def _process_observation_matches(
+    event_id: str, fields: dict[str, Any], timestamp: datetime,
+    creation: dict[str, Any],
+) -> bool:
+    """Allow Event 3's literal sentinel only after independent process proof."""
+    process = windows_fields(creation)[2]
+    created_at = event_time(creation)
+    if created_at is None or timestamp < created_at:
+        return False
+    image = str(fields.get("image", "")).strip().casefold()
+    if basename(image) != basename(process.get("image")) and not (
+        event_id == "3" and image in _UNKNOWN_PROCESS_IMAGES
+    ):
+        return False
+    for name in ("processId", "user"):
+        observed = str(fields.get(name, "")).strip().casefold()
+        expected = str(process.get(name, "")).strip().casefold()
+        if observed and expected and observed != expected:
+            return False
+    return True
 
 
 @lru_cache(maxsize=1)
@@ -240,16 +291,12 @@ def _derive_raw_group(
         suspicious = False
         indicator: str | None = None
         attributed: list[WazuhAlert] = []
-        processes: dict[str, tuple[dict[str, Any], datetime, WazuhAlert]] = {}
         windows_agent, sensor_agent = _collection_sources(config)
         configured_sources = {normalize_ip(value) for value in config.get("windows_source_ips", [])}
-        for alert in alerts:
-            if alert.agent.name != windows_agent:
-                continue
-            event_id, eventdata = _windows_fields(alert)
-            guid = process_guid(eventdata)
-            if event_id == "1" and guid and basename(eventdata.get("image")):
-                processes[guid] = (eventdata, alert_event_time(alert), alert)
+        processes = _process_creation_index(
+            [alert.model_dump(mode="json") for alert in alerts], windows_agent,
+        )
+        alerts_by_id = {alert.id: alert for alert in alerts}
 
         observed_sources: set[str] = set()
         used_processes: set[str] = set()
@@ -262,11 +309,8 @@ def _derive_raw_group(
             guid = process_guid(eventdata)
             if guid not in processes:
                 continue
-            process, created_at, _ = processes[guid]
             timestamp = alert_event_time(alert)
-            if timestamp < created_at or basename(eventdata.get("image")) != basename(
-                process.get("image")
-            ):
+            if not _process_observation_matches(event_id, eventdata, timestamp, processes[guid]):
                 continue
             if event_id == "3":
                 source = normalize_ip(eventdata.get("sourceIp"))
@@ -302,8 +346,9 @@ def _derive_raw_group(
             used_processes.add(guid)
             attributed.append(alert)
         for guid in sorted(used_processes):
-            process, _, alert = processes[guid]
-            attributed.append(alert)
+            creation = processes[guid]
+            process = windows_fields(creation)[2]
+            attributed.append(alerts_by_id[creation["id"]])
             suspicious = suspicious or taxonomy_match(
                 process,
                 _process_taxonomy() if taxonomy is None else taxonomy,
