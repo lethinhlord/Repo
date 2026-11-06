@@ -7,6 +7,7 @@ suricata_agent_name: NET-SENSOR
 taxonomy_path: config/suspicious-process-taxonomy.yaml
 scenario_catalog_path: config/scenario-catalog.yaml
 context_baseline_path: evidence/context-baseline.json
+collection_release_path: evidence/collection-acceptance.json
 require_clean_bucket: true
 require_flow_counters: true
 require_online_parity: true

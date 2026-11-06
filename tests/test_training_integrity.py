@@ -19,7 +19,8 @@ def prepare_dataset(root: Path) -> tuple[Path, dict]:
     config = yaml.safe_load((ROOT / "config/training-smoke.yaml").read_text(encoding="utf-8"))
     config["feature_schema"] = str(ROOT / "ml/feature_schema.json")
     config["data"].update(
-        raw_dir=str(root / "raw"), processed_dir=str(root / "processed"),
+        raw_dir=str(root / "raw"),
+        processed_dir=str(root / "processed"),
         splits_dir=str(root / "splits"),
     )
     config["package_dir"] = str(root / "ml/model-package")
@@ -30,7 +31,8 @@ def prepare_dataset(root: Path) -> tuple[Path, dict]:
 
 @pytest.mark.parametrize("partition", ["train", "validation"])
 def test_training_rejects_a_partition_changed_after_build(
-    tmp_path: Path, partition: str,
+    tmp_path: Path,
+    partition: str,
 ) -> None:
     config_path, _ = prepare_dataset(tmp_path)
     path = tmp_path / f"processed/{partition}.jsonl"
@@ -44,7 +46,8 @@ def test_training_rejects_a_partition_changed_after_build(
 
 @pytest.mark.parametrize("changed_field", ["schema", "count", "manifest_type", "provenance"])
 def test_partition_contract_rejects_inconsistent_metadata(
-    tmp_path: Path, changed_field: str,
+    tmp_path: Path,
+    changed_field: str,
 ) -> None:
     prepare_dataset(tmp_path)
     path = tmp_path / "processed/dataset_manifest.json"
@@ -61,7 +64,9 @@ def test_partition_contract_rejects_inconsistent_metadata(
 
     with pytest.raises(ValueError):
         verify_training_partitions(
-            tmp_path / "processed", ROOT / "ml/feature_schema.json", require_collection_audit=False,
+            tmp_path / "processed",
+            ROOT / "ml/feature_schema.json",
+            require_collection_audit=False,
         )
 
 
@@ -70,7 +75,20 @@ def test_real_lab_training_does_not_accept_an_unaudited_smoke_manifest(tmp_path:
 
     with pytest.raises(ValueError, match="collection audit provenance"):
         verify_training_partitions(
-            tmp_path / "processed", ROOT / "ml/feature_schema.json", require_collection_audit=True,
+            tmp_path / "processed",
+            ROOT / "ml/feature_schema.json",
+            require_collection_audit=True,
+        )
+
+
+def test_official_design_cannot_be_missing_or_substituted(tmp_path: Path) -> None:
+    prepare_dataset(tmp_path)
+    with pytest.raises(ValueError, match="collection design"):
+        verify_training_partitions(
+            tmp_path / "processed",
+            ROOT / "ml/feature_schema.json",
+            require_collection_audit=False,
+            collection_design_path=ROOT / "config/collection-design.yaml",
         )
 
 
@@ -82,11 +100,13 @@ def test_trainer_output_is_consumed_by_colab_result_and_archive_cells(
     metadata = train(config_path)
     notebook = json.loads((ROOT / "notebooks/week3_train_colab.ipynb").read_text(encoding="utf-8"))
     result_cell = next(
-        "".join(cell["source"]) for cell in notebook["cells"]
+        "".join(cell["source"])
+        for cell in notebook["cells"]
         if "candidate_rows = []" in "".join(cell["source"])
     )
     archive_cell = next(
-        "".join(cell["source"]) for cell in notebook["cells"]
+        "".join(cell["source"])
+        for cell in notebook["cells"]
         if "experiment_summary = {" in "".join(cell["source"])
     )
 
@@ -104,10 +124,16 @@ def test_trainer_output_is_consumed_by_colab_result_and_archive_cells(
     evidence_dir.mkdir()
     (evidence_dir / "week3-colab-training.log").write_text("synthetic test\n", encoding="utf-8")
     environment = {
-        "PROJECT_DIR": tmp_path, "DRIVE_OUTPUT_DIR": tmp_path / "drive-results",
-        "EVIDENCE_DIR": evidence_dir, "Path": Path, "json": json,
-        "manifest": manifest, "pd": Tables, "display": lambda _: None,
-        "commit": "synthetic-test", "RANDOM_SEED": 42,
+        "PROJECT_DIR": tmp_path,
+        "DRIVE_OUTPUT_DIR": tmp_path / "drive-results",
+        "EVIDENCE_DIR": evidence_dir,
+        "Path": Path,
+        "json": json,
+        "manifest": manifest,
+        "pd": Tables,
+        "display": lambda _: None,
+        "commit": "synthetic-test",
+        "RANDOM_SEED": 42,
     }
     exec(result_cell, environment)
     exec(archive_cell, environment)

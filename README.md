@@ -22,15 +22,17 @@ Real-lab collection uses the four-VM procedure in
 [the collection runbook](docs/scenario-collection-runbook.md). Follow its setup,
 measured clock preflight, context enrollment and pilot gates in order. Run drafts
 require `--clock-preflight` from that measured preflight; an abbreviated command
-cannot replace it. G7 remains closed until cohort/challenge/taxonomy release and
-real-lab acceptance are complete. A merged software fix is not a collection baseline.
+cannot replace it. The current candidate is
+[collection-v4.0.0-candidate.1](https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.1).
+It implements the paired cohort design, neutral actor runners and evidence-bound
+per-lab acceptance. Pilot → preflight replay → backup restore → acceptance must
+succeed on the actual four VMs before trainable collection opens. Repository tests
+do not certify the remote lab or a trained model.
 
-The maintained pilot release is `pilot-v3.8-20261105`; see
-[current status](docs/current-status.md) and the
-[3.8 verification record](docs/audit-v38-validation-20261105.md).
-The November handoff's eight dataset outputs now match their recorded hashes,
-but its C2 native-clock discrepancies still require source evidence. See the
-[record-level timestamp comparison](docs/dataset-handoff-20261105.md).
+See [current status](docs/current-status.md) and the
+[collection design and limits](docs/collection-training-design.md). The new four-pilot
+handoff replays VALID/PASS with this candidate; historical handoff clock failures
+remain historical evidence and are not rewritten.
 
 Use `main` as the maintained entry point and the exact approved source SHA for
 collection, dataset building and training. The Colab notebook accepts

@@ -1,4 +1,4 @@
-"""End-to-end acceptance coverage for the checked-in collection catalog."""
+"""Historical v3.8 collector compatibility; official-profile acceptance is tested separately."""
 
 from __future__ import annotations
 
@@ -90,7 +90,7 @@ def _prepare_collection_root(tmp_path: Path) -> tuple[Path, Path, ScenarioCatalo
     catalog_path = tmp_path / "config/scenario-catalog.yaml"
     taxonomy_path = tmp_path / "config/suspicious-process-taxonomy.yaml"
     schema_path = tmp_path / "ml/feature_schema.json"
-    shutil.copyfile(PROJECT_ROOT / "config/scenario-catalog.yaml", catalog_path)
+    shutil.copyfile(PROJECT_ROOT / "fixtures/legacy/scenario-catalog-v3.8.yaml", catalog_path)
     shutil.copyfile(
         PROJECT_ROOT / "config/suspicious-process-taxonomy.yaml", taxonomy_path
     )
@@ -102,6 +102,7 @@ def _prepare_collection_root(tmp_path: Path) -> tuple[Path, Path, ScenarioCatalo
         (PROJECT_ROOT / "config/collection-sources.yaml").read_text(encoding="utf-8")
     )
     source_payload["wazuh_archives_path"] = str(archive_path)
+    source_payload.pop("collection_release_path", None)  # The frozen legacy protocol predates G7.
     source_path = tmp_path / "config/collection-sources.yaml"
     source_path.write_text(
         yaml.safe_dump(source_payload, sort_keys=False), encoding="utf-8"
@@ -393,6 +394,7 @@ def _collect_run(
     *,
     sequence: int,
     repeat: int,
+    purpose: str | None = None,
 ) -> str:
     run_id = f"ACCEPT-{scenario.scenario_id}-R{repeat + 1}"
     action_started_at = COLLECTION_BASE + sequence * RUN_SPACING + timedelta(seconds=5)
@@ -406,6 +408,7 @@ def _collect_run(
         draft_path,
         collection_seed=20_261_027 + sequence,
         clock_preflight=_clock_preflight(collection_started_at),
+        purpose=purpose,
     )
     draft = RunDraft.model_validate(
         yaml.safe_load(draft_path.read_text(encoding="utf-8"))

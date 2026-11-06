@@ -20,6 +20,16 @@ leakage and produce input accepted by the existing Week 3 grouped-split pipeline
 6. The collector fails rather than silently converting a missing source to observed zero.
 7. The locked test remains unopened; the collector and auditor operate only on `data/raw`.
 
+## Official collection release
+The current candidate is collection-v4.0.0-candidate.1. Its20trainable+8challenge
+catalog uses flat execution_profile schedules, neutral accounts and shared endpoints.
+Five paired cohorts per family are split atomically using cohort_id. Two repetitions
+per scenario produce40valid trainable runs; optional third repetitions in PAIR-01/02
+produce48. This is an exploratory profile benchmark, not a general intent detector.
+Per-lab acceptance replays four new candidate-bound pilots, preflight and backup
+restore before trainable start. Keep frozen source/runtime/context evidence and
+the locked-test boundary. See docs/scenario-collection-runbook.md for executable steps.
+
 ## Tech Stack
 
 - Python 3.12, Pydantic 2.13.5, PyYAML 6.0.3.
@@ -36,11 +46,11 @@ leakage and produce input accepted by the existing Week 3 grouped-split pipeline
 # Only after the full runbook has produced a draft from measured --clock-preflight.
 # Start, bind the action to frozen parameters, finalize and validate a run
 .venv-ml/bin/python -m scripts.scenario_session start --draft run-draft.yaml
-.venv-ml/bin/python -m scripts.export_run_parameters --run-id RUN_ID --format powershell
-.venv-ml/bin/python -m scripts.scenario_session begin-action --run-id RUN_ID
+.venv-ml/bin/python -m scripts.export_run_parameters --run-id RUN_ID --format json
+.venv-ml/bin/python -m scripts.scenario_session begin-action --run-id RUN_ID --wait-for-window
 # Execute exactly one catalog action here.
 .venv-ml/bin/python -m scripts.scenario_session complete-action --run-id RUN_ID
-.venv-ml/bin/python -m scripts.scenario_session finalize --run-id RUN_ID
+.venv-ml/bin/python -m scripts.scenario_session finalize --run-id RUN_ID --wait-for-window
 .venv-ml/bin/python -m scripts.scenario_session validate --run-id RUN_ID
 
 # Audit all four strata
@@ -57,7 +67,7 @@ leakage and produce input accepted by the existing Week 3 grouped-split pipeline
 ```text
 config/collection-sources.yaml          Source paths and agent identities
 config/suspicious-process-taxonomy.yaml Versioned process/command taxonomy
-config/scenario-catalog.yaml             Five safe scenarios per stratum
+config/scenario-catalog.yaml             Twenty trainable plus eight challenge profiles
 config/sysmon-datn.xml                   Required Sysmon event families
 config/suricata-datn.rules               Deterministic lab-only signatures
 ml/scenario_collection.py               Collector and feature derivation

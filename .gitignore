@@ -33,6 +33,8 @@ run-drafts/
 operator-logs/
 evidence/operator-parameter-exports/
 evidence/collection-source-commit.txt
+evidence/collection-acceptance*.json
+evidence/collection-candidate*.json
 n8n/data/
 artifacts/runtime/
 ml/splits/*.txt

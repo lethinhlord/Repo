@@ -8,6 +8,7 @@ import os
 import random
 import re
 import shutil
+import subprocess
 import tempfile
 import time
 from contextlib import suppress
@@ -35,6 +36,8 @@ from ml.context import (
     context_from_events,
     context_observation_as_of,
     load_baseline,
+    verify_baseline_capture,
+    verify_lab_enrollment,
 )
 from ml.dataset import (
     DatasetRecord,
@@ -42,7 +45,11 @@ from ml.dataset import (
     load_feature_schema,
     validate_feature_contract,
 )
-from ml.feature_pipeline import aggregate_wazuh_alerts
+from ml.feature_pipeline import (
+    _process_creation_index,
+    _process_observation_matches,
+    aggregate_wazuh_alerts,
+)
 from ml.intake_window import IntakeError, capture_window, verify_capture
 from ml.telemetry import (
     account_observation_eligible,
@@ -242,6 +249,7 @@ class SourceConfig(BaseModel):
     taxonomy_path: str
     scenario_catalog_path: str = Field(min_length=1)
     context_baseline_path: str | None = None
+    collection_release_path: str | None = None
     require_clean_bucket: bool = False
     require_flow_counters: bool = False
     require_online_parity: bool = False
@@ -257,6 +265,7 @@ class ScenarioDefinition(BaseModel):
     purpose: Literal["trainable", "challenge", "pilot"] = "trainable"
     cohort_id: str | None = Field(default=None, min_length=1, max_length=128)
     expected_behavior: str = Field(min_length=1)
+    execution_profile: dict[str, int | float | str | bool] = Field(default_factory=dict)
     attribution: Attribution
     quality_gates: QualityGates
     preconditions: list[str] = Field(min_length=1)
@@ -306,8 +315,17 @@ def _resolve(project_root: Path, value: str) -> Path:
     return path if path.is_absolute() else project_root / path
 
 
-def _normalized_source(source: SourceConfig, project_root: Path) -> dict[str, Any]:
+def _source_document(source: SourceConfig) -> dict[str, Any]:
     payload = source.model_dump(mode="json")
+    # Historical v2 start contracts predate this field. Preserve their exact
+    # normalized document when it was not configured; never retrofit provenance.
+    if source.collection_release_path is None:
+        payload.pop("collection_release_path", None)
+    return payload
+
+
+def _normalized_source(source: SourceConfig, project_root: Path) -> dict[str, Any]:
+    payload = _source_document(source)
     payload["wazuh_archives_path"] = str(
         _resolve(project_root, source.wazuh_archives_path).resolve()
     )
@@ -320,6 +338,35 @@ def _normalized_source(source: SourceConfig, project_root: Path) -> dict[str, An
             _resolve(project_root, source.context_baseline_path).resolve()
         )
     return payload
+
+
+def _release_snapshots(source: SourceConfig, root: Path, purpose: str) -> dict[str, Any]:
+    from ml.collection_release import (
+        ReleaseError,
+        assert_collection_authorized,
+        capture_candidate,
+        digest,
+    )
+    design_path = root / "config/collection-design.yaml"
+    tracked = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "--error-unmatch", "config/collection-design.yaml"],
+        capture_output=True, check=False,
+    ).returncode == 0
+    if not source.collection_release_path and not design_path.exists() and not tracked:
+        return {}  # Backward-compatible standalone legacy/fixture contract.
+    if not source.collection_release_path:
+        raise CollectionError("official collection source requires collection_release_path")
+    try:
+        design = _read_yaml(design_path)
+        candidate = capture_candidate(root, design["candidate_tag"])
+        result = {"collection_candidate": candidate,
+                  "collection_candidate_sha256": digest(candidate)}
+        release = assert_collection_authorized(source, root, purpose)
+        if release is not None:
+            result.update(collection_release=release, collection_release_sha256=digest(release))
+        return result
+    except (OSError, KeyError, ValueError, ReleaseError) as exc:
+        raise CollectionError(f"collection release gate: {exc}") from exc
 
 
 def _validate_draft_against_catalog(draft: RunDraft, catalog_path: Path) -> None:
@@ -353,6 +400,20 @@ def _validate_draft_against_catalog(draft: RunDraft, catalog_path: Path) -> None
         raise CollectionError(f"draft does not match scenario catalog: {draft.scenario_id}")
     if draft.purpose not in {scenario.purpose, "pilot"} or draft.cohort_id != scenario.cohort_id:
         raise CollectionError("draft purpose/cohort does not match the frozen scenario catalog")
+    if scenario.execution_profile:
+        from ml.execution_profile import freeze_execution_profile, validate_frozen_profile
+        try:
+            validate_frozen_profile(scenario.execution_profile, draft.scenario_parameters)
+            if draft.collection_seed is None or isinstance(draft.collection_seed, bool):
+                raise ValueError("official profiles require an explicit integer collection seed")
+            rng = random.Random(draft.collection_seed)
+            common = {"pre_action_delay_seconds": round(rng.uniform(1.0, 5.0), 3)}
+            if draft.scenario_parameters != freeze_execution_profile(
+                scenario.execution_profile, rng, common, draft.run_id, draft.collection_seed,
+            ):
+                raise ValueError("profile parameters do not reproduce the recorded collection seed")
+        except ValueError as exc:
+            raise CollectionError(str(exc)) from exc
 
 
 def _atomic_text(path: Path, text: str) -> None:
@@ -402,7 +463,12 @@ def create_run_draft(
     common_parameters: dict[str, int | float | str | bool] = {
         "pre_action_delay_seconds": round(rng.uniform(1.0, 5.0), 3),
     }
-    if scenario.family == "account":
+    if scenario.execution_profile:
+        from ml.execution_profile import freeze_execution_profile
+        parameters = freeze_execution_profile(
+            scenario.execution_profile, rng, common_parameters, run_id, seed,
+        )
+    elif scenario.family == "account":
         parameters = dict(common_parameters)
         if scenario.scenario_id == "ACCOUNT-MALICIOUS-FAIL-THEN-SUCCESS":
             parameters["attempt_delay_seconds"] = round(rng.uniform(1.0, 5.0), 3)
@@ -464,6 +530,14 @@ def create_run_draft(
     except ValueError as exc:
         raise CollectionError(f"invalid run draft values: {exc}") from exc
     _validate_draft_against_catalog(draft, catalog_path)
+    if scenario.execution_profile or (
+        catalog_path.resolve().parent / "collection-design.yaml"
+    ).exists():
+        project_root = catalog_path.resolve().parent.parent
+        official_source = SourceConfig.model_validate(
+            _read_yaml(project_root / "config/collection-sources.yaml")
+        )
+        _release_snapshots(official_source, project_root, draft.purpose)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     _atomic_text(
         output_path,
@@ -653,6 +727,10 @@ def start_run(
     if not catalog_path.is_file():
         raise CollectionError(f"scenario catalog does not exist: {catalog_path}")
     _validate_draft_against_catalog(draft, catalog_path)
+    if (draft.scenario_parameters.get("execution_profile_version")
+            and not source.collection_release_path):
+        raise CollectionError("official action profiles require collection_release_path")
+    release_snapshots = _release_snapshots(source, project_root, draft.purpose)
     schema_path = project_root / "ml/feature_schema.json"
     if not schema_path.is_file():
         schema_path = Path(__file__).with_name("feature_schema.json")
@@ -683,6 +761,13 @@ def start_run(
             raise CollectionError("context enrollment capture is missing") from exc
         if hashlib.sha256(capture_bytes).hexdigest() != baseline.source_capture_sha256:
             raise CollectionError("context enrollment capture is missing or its hash differs")
+        if source.collection_release_path:
+            try:
+                verify_baseline_capture(baseline, capture_bytes,
+                                        windows_agent_name=source.windows_agent_name)
+                verify_lab_enrollment(baseline, capture_bytes)
+            except ValueError as exc:
+                raise CollectionError(str(exc)) from exc
 
     started_at = _utc(now)
     if baseline and not baseline.captured_at <= started_at < baseline.valid_until:
@@ -729,6 +814,7 @@ def start_run(
         "frozen_parameters_sha256": frozen_parameters_sha256,
         "execution_receipt": None,
         "origin_project_root": str(project_root),
+        **release_snapshots,
         "context_baseline_sha256": (
             hashlib.sha256(context_bytes).hexdigest() if context_bytes is not None else None
         ),
@@ -746,7 +832,8 @@ def start_run(
     start_contract = {
         "version": "collection-start-contract-v2",
         "origin_project_root": str(project_root),
-        "source_document": source.model_dump(mode="json"),
+        "source_document": _source_document(source),
+        **release_snapshots,
         "context_baseline_sha256": state["context_baseline_sha256"],
         "context_capture_sha256": state["context_capture_sha256"],
         "run_id": draft.run_id,
@@ -861,11 +948,15 @@ def _is_interactive_logon(eventdata: dict[str, Any], attribution: Attribution) -
     return account_observation_eligible(eventdata, attribution.logon_types)
 
 
-def _matches_network(eventdata: dict[str, Any], attribution: Attribution) -> bool:
+def _matches_network(
+    eventdata: dict[str, Any], attribution: Attribution, *, process_image: str | None = None,
+) -> bool:
     if not network_is_outbound(eventdata):
         return False
     process_names = _casefold_set(attribution.process_names)
-    if process_names and _basename(eventdata.get("image")) not in process_names:
+    if process_names and _basename(
+        eventdata.get("image") if process_image is None else process_image
+    ) not in process_names:
         return False
     source_ips = {normalize_ip(value) for value in attribution.source_ips}
     source_ip = normalize_ip(eventdata.get("sourceIp") or eventdata.get("SourceIp") or "")
@@ -1004,6 +1095,11 @@ def _derive_account(
         )
     if not selected:
         raise CollectionError("no attributable Windows account events were collected")
+    from ml.execution_profile import validate_account_observations
+    try:
+        validate_account_observations(draft.scenario_parameters, observations)
+    except ValueError as exc:
+        raise CollectionError(str(exc)) from exc
     features = derive_account_features(observations)
     failures = int(features["failed_login_count"])
     successes = int(features["successful_login_count"])
@@ -1060,14 +1156,10 @@ def _derive_c2(
     attributed_process_guids: set[str] = set()
     process_names = _casefold_set(draft.attribution.process_names)
     command_terms = [term.casefold() for term in draft.attribution.command_contains_any]
-    for event in events:
-        if str((event.get("agent") or {}).get("name")) != source.windows_agent_name:
-            continue
-        event_id, _, eventdata = _windows_fields(event)
+    processes = _process_creation_index(events, source.windows_agent_name)
+    for guid, event in processes.items():
+        _, _, eventdata = _windows_fields(event)
         command_line = str(eventdata.get("commandLine", "")).casefold()
-        guid = _process_guid(eventdata)
-        if event_id != "1":
-            continue
         if (
             (not process_names or _basename(eventdata.get("image")) in process_names)
             and (not command_terms or any(term in command_line for term in command_terms))
@@ -1087,14 +1179,20 @@ def _derive_c2(
             continue
         event_id, _, eventdata = _windows_fields(event)
         guid = _process_guid(eventdata)
+        timestamp = _event_time(event)
+        if (
+            guid not in attributed_process_guids
+            or timestamp is None
+            or not _process_observation_matches(event_id, eventdata, timestamp, processes[guid])
+        ):
+            continue
         if (
             event_id == "3"
-            and _matches_network(eventdata, draft.attribution)
-            and guid in attributed_process_guids
+            and _matches_network(
+                eventdata, draft.attribution,
+                process_image=str(_windows_fields(processes[guid])[2].get("image", "")),
+            )
         ):
-            timestamp = _event_time(event)
-            if timestamp is None:
-                continue
             _validate_attributed_clock(event)
             windows.append(event)
             destination = normalize_ip(eventdata.get("destinationIp"))
@@ -1116,11 +1214,7 @@ def _derive_c2(
             event_id == "22"
             and _matches_dns(eventdata, draft.attribution)
             and nonce in str(eventdata.get("queryName", "")).strip(".").casefold()
-            and guid in attributed_process_guids
         ):
-            timestamp = _event_time(event)
-            if timestamp is None:
-                continue
             _validate_attributed_clock(event)
             windows.append(event)
             dns_events += 1
@@ -1409,6 +1503,7 @@ def verify_feature_provenance(
         source = SourceConfig.model_validate(state.get("source"))
     except (OSError, ValueError, TypeError) as exc:
         raise CollectionError(f"invalid feature provenance configuration: {exc}") from exc
+    _validate_draft_against_catalog(draft, evidence_dir / "scenario-catalog.yaml")
     if _payload_sha256(draft.model_dump(mode="json")) != manifest.provenance_sha256:
         raise CollectionError("raw provenance draft digest does not match manifest")
     tolerance = timedelta(seconds=draft.clock_preflight.maximum_skew_seconds)
@@ -1555,6 +1650,11 @@ def _verify_start_snapshot(
         "source",
         "archive_cursor",
     )
+    release_fields = ("collection_candidate", "collection_candidate_sha256",
+                      "collection_release", "collection_release_sha256")
+    bound_fields += tuple(
+        name for name in release_fields if name in state or name in start_contract
+    )
     if any(start_contract.get(name) != state.get(name) for name in bound_fields):
         raise CollectionError("runtime state differs from the immutable start contract")
     parameters_path = evidence_dir / "execution-parameters.json"
@@ -1620,7 +1720,7 @@ def _verify_start_snapshot(
         # Runtime paths identify the original capture, not the recovery checkout.
         # Both the parsed document and its original resolved paths are immutable.
         if (
-            start_contract.get("source_document") != snapshot_source.model_dump(mode="json")
+            start_contract.get("source_document") != _source_document(snapshot_source)
             or start_contract.get("origin_project_root") != state.get("origin_project_root")
             or not isinstance(start_contract.get("origin_project_root"), str)
         ):
@@ -1634,7 +1734,7 @@ def _verify_start_snapshot(
         }
         if any(
             normalized_source.get(name) != value
-            for name, value in snapshot_source.model_dump(mode="json").items()
+            for name, value in _source_document(snapshot_source).items()
             if name not in path_fields
         ):
             raise CollectionError("portable source values differ from runtime origin")
@@ -1642,6 +1742,29 @@ def _verify_start_snapshot(
         normalized_source = _normalized_source(snapshot_source, project_root.resolve())
     if normalized_source != start_contract.get("source"):
         raise CollectionError("normalized source differs from the immutable start contract")
+    if snapshot_source.collection_release_path:
+        from ml.collection_release import ReleaseError, digest, verify_frozen_acceptance
+        candidate = state.get("collection_candidate")
+        if (not isinstance(candidate, dict)
+                or state.get("collection_candidate_sha256") != digest(candidate)):
+            raise CollectionError("missing or altered frozen candidate source/runtime")
+        if not start_contract.get("context_baseline_sha256") or frozen_baseline is None:
+            raise CollectionError("official collection requires frozen enrollment context")
+        try:
+            verify_baseline_capture(
+                frozen_baseline, (evidence_dir / "context-capture.jsonl").read_bytes(),
+                windows_agent_name=snapshot_source.windows_agent_name,
+            )
+            verify_lab_enrollment(
+                frozen_baseline, (evidence_dir / "context-capture.jsonl").read_bytes(),
+            )
+        except ValueError as exc:
+            raise CollectionError(str(exc)) from exc
+        if state["draft"].get("purpose") == "trainable":
+            try:
+                verify_frozen_acceptance(state)
+            except ReleaseError as exc:
+                raise CollectionError(str(exc)) from exc
     cursor = start_contract.get("archive_cursor")
     if (
         not isinstance(cursor, dict)
@@ -1688,7 +1811,7 @@ def _reserved_action_seconds(draft: RunDraft) -> float:
         return result
 
     pre_delay = seconds(parameters.get("pre_action_delay_seconds", 0.0))
-    if draft.family == "account":
+    if draft.family == "account" and not parameters.get("execution_profile_version"):
         attempt_delay = seconds(parameters.get("attempt_delay_seconds", 0.0))
         attempts = (
             draft.quality_gates.min_account_failures + draft.quality_gates.min_account_successes

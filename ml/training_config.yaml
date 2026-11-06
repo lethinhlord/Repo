@@ -8,7 +8,8 @@ data:
   splits_dir: ml/splits
   manifest_name: scenario_manifest.json
   records_name: incidents.jsonl
-  group_key: scenario_id
+  group_key: cohort_id
+  collection_design: config/collection-design.yaml
   minimum_groups_per_family_label: 5
   require_collection_audit: true
   evidence_dir: evidence/scenario-runs

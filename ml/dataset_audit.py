@@ -11,6 +11,7 @@ from typing import Any
 import yaml
 
 from api.app.contracts import IncidentRequest
+from ml.collection_design import load_collection_design, separation_severity
 from ml.dataset import (
     DatasetRecord,
     ScenarioManifest,
@@ -496,6 +497,7 @@ def audit_dataset(
     source_config_path: Path = Path("config/collection-sources.yaml"),
     taxonomy_path: Path = Path("config/suspicious-process-taxonomy.yaml"),
     mode: str = "final",
+    group_key: str | None = None,
 ) -> dict[str, Any]:
     if mode not in {"progress", "final"}:
         raise ValueError("audit mode must be progress or final")
@@ -521,6 +523,10 @@ def audit_dataset(
         if item.purpose == "trainable":
             expected_scenarios[f"{item.family}:{item.label}"].add(item.scenario_id)
     schema = load_feature_schema(Path(__file__).with_name("feature_schema.json"))
+    design = load_collection_design(scenario_catalog_path)
+    group_key = group_key or ("cohort_id" if design else "scenario_id")
+    if group_key not in {"cohort_id", "scenario_id"} or (design and group_key != "cohort_id"):
+        raise ValueError("collection design requires cohort-level splitting")
     catalog_sha256 = _sha256(scenario_catalog_path)
     schema_sha256 = _sha256(Path(__file__).with_name("feature_schema.json"))
     try:
@@ -596,6 +602,17 @@ def audit_dataset(
         if manifest is not None:
             candidates[run_id] = (manifest, incidents)
 
+    collection_candidate = None
+    if design and candidates:
+        from ml.collection_release import ReleaseError, summarize_candidates
+
+        try:
+            collection_candidate = summarize_candidates(
+                evidence_dir, sorted(candidates), design["candidate_tag"]
+            )
+        except ReleaseError as exc:
+            _issue(issues, "COLLECTION_CANDIDATE_MISMATCH", str(exc))
+
     if evidence_dir.is_dir():
         for run_dir in sorted(path for path in evidence_dir.iterdir() if path.is_dir()):
             if run_dir.name in candidates:
@@ -641,7 +658,8 @@ def audit_dataset(
         if previous != run_id:
             invalid_runs.update({previous, run_id})
             _issue(
-                issues, "BUCKET_REUSE",
+                issues,
+                "BUCKET_REUSE",
                 f"host {manifest.host} reuses UTC bucket {bucket} with {previous}",
                 run_id=run_id,
             )
@@ -668,9 +686,7 @@ def audit_dataset(
     valid = {
         run_id: value for run_id, value in all_valid.items() if value[0].purpose == "trainable"
     }
-    parameter_rows: dict[str, list[tuple[str, int, dict[str, Any]]]] = {
-        name: [] for name in STRATA
-    }
+    parameter_rows: dict[str, list[tuple[str, int, dict[str, Any]]]] = {name: [] for name in STRATA}
     for run_id, (manifest, _) in valid.items():
         if manifest.collection_seed is None:
             continue
@@ -698,9 +714,7 @@ def audit_dataset(
             )
     for family in ("account", "c2"):
         benign = [parameters for _, _, parameters in parameter_rows[f"{family}:benign"]]
-        malicious = [
-            parameters for _, _, parameters in parameter_rows[f"{family}:malicious"]
-        ]
+        malicious = [parameters for _, _, parameters in parameter_rows[f"{family}:malicious"]]
         if not benign or not malicious:
             continue
         shared_numeric = set.intersection(
@@ -717,14 +731,15 @@ def audit_dataset(
             malicious_values = [float(row[name]) for row in malicious if name in row]
             if not benign_values or not malicious_values:
                 continue
-            separated = max(benign_values) < min(malicious_values) or max(
-                malicious_values
-            ) < min(benign_values)
+            separated = max(benign_values) < min(malicious_values) or max(malicious_values) < min(
+                benign_values
+            )
             if separated:
                 _issue(
                     issues,
                     "PARAMETER_LABEL_SEPARATION",
                     f"{family} parameter {name} separates labels; use overlapping ranges",
+                    severity=("WARNING" if design and name == "expected_action_count" else "ERROR"),
                 )
     family_feature_values: dict[str, dict[str, dict[str, list[float]]]] = {
         family: {
@@ -766,17 +781,22 @@ def audit_dataset(
                 continue
             benign_range = (min(benign_values), max(benign_values))
             malicious_range = (min(malicious_values), max(malicious_values))
-            separated = (
-                benign_range[1] < malicious_range[0]
-                or malicious_range[1] < benign_range[0]
-            )
+            separated = benign_range[1] < malicious_range[0] or malicious_range[1] < benign_range[0]
             if separated:
+                severity = separation_severity(design, family, {feature})
                 _issue(
                     issues,
                     "FEATURE_LABEL_SEPARATION",
-                    f"{feature} perfectly separates {family} labels; collect scenarios "
-                    "whose benign and malicious value ranges overlap before training "
-                    f"(benign={benign_range}, malicious={malicious_range})",
+                    (
+                        f"{feature} separates {family} labels; "
+                        + (
+                            "observable-target diagnostic: inspect held-out/challenge performance "
+                            if severity == "WARNING"
+                            else "collect overlapping nuisance behavior "
+                        )
+                        + f"(benign={benign_range}, malicious={malicious_range})"
+                    ),
+                    severity=severity,
                 )
         family_rows: dict[str, list[dict[str, float]]] = {"benign": [], "malicious": []}
         for manifest, incidents in valid.values():
@@ -787,12 +807,8 @@ def audit_dataset(
                 for incident in incidents
             )
         for first, second in combinations(feature_names, 2):
-            benign_pairs = {
-                (row[first], row[second]) for row in family_rows["benign"]
-            }
-            malicious_pairs = {
-                (row[first], row[second]) for row in family_rows["malicious"]
-            }
+            benign_pairs = {(row[first], row[second]) for row in family_rows["benign"]}
+            malicious_pairs = {(row[first], row[second]) for row in family_rows["malicious"]}
             if (
                 benign_pairs
                 and malicious_pairs
@@ -808,7 +824,9 @@ def audit_dataset(
                         issues,
                         "JOINT_FEATURE_LABEL_SEPARATION",
                         f"the low-cardinality pair ({first}, {second}) perfectly "
-                        f"separates {family} labels; collect overlapping joint behavior",
+                        f"separates {family} labels; inspect its declared semantic role "
+                        "and held-out/challenge behavior",
+                        severity=separation_severity(design, family, {first, second}),
                     )
     stratum_runs: dict[str, list[ScenarioManifest]] = {name: [] for name in STRATA}
     for manifest, _ in valid.values():
@@ -852,9 +870,11 @@ def audit_dataset(
                 f"missing={sorted(expected - set(scenarios))}, "
                 f"unexpected={sorted(set(scenarios) - expected)}",
             )
-        if count >= minimum_runs and scenarios and max(scenarios.values()) - min(
-            scenarios.values()
-        ) > 1:
+        if (
+            count >= minimum_runs
+            and scenarios
+            and max(scenarios.values()) - min(scenarios.values()) > 1
+        ):
             _issue(
                 issues,
                 "SCENARIO_IMBALANCE",
@@ -884,14 +904,17 @@ def audit_dataset(
         # Only collection progress/design checks may be deferred. All raw,
         # checksum, provenance, collision and contract errors remain blocking.
         progress_codes = {
-            "STRATUM_SHORTAGE", "SCENARIO_DIVERSITY", "SCENARIO_CONCENTRATION",
-            "SCENARIO_CATALOG_COVERAGE", "SCENARIO_IMBALANCE",
-            "FEATURE_LABEL_SEPARATION", "JOINT_FEATURE_LABEL_SEPARATION",
+            "STRATUM_SHORTAGE",
+            "SCENARIO_DIVERSITY",
+            "SCENARIO_CONCENTRATION",
+            "SCENARIO_CATALOG_COVERAGE",
+            "SCENARIO_IMBALANCE",
+            "FEATURE_LABEL_SEPARATION",
+            "JOINT_FEATURE_LABEL_SEPARATION",
             "PARAMETER_LABEL_SEPARATION",
         }
         pending_issues = [
-            {**issue, "severity": "PENDING"}
-            for issue in issues if issue["code"] in progress_codes
+            {**issue, "severity": "PENDING"} for issue in issues if issue["code"] in progress_codes
         ]
         issues = [issue for issue in issues if issue["code"] not in progress_codes]
     error_count = sum(issue["severity"] == "ERROR" for issue in issues)
@@ -909,12 +932,14 @@ def audit_dataset(
         "audit_version": "dataset-audit-v2",
         "audit_mode": mode,
         "pending_issues": pending_issues,
-        "collection_contract_sha256": _payload_sha256({
-            "source_config_sha256": source_config_sha256,
-            "taxonomy_sha256": taxonomy_sha256,
-            "scenario_catalog_sha256": catalog_sha256,
-            "feature_schema_sha256": schema_sha256,
-        }),
+        "collection_contract_sha256": _payload_sha256(
+            {
+                "source_config_sha256": source_config_sha256,
+                "taxonomy_sha256": taxonomy_sha256,
+                "scenario_catalog_sha256": catalog_sha256,
+                "feature_schema_sha256": schema_sha256,
+            }
+        ),
         "status": status,
         "minimum_policy": (
             f"{minimum_runs}..{target_runs} valid independent runs, exactly "
@@ -923,7 +948,9 @@ def audit_dataset(
         ),
         "target_policy": f"exactly {target_runs} valid independent runs per family/label",
         "collection_unit": "run_id",
-        "split_group_key": "scenario_id",
+        "split_group_key": group_key,
+        "collection_candidate": collection_candidate,
+        "collection_design_sha256": design["sha256"] if design else None,
         "raw_event_rows_are_independent_samples": False,
         "discovered_runs": len(candidates),
         "total_valid_runs": len(valid),
@@ -931,6 +958,7 @@ def audit_dataset(
         "invalid_run_count": len(invalid_runs),
         "excluded_aborted_run_count": len(excluded_aborted_runs),
         "error_count": error_count,
+        "warning_count": sum(issue["severity"] == "WARNING" for issue in issues),
         "strata": strata,
         "issues": issues,
     }
@@ -963,13 +991,10 @@ def format_audit_report(report: dict[str, Any]) -> str:
         rows.append("")
         rows.append("ISSUES:")
         rows.extend(
-            f"- [{item['code']}] {item['run_id']}: {item['message']}"
+            f"- [{item['severity']}:{item['code']}] {item['run_id']}: {item['message']}"
             for item in report["issues"]
         )
     if report.get("pending_issues"):
         rows.append("PENDING COLLECTION CHECKS (not final readiness):")
-        rows.extend(
-            f"- [{item['code']}] {item['message']}"
-            for item in report["pending_issues"]
-        )
+        rows.extend(f"- [{item['code']}] {item['message']}" for item in report["pending_issues"])
     return "\n".join(rows) + "\n"
