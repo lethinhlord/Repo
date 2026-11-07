@@ -45,8 +45,15 @@ PY
 chmod 600 .env
 ```
 
-The signing key must remain available for every package that may be rolled back. Key
-rotation requires re-freezing a verified candidate; never edit `FROZEN.json` manually.
+The signing key must remain available for every package that may be rolled back.
+Freeze is write-once: repeating it verifies and returns the original manifest byte for
+byte; changed artifacts cannot be re-signed in place. Never edit or remove `FROZEN.json`.
+For key rotation, set `MODEL_PACKAGE_SIGNING_KEY` to the new signing key and retain
+previous keys in `MODEL_PACKAGE_VERIFICATION_KEYS`, a secret JSON array of strings.
+Mount/pass this same keyring to all verifiers and runtime containers. Existing releases
+and evaluation records retain their original signatures and opening provenance; only
+new releases use the new key. Removing an old key makes its releases and records
+unverifiable, so retain it through the rollback/evidence retention window.
 
 ## 2. Create an immutable release directory
 
@@ -215,3 +222,31 @@ release, and verify `/model/ready` reports the previous exact version. A release
 accepted until both signed packages pass `ml.freeze_model --verify-only` and the rollback
 check succeeds. Monitoring rows are keyed by model version, so candidate observations do
 not contaminate the restored model's counters.
+
+
+## Immutable release evaluation evidence
+
+Keep the release read-only. Evaluators accept `--evidence-dir` or
+`MODEL_EVALUATION_EVIDENCE_DIR` as the separate writable evidence root. An explicit
+argument must agree with the configured deployment root. Each release stores evidence
+under `<root>/<SHA256-of-FROZEN.json>/`; paths must not traverse symlinks or junctions.
+The API uses `/app/state/model-evaluations` in its existing persistent state volume.
+Run evaluators in that same Compose service/volume, not against a new host directory:
+
+```bash
+# At the approved Week 6 gate only. The processed directory is mounted read-only.
+docker compose run --rm --no-deps \
+  -v "$PWD/data/processed:/evaluation-input:ro" api \
+  python -m ml.evaluate --package-dir /app/ml/model-package \
+  --locked-test /evaluation-input/locked_test.jsonl --unlock-locked-test
+```
+
+The shared runtime semantic validator runs before reservation or any locked-test read.
+Reservation is durable and exclusive; failure after reservation consumes the attempt.
+Metrics and signed opening records are published exclusively, never replaced. The
+opening signature binds model version, frozen manifest, test hash and metrics hash.
+Runtime reads the same evidence store and still detects legacy package-local markers.
+Legacy local evidence remains supported for existing packages; immutable deployments
+must use the configured external root. Back up the whole persistent evidence volume;
+changing roots, removing markers or restoring incomplete evidence does not authorize
+a new evaluation. A new deployment must retain the same evidence store for rollback.

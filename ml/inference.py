@@ -11,7 +11,8 @@ import numpy as np
 
 from api.app.contracts import IncidentRequest, ModelMetricsResponse, PredictionResponse
 from ml.behavior_features import FEATURE_SCHEMA_VERSION
-from ml.freeze_model import PACKAGE_FILES, verify_frozen_manifest
+from ml.evaluation_evidence import evidence_directory
+from ml.freeze_model import PACKAGE_FILES, verify_evidence, verify_frozen_manifest
 from ml.model_monitoring import ModelMonitoringStore
 
 
@@ -27,7 +28,10 @@ class ModelRuntime:
     OOD_ALERT_MINIMUM_SAMPLES = 200
     OOD_ALERT_RATE = 0.05
 
-    def __init__(self, package_dir: Path, *, monitoring_path: Path | None = None):
+    def __init__(
+        self, package_dir: Path, *, monitoring_path: Path | None = None,
+        evidence_dir: Path | None = None,
+    ):
         self.package_dir = package_dir
         required = (*PACKAGE_FILES, "FROZEN.json")
         missing = [name for name in required if not (package_dir / name).is_file()]
@@ -55,6 +59,9 @@ class ModelRuntime:
             self.metadata, self.thresholds, schema, self.feature_profile,
         )):
             raise ModelPackageError("model package documents must be mappings")
+        calibration_bins = self.metadata.get("calibration_bins", 10)
+        if type(calibration_bins) is not int or calibration_bins < 2:
+            raise ModelPackageError("invalid calibration bin policy")
         if freeze.get("model_version") != self.metadata.get("model_version"):
             raise ModelPackageError("freeze and metadata versions do not match")
         if schema.get("version") != self.metadata.get("feature_schema_version"):
@@ -82,6 +89,14 @@ class ModelRuntime:
             features = profile.get("features") if isinstance(profile, dict) else None
             if not isinstance(features, dict) or set(features) != set(feature_order):
                 raise ModelPackageError(f"{family} required feature profile is incomplete")
+            for profile in features.values():
+                try:
+                    lower, upper = float(profile["ood_lower"]), float(profile["ood_upper"])
+                    valid = math.isfinite(lower) and math.isfinite(upper) and lower <= upper
+                except (TypeError, KeyError, ValueError):
+                    valid = False
+                if not valid:
+                    raise ModelPackageError(f"{family} feature profile OOD bounds are invalid")
         self.schema = schema
 
         # joblib is executable deserialization. It is loaded only after every immutable
@@ -102,7 +117,9 @@ class ModelRuntime:
             threshold = self.thresholds["families"][family]
             if not isinstance(artifact, dict) or not isinstance(threshold, dict):
                 raise ModelPackageError(f"{family} model and threshold must be mappings")
-            if float(artifact["threshold"]) != float(threshold.get("threshold")):
+            if (not math.isfinite(float(artifact["threshold"]))
+                    or not 0.0 <= float(artifact["threshold"]) <= 1.0
+                    or float(artifact["threshold"]) != float(threshold.get("threshold"))):
                 raise ModelPackageError(f"{family} model and document threshold mismatch")
             if artifact.get("feature_order") != schema_families.get(family):
                 raise ModelPackageError(f"{family} feature schema mismatch")
@@ -116,22 +133,40 @@ class ModelRuntime:
             ):
                 raise ModelPackageError(f"{family} binary estimator capability is invalid")
 
+        self.evidence_dir = evidence_directory(package_dir, evidence_dir)
         # Validate any pre-existing opening record at construction as well.
         _ = self._read_locked_test_status()
         self.monitoring = ModelMonitoringStore(monitoring_path)
 
     def _read_locked_test_status(self) -> str:
+        paths = [self.package_dir]
+        if self.evidence_dir != self.package_dir:
+            paths.append(self.evidence_dir)
+        statuses = [self._read_evidence_status(path) for path in paths]
+        for status in ("EVIDENCE_INTEGRITY_ERROR", "OPENED_INCOMPLETE", "EVALUATED"):
+            if status in statuses:
+                return status
+        return "UNOPENED"
+
+    def _read_evidence_status(self, evidence_dir: Path) -> str:
+        if evidence_dir != self.package_dir:
+            if evidence_dir.is_symlink() or evidence_dir.resolve() != evidence_dir.absolute():
+                raise ModelPackageError("evaluation evidence path integrity failed")
+            if any((evidence_dir / name).is_symlink() for name in (
+                "LOCKED_TEST_RESERVED", "metrics_locked_test.json", "LOCKED_TEST_OPENED.json",
+            )):
+                raise ModelPackageError("evaluation evidence files must not be symlinks")
         if not (self.package_dir / "FROZEN.json").is_file():
             raise ModelPackageError("locked-test opening record cannot be checked without freeze")
         status = (
             "OPENED_INCOMPLETE"
             if any(path.exists() or path.is_symlink() for path in (
-                self.package_dir / "LOCKED_TEST_RESERVED",
-                self.package_dir / "metrics_locked_test.json",
+                evidence_dir / "LOCKED_TEST_RESERVED",
+                evidence_dir / "metrics_locked_test.json",
             ))
             else "UNOPENED"
         )
-        opened_path = self.package_dir / "LOCKED_TEST_OPENED.json"
+        opened_path = evidence_dir / "LOCKED_TEST_OPENED.json"
         if opened_path.exists() or opened_path.is_symlink():
             try:
                 opened = json.loads(opened_path.read_text(encoding="utf-8"))
@@ -139,6 +174,11 @@ class ModelRuntime:
                 raise ModelPackageError("invalid locked-test opening record") from exc
             if not isinstance(opened, dict):
                 raise ModelPackageError("invalid locked-test opening record")
+            if evidence_dir != self.package_dir or "signature_hmac_sha256" in opened:
+                try:
+                    verify_evidence(opened)
+                except ValueError as exc:
+                    raise ModelPackageError(str(exc)) from exc
             freeze_sha256 = hashlib.sha256(
                 (self.package_dir / "FROZEN.json").read_bytes()
             ).hexdigest()
@@ -149,7 +189,7 @@ class ModelRuntime:
                 != self.metadata.get("locked_test_sha256")
             ):
                 raise ModelPackageError("locked-test opening record integrity failed")
-            metrics_path = self.package_dir / "metrics_locked_test.json"
+            metrics_path = evidence_dir / "metrics_locked_test.json"
             try:
                 metrics_bytes = metrics_path.read_bytes()
                 metrics = json.loads(metrics_bytes)

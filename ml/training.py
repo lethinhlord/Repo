@@ -26,6 +26,7 @@ from ml.dataset import (
     validate_feature_contract,
     write_json,
 )
+from ml.evaluation_evidence import runtime_policy_hash
 from ml.metrics import (
     classification_metrics,
     grouped_bootstrap_intervals,
@@ -41,12 +42,29 @@ def _is_sha256(value: Any) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
 
 
+def verify_builder_provenance(
+    manifest: dict[str, Any], *, config_path: Path | None, expected_commit: str | None,
+) -> None:
+    """Shared local/Colab source binding; run before reading either training partition."""
+    provenance = manifest.get("provenance", {})
+    if expected_commit is not None and (
+        expected_commit == "unknown" or provenance.get("builder_git_commit") != expected_commit
+    ):
+        raise ValueError("dataset builder commit differs from the executing training commit")
+    if config_path is not None and provenance.get("builder_config_sha256") != hashlib.sha256(
+        config_path.read_bytes()
+    ).hexdigest():
+        raise ValueError("dataset builder config differs from the executing training config")
+
+
 def verify_training_partitions(
     processed_dir: Path,
     schema_path: Path,
     *,
     require_collection_audit: bool = True,
     collection_design_path: Path | None = None,
+    config_path: Path | None = None,
+    expected_commit: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     """Validate the builder's contract without reading the locked-test partition."""
     manifest = json.loads((processed_dir / "dataset_manifest.json").read_text(encoding="utf-8"))
@@ -73,6 +91,7 @@ def verify_training_partitions(
         or not provenance.get("builder_git_commit")
     ):
         raise ValueError("dataset builder provenance is missing or invalid")
+    verify_builder_provenance(manifest, config_path=config_path, expected_commit=expected_commit)
     collection = manifest.get("collection_audit", {})
     if collection_design_path is not None:
         design_hash = hashlib.sha256(collection_design_path.read_bytes()).hexdigest()
@@ -267,6 +286,38 @@ def _inner_splits(
     return splits
 
 
+def grouped_calibrated_probabilities(
+    estimator, x: np.ndarray, labels: np.ndarray, groups: np.ndarray, *,
+    outer_splits: list[tuple[np.ndarray, np.ndarray]], folds: int,
+    method: str, random_seed: int,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Cross-fit calibration entirely inside each outer training group partition."""
+    probabilities = np.empty(len(labels), dtype=float)
+    audit: dict[str, Any] = {"probability_scale": "calibrated_probability", "folds": []}
+    for fitted, heldout in outer_splits:
+        calibration_folds = min(folds, *(len(np.unique(groups[fitted][labels[fitted] == label]))
+                                         for label in (0, 1)))
+        if calibration_folds < 2:
+            raise ValueError("nested calibration requires two training groups per label per fold")
+        inner = _inner_splits(
+            labels[fitted], groups[fitted], folds=calibration_folds, random_seed=random_seed,
+        )
+        model = CalibratedClassifierCV(
+            estimator=clone(estimator), method=method, cv=inner, ensemble=False,
+        )
+        model.fit(x[fitted], labels[fitted])
+        probabilities[heldout] = model.predict_proba(x[heldout])[:, 1]
+        audit["folds"].append({
+            "fit_groups": np.unique(groups[fitted]).tolist(),
+            "assessment_groups": np.unique(groups[heldout]).tolist(),
+            "calibration_folds": [{
+                "fit_groups": np.unique(groups[fitted][train]).tolist(),
+                "assessment_groups": np.unique(groups[fitted][test]).tolist(),
+            } for train, test in inner],
+        })
+    return probabilities, audit
+
+
 def _scenario_diagnostics(
     rows: list[dict[str, Any]],
     family: str,
@@ -312,6 +363,8 @@ def train(config_path: Path) -> dict[str, Any]:
     train_rows, validation_rows, manifest = verify_training_partitions(
         processed_dir,
         Path(config["feature_schema"]),
+        config_path=config_path,
+        expected_commit=_git_commit(),
         require_collection_audit=bool(config["data"].get("require_collection_audit", True)),
         collection_design_path=(
             Path(config["data"]["collection_design"])
@@ -378,6 +431,7 @@ def train(config_path: Path) -> dict[str, Any]:
                     y_train,
                     inner_probabilities,
                     inner_threshold["threshold"],
+                    calibration_bins=int(config["selection"]["calibration_bins"]),
                 ),
             }
         selected_name = max(
@@ -405,12 +459,14 @@ def train(config_path: Path) -> dict[str, Any]:
             y_validation,
             probabilities,
             selected_threshold["threshold"],
+            calibration_bins=int(config["selection"]["calibration_bins"]),
         )
         metrics["confidence_intervals"] = grouped_bootstrap_intervals(
             y_validation,
             probabilities,
             validation_groups,
             selected_threshold["threshold"],
+            calibration_bins=int(config["selection"]["calibration_bins"]),
             iterations=int(config["selection"]["bootstrap_iterations"]),
             confidence=float(config["selection"]["bootstrap_confidence"]),
             random_seed=int(config["random_seed"]),
@@ -426,7 +482,18 @@ def train(config_path: Path) -> dict[str, Any]:
             probabilities,
             selected_threshold["threshold"],
         )
-        inner_threshold = family_results[selected_name]["inner_cv_threshold"]
+        stability_probabilities, stability_audit = grouped_calibrated_probabilities(
+            candidates[selected_name], x_train, y_train, train_groups,
+            outer_splits=inner_splits, folds=int(config["selection"]["inner_cv_folds"]),
+            method=str(config["selection"]["calibration_method"]),
+            random_seed=int(config["random_seed"]),
+        )
+        inner_threshold = select_threshold(
+            y_train, stability_probabilities,
+            minimum_precision=float(config["selection"]["minimum_precision"]),
+        )
+        family_results[selected_name]["stability_calibrated_threshold"] = inner_threshold
+        family_results[selected_name]["stability_crossfit"] = stability_audit
         threshold_delta = abs(
             float(selected_threshold["threshold"]) - float(inner_threshold["threshold"])
         )
@@ -446,6 +513,8 @@ def train(config_path: Path) -> dict[str, Any]:
         selected_threshold["uncertainty_status"] = metrics["uncertainty"]["status"]
         selected_threshold["inner_cv_threshold"] = inner_threshold["threshold"]
         selected_threshold["threshold_delta"] = threshold_delta
+        selected_threshold["stability_probability_scale"] = "calibrated_probability"
+        selected_threshold["stability_partition"] = "train_nested_grouped_cv"
         family_results[selected_name]["validation"] = metrics
         artifacts[family] = {
             "estimator": calibrated,
@@ -480,6 +549,7 @@ def train(config_path: Path) -> dict[str, Any]:
         "model_version": f"week3-{trained_at.strftime('%Y%m%dT%H%M%SZ')}",
         "feature_schema_version": schema["version"],
         "training_timestamp_utc": trained_at.isoformat(),
+        "runtime_policy_sha256": runtime_policy_hash(),
         "dataset_hash_sha256": manifest["dataset_hash_sha256"],
         "dataset_provenance": manifest["provenance"],
         "training_partition_sha256": {
@@ -497,6 +567,7 @@ def train(config_path: Path) -> dict[str, Any]:
         "model_selection_partition": "train_grouped_cv",
         "calibration_partition": "train_grouped_cv",
         "calibration_revision": calibration_document["revision"],
+        "calibration_bins": int(config["selection"]["calibration_bins"]),
         "partition_record_counts": manifest["record_counts"],
         "libraries": {
             "python": platform.python_version(),

@@ -248,6 +248,7 @@ the approved Week 6 gate only:
 .venv-ml/bin/python -m ml.evaluate \
   --package-dir "$MODEL_PACKAGE_HOST_DIR" \
   --locked-test data/processed/locked_test.jsonl \
+  --evidence-dir "$MODEL_EVALUATION_EVIDENCE_DIR" \
   --unlock-locked-test
 ```
 
@@ -291,3 +292,56 @@ taskbar or VMware frame.
     version without raw features or incident identifiers.
 
 Do not capture passwords, SSH private keys, API keys, `.env`, or raw personal data.
+
+
+## Audit corrections: provenance, calibration and challenge replay
+
+Local training and the Colab partition gate use the same builder provenance validator.
+The builder commit must equal the executing training commit, and the byte hash of the
+training configuration must equal the builder configuration hash, before train or
+validation is read. Rebuild under an approved source/configuration if they differ; do
+not edit manifest hashes to bypass this gate. The Colab pre-install owner approval and
+detached source checkout checks remain in force.
+
+`selection.calibration_bins` now defines validation ECE, reliability curves, bootstrap
+ECE intervals and the calibration gate consistently. Its value is frozen in metadata
+and used again for locked-test metrics. Threshold stability compares validation
+probabilities with calibrated out-of-fold training probabilities. Each outer held-out
+group is excluded from both estimator fitting and inner grouped calibration; the
+chosen stability threshold and fold group inventory are retained in validation metrics.
+Candidate ranking retains its original uncalibrated inner-CV metrics. Nested calibration
+requires at least two fitting groups per label in every outer fold; it fails closed
+when the dataset cannot support this. Existing calibration limits and insufficient
+independent validation group safeguards remain unchanged.
+
+For an immutable release, use the shared writable evidence volume described in
+`model-operations-runbook.md`. The host command above requires its root to refer to that
+same deployment store; prefer the documented Compose invocation to avoid separate
+host/container evidence histories. Never make the release writable for evaluation.
+
+Challenge evaluation is a separate, post-freeze, write-once replay and does not open
+locked-test data or change thresholds. Newly trained metadata binds the dataset
+manifest, collection design and runtime decision code; the preserved `incident`
+payload supplies original context, observation quality and review reasons to
+`ModelRuntime.predict`. The evaluator never injects the expected REVIEW decision.
+
+```bash
+docker compose run --rm --no-deps \
+  -v "$PWD/data/processed:/evaluation-input:ro" \
+  -v "$PWD/config/collection-design.yaml:/evaluation-design.yaml:ro" api \
+  python -m ml.evaluate_challenge --package-dir /app/ml/model-package \
+  --challenge /evaluation-input/challenge.jsonl \
+  --manifest /evaluation-input/dataset_manifest.json \
+  --design /evaluation-design.yaml
+```
+
+The signed report contains per-scenario expected/actual decisions, review and confident
+benign/malicious rates, scenario coverage, missing scenarios and pair agreement
+(equal decision distributions across observed scenarios in a cohort). A confident
+binary decision against a REVIEW expectation is reported as FAIL, not rewritten as
+REVIEW. Incomplete coverage also fails. Preserve `CHALLENGE_RESERVED` and the report
+in the release evidence namespace, including interrupted or failing attempts. Do not
+use the challenge result for tuning this release. Legacy packages without the runtime
+policy commitment or datasets without preserved incident context cannot be replayed;
+prepare a new reviewed dataset/package before challenge evaluation. Synthetic replay
+tests establish tooling behavior only, not four-VM acceptance or real model quality.
