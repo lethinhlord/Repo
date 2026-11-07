@@ -59,16 +59,25 @@ _UNKNOWN_PROCESS_IMAGES = {"<unknown process>", "&lt;unknown process&gt;"}
 
 
 def _process_creation_index(
-    events: list[dict[str, Any]], windows_agent: str,
+    events: list[dict[str, Any]], windows_agent: str, *, as_of: datetime | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Index known Event 1 identities, excluding conflicting reuse of a GUID."""
     creations: dict[str, dict[str, Any]] = {}
     conflicting: set[str] = set()
+    terminated: set[str] = set()
     for event in events:
         if str((event.get("agent") or {}).get("name")) != windows_agent:
             continue
+        timestamp = event_time(event)
+        if timestamp is None or (as_of is not None and timestamp > as_of):
+            continue
         event_id, _, fields = windows_fields(event)
         guid = process_guid(fields)
+        if as_of is not None and guid and sysmon_clock_issues(event):
+            conflicting.add(guid)
+            continue
+        if as_of is not None and event_id == "5" and guid:
+            terminated.add(guid)
         if event_id != "1" or not guid:
             continue
         previous = creations.get(guid)
@@ -79,7 +88,7 @@ def _process_creation_index(
         creations.setdefault(guid, event)
     return {
         guid: event for guid, event in creations.items()
-        if guid not in conflicting
+        if guid not in conflicting and guid not in terminated
         and event_time(event) is not None
         and basename(windows_fields(event)[2].get("image"))
         and basename(windows_fields(event)[2].get("image")).strip() not in _UNKNOWN_PROCESS_IMAGES
@@ -242,6 +251,7 @@ def _derive_raw_group(
     family: str,
     config: dict[str, Any] | None = None,
     taxonomy: dict[str, Any] | None = None,
+    process_context: list[WazuhAlert] | None = None,
 ) -> tuple[dict[str, float], list[str], list[str], str | None, list[WazuhAlert]]:
     config = _collection_config() if config is None else config
     if family == "account":
@@ -293,13 +303,18 @@ def _derive_raw_group(
         attributed: list[WazuhAlert] = []
         windows_agent, sensor_agent = _collection_sources(config)
         configured_sources = {normalize_ip(value) for value in config.get("windows_source_ips", [])}
-        processes = _process_creation_index(
-            [alert.model_dump(mode="json") for alert in alerts], windows_agent,
-        )
+        identity_events = {
+            item.id: item.model_dump(mode="json") for item in [*(process_context or []), *alerts]
+        }
+        identities_by_guid: dict[str, list[dict[str, Any]]] = {}
+        for identity in identity_events.values():
+            kind, _, fields = windows_fields(identity)
+            if kind in {"1", "5"}:
+                identities_by_guid.setdefault(process_guid(fields), []).append(identity)
         alerts_by_id = {alert.id: alert for alert in alerts}
 
         observed_sources: set[str] = set()
-        used_processes: set[str] = set()
+        used_processes: dict[str, dict[str, Any]] = {}
         for alert in alerts:
             if alert.agent.name != windows_agent:
                 continue
@@ -307,9 +322,12 @@ def _derive_raw_group(
             if event_id not in {"3", "22"}:
                 continue
             guid = process_guid(eventdata)
+            timestamp = alert_event_time(alert)
+            processes = _process_creation_index(
+                identities_by_guid.get(guid, []), windows_agent, as_of=timestamp,
+            )
             if guid not in processes:
                 continue
-            timestamp = alert_event_time(alert)
             if not _process_observation_matches(event_id, eventdata, timestamp, processes[guid]):
                 continue
             if event_id == "3":
@@ -343,12 +361,13 @@ def _derive_raw_group(
                     continue
                 network.append(NetworkObservation(timestamp, query, 53, query))
                 indicator = indicator or query
-            used_processes.add(guid)
+            used_processes[guid] = processes[guid]
             attributed.append(alert)
         for guid in sorted(used_processes):
-            creation = processes[guid]
+            creation = used_processes[guid]
             process = windows_fields(creation)[2]
-            attributed.append(alerts_by_id[creation["id"]])
+            if creation["id"] in alerts_by_id:
+                attributed.append(alerts_by_id[creation["id"]])
             suspicious = suspicious or taxonomy_match(
                 process,
                 _process_taxonomy() if taxonomy is None else taxonomy,
@@ -449,6 +468,7 @@ def _build_response(
     baseline: BaselineSnapshot | None = None,
     source_config: dict[str, Any] | None = None,
     taxonomy: dict[str, Any] | None = None,
+    process_context: list[WazuhAlert] | None = None,
 ) -> FeaturePipelineResponse:
     config = _collection_config() if source_config is None else source_config
     first = alerts[0]
@@ -458,6 +478,7 @@ def _build_response(
         family,
         config,
         taxonomy,
+        process_context,
     )
     ordered_alerts = sorted(alerts, key=lambda item: (alert_event_time(item), item.id))
     context_events = [item.model_dump(mode="json") for item in attributed]
@@ -601,6 +622,7 @@ def aggregate_wazuh_alerts(
     source_config: dict[str, Any] | None = None,
     taxonomy: dict[str, Any] | None = None,
     use_runtime_baseline: bool = True,
+    process_context: list[WazuhAlert] | None = None,
 ) -> FeatureBatchResponse:
     config = _collection_config() if source_config is None else source_config
     if not 1 <= window_minutes <= 5:
@@ -615,6 +637,13 @@ def aggregate_wazuh_alerts(
             raise ValueError(f"duplicate alert id has conflicting payload: {alert.id}")
         unique_by_id.setdefault(alert.id, alert)
     ordered = sorted(unique_by_id.values(), key=lambda item: (alert_event_time(item), item.id))
+    # Identity proof is separate from bucket members: prior starts/exits may
+    # validate a current observation, but never contribute prior behavior counts,
+    # severity, context observations, timestamps, or incident membership.
+    identities = [
+        item for item in [*(process_context or []), *ordered]
+        if _windows_fields(item)[0] in {"1", "5"}
+    ]
     groups: dict[tuple[tuple[str, str, str], datetime], list[WazuhAlert]] = {}
     unknown_sources: dict[tuple[str, datetime], list[WazuhAlert]] = {}
     for alert in ordered:
@@ -638,6 +667,7 @@ def aggregate_wazuh_alerts(
                 baseline=baseline,
                 source_config=config,
                 taxonomy=taxonomy,
+                process_context=identities,
             )
             for group in groups.values()
         ],
