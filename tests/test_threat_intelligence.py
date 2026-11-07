@@ -160,6 +160,64 @@ def test_reserved_ip_is_not_disclosed_to_external_provider() -> None:
     assert "public" in context.rationale.lower()
 
 
+@pytest.mark.parametrize("indicator", [
+    "internal", "payroll.internal", "Payroll.INTERNAL.", "local", "secret.local.",
+    "home.arpa", "sensitive.home.arpa.", "example", "host.example", "invalid",
+    "host.invalid", "localhost", "host.localhost", "test", "host.test",
+])
+def test_private_dns_roots_and_children_never_leave_the_adapter(indicator: str) -> None:
+    calls = []
+    client = VirusTotalClient(
+        api_key="unit-test-key",
+        transport=httpx.MockTransport(lambda request: calls.append(request) or httpx.Response(404)),
+    )
+    result = client.lookup(indicator)
+    assert result.reason_code == "NON_PUBLIC_INDICATOR"
+    assert result.status == "UNKNOWN"
+    assert calls == []
+
+
+@pytest.mark.parametrize("indicator", ["Public.ORG.", "home.arpa.org", "local.org"])
+def test_public_dns_suffix_neighbors_still_query_provider(indicator: str) -> None:
+    calls = []
+    client = VirusTotalClient(
+        api_key="unit-test-key",
+        transport=httpx.MockTransport(lambda request: calls.append(request) or httpx.Response(404)),
+    )
+    assert client.lookup(indicator).reason_code == "NOT_FOUND"
+    assert str(calls[0].url).endswith(indicator.lower().rstrip("."))
+
+
+@pytest.mark.parametrize("namespace", [
+    "alt", "6tisch.arpa", "eap.arpa", "eap-noob.arpa", "home.arpa", "10.in-addr.arpa",
+    "254.169.in-addr.arpa", *[f"{n}.172.in-addr.arpa" for n in range(16, 32)],
+    "170.0.0.192.in-addr.arpa", "171.0.0.192.in-addr.arpa", "168.192.in-addr.arpa",
+    "8.e.f.ip6.arpa", "9.e.f.ip6.arpa", "a.e.f.ip6.arpa", "b.e.f.ip6.arpa",
+    "ipv4only.arpa", "resolver.arpa", "service.arpa", "example", "example.com",
+    "example.net", "example.org", "invalid", "local", "localhost", "onion", "test",
+])
+@pytest.mark.parametrize("form", ["{}", "host.{}", "HOST.{}."])
+def test_iana_special_use_registry_names_and_descendants_are_not_disclosed(namespace, form):
+    calls = []
+    client = VirusTotalClient(
+        api_key="unit-test-key",
+        transport=httpx.MockTransport(lambda request: calls.append(request) or httpx.Response(404)),
+    )
+    assert client.lookup(form.format(namespace.upper())).reason_code == "NON_PUBLIC_INDICATOR"
+    assert calls == []
+
+
+@pytest.mark.parametrize("indicator", ["example.com.org", "onion.org", "resolver.arpa.org"])
+def test_special_use_namespace_matching_is_label_bounded(indicator):
+    calls = []
+    client = VirusTotalClient(
+        api_key="unit-test-key",
+        transport=httpx.MockTransport(lambda request: calls.append(request) or httpx.Response(404)),
+    )
+    assert client.lookup(indicator).reason_code == "NOT_FOUND"
+    assert len(calls) == 1
+
+
 def test_mode_router_is_mock_by_default_and_disabled_fails_safe() -> None:
     mocked = lookup_threat_intelligence("203.0.113.66", mode="mock")
     disabled = lookup_threat_intelligence("8.8.8.8", mode="disabled")

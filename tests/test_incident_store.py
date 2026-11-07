@@ -91,3 +91,48 @@ def test_stale_notification_lease_is_recovered_after_process_interruption(
     assert recovered.channel == "webhook"
     assert replay.notification_status == "ALREADY_SENT"
     assert calls == ["INC-STABLE-1"]
+
+
+def test_expired_claim_cannot_send_an_obsolete_revision(tmp_path: Path) -> None:
+    store = IncidentStore(tmp_path / "incidents.sqlite3")
+    store.record(request("EVENT-1", notification="obsolete"))
+    started = datetime(2026, 11, 7, tzinfo=UTC)
+
+    def interrupted(*_args):
+        raise SystemExit("worker stopped")
+
+    with pytest.raises(SystemExit):
+        store.dispatch_notification("INC-STABLE-1", interrupted, now=started, lease_seconds=60)
+    store.record(request("EVENT-2", notification="current escalation"))
+    delivered = []
+    result = store.dispatch_notification(
+        "INC-STABLE-1", lambda *args: delivered.append(args) or "audit-log",
+        notification_revision=1, now=started + timedelta(seconds=60), lease_seconds=60,
+    )
+    assert result.notification_status == "SUPERSEDED"
+    assert result.superseded_by_revision == 2
+    assert delivered == []
+    current = store.dispatch_notification(
+        "INC-STABLE-1", lambda *args: delivered.append(args) or "audit-log",
+        now=started + timedelta(seconds=61), lease_seconds=60,
+    )
+    assert current.notification_status == "SENT"
+    assert delivered[0][1] == "current escalation"
+
+
+def test_new_revision_during_active_delivery_keeps_receipt_valid(tmp_path: Path) -> None:
+    store = IncidentStore(tmp_path / "incidents.sqlite3")
+    store.record(request("EVENT-1"))
+
+    def deliver(*_args):
+        store.record(request("EVENT-2", notification="new escalation"))
+        with pytest.raises(ValueError, match="in progress"):
+            store.dispatch_notification(
+                "INC-STABLE-1", lambda *_: "audit-log", notification_revision=1,
+            )
+        return "audit-log"
+
+    assert store.dispatch_notification("INC-STABLE-1", deliver).notification_status == "SENT"
+    assert store.dispatch_notification(
+        "INC-STABLE-1", lambda *_: "audit-log", notification_revision=1,
+    ).notification_status == "ALREADY_SENT"
