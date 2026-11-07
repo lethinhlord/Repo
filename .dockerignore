@@ -6,6 +6,7 @@
 !config/
 !config/**
 !requirements-runtime.lock
+!requirements.lock
 
 **/__pycache__/
 **/*.pyc
