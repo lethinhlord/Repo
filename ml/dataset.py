@@ -95,9 +95,10 @@ class DatasetRecord:
     source_file: str
     purpose: str = "trainable"
     cohort_id: str | None = None
+    incident: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "incident_id": self.incident_id,
             "scenario_id": self.scenario_id,
             "run_id": self.run_id,
@@ -108,6 +109,9 @@ class DatasetRecord:
             "purpose": self.purpose,
             "cohort_id": self.cohort_id,
         }
+        if self.incident is not None:
+            result["incident"] = self.incident
+        return result
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -209,6 +213,7 @@ def discover_records(
                     source_file=record_path.as_posix(),
                     purpose=manifest.purpose,
                     cohort_id=manifest.cohort_id,
+                    incident=incident.model_dump(mode="json"),
                 )
             )
             run_count += 1

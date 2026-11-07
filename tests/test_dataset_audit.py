@@ -72,6 +72,7 @@ def write_run(
     time_slot: int | None = None,
 ) -> None:
     run_id = f"{family.upper()}-{label.upper()}-{index:02d}"
+    seed = index + 1000 * ((family == "c2") * 2 + (label == "malicious"))
     slot = time_slot if time_slot is not None else (
         index + 20 * ((family == "c2") * 2 + (label == "malicious"))
     )
@@ -111,7 +112,7 @@ def write_run(
         "attribution": scenario.attribution.model_dump(mode="json"),
         "quality_gates": scenario.quality_gates.model_dump(mode="json"),
         "execution_log_path": None,
-        "collection_seed": index,
+        "collection_seed": seed,
         "scenario_parameters": scenario_parameters,
         "expected_observables": ["test"],
         "clock_preflight": clock_preflight,
@@ -210,7 +211,7 @@ def write_run(
         "start_time": started.isoformat(),
         "end_time": ended.isoformat(),
         "expected_behavior": scenario.expected_behavior,
-        "collection_seed": index,
+        "collection_seed": seed,
         "scenario_parameters": scenario_parameters,
         "provenance_sha256": provenance_sha256,
         **contract_hashes,
@@ -297,7 +298,7 @@ def write_run(
                 ).astimezone(UTC).isoformat().replace("+00:00", "Z"),
                 "scenario_manifest_sha256": manifest_hash,
                 "incidents_sha256": incidents_hash,
-                "collection_seed": index,
+                "collection_seed": seed,
                 "scenario_parameters": scenario_parameters,
                 "run_marker_count": 2,
                 "start_contract_sha256": start_contract_sha256,

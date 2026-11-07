@@ -35,6 +35,22 @@ def load_collection_design(catalog_path: Path) -> dict[str, Any] | None:
         or doc.get("automation_eligible") is not False
     ):
         raise ValueError("invalid collection design identity, feature or automation contract")
+    quota = doc.get("quota")
+    required_quota = (
+        "minimum_runs_per_stratum", "target_runs_per_stratum",
+        "minimum_scenarios_per_stratum", "minimum_cohorts_per_stratum",
+        "minimum_repetitions_per_scenario",
+    )
+    if (
+        not isinstance(quota, dict)
+        or any(type(quota.get(key)) is not int or quota[key] < 1 for key in required_quota)
+        or quota["target_runs_per_stratum"] < quota["minimum_runs_per_stratum"]
+        or quota["minimum_cohorts_per_stratum"] < 5
+        or quota["minimum_runs_per_stratum"] < (
+            quota["minimum_scenarios_per_stratum"] * quota["minimum_repetitions_per_scenario"]
+        )
+    ):
+        raise ValueError("invalid collection design quota")
     policy = doc.get("audit_policy", {})
     if any(
         policy.get(k) != v
