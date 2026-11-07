@@ -124,7 +124,9 @@ def prepare_official(root, monkeypatch):
     candidate = {
         "version": "collection-candidate-v1",
         "commit": "a" * 40,
-        "tag": "collection-v4.0.0-candidate.1",
+        "tag": yaml.safe_load(
+            (root / "config/collection-design.yaml").read_text()
+        )["candidate_tag"],
         "tag_object": "b" * 40,
         "origin": "https://github.com/lethinhlord/Repo.git",
         "tracked_files_sha256": "c" * 64,

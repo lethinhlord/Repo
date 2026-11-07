@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from functools import wraps
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import parse_qs, urlsplit
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -1274,6 +1275,59 @@ def _derive_c2(
             payload, nonce
         ):
             nonce_references.append((payload, timestamp))
+
+    if isinstance(expected_action_count, int):
+        transport = "dns" if draft.quality_gates.min_dns_events else "http"
+        kinds = {"dns"} if transport == "dns" else {"http", "tls"}
+        transactions = [
+            (payload, at) for payload, at in nonce_references
+            if payload.get("event_type") in kinds
+            and not (transport == "dns" and _suricata_dns_is_response(payload.get("dns")))
+        ]
+        actions = sorted(action_observations, key=lambda item: item.timestamp)
+        # Every frozen action must have exactly one transaction, and each
+        # transaction must identify exactly one action. Do not collapse duplicates.
+        edges = [
+            [i for i, (payload, at) in enumerate(transactions)
+             if _suricata_correlates(payload, at, [action], maximum_delta)]
+            for action in actions
+        ]
+        if (len(transactions) != len(actions) or any(len(edge) != 1 for edge in edges)
+                or len({edge[0] for edge in edges if edge}) != len(transactions)):
+            raise CollectionError("C2 actions require unique, complete EVE transaction coverage")
+    if draft.scenario_parameters.get("execution_profile_version") == "lab-action-profile-v1":
+        transport = draft.scenario_parameters.get("transport")
+        if not isinstance(expected_action_count, int) or transport not in {"http", "dns"}:
+            raise CollectionError("invalid frozen C2 execution profile")
+        variant = draft.scenario_parameters["variant_index"]
+        for number, edge in enumerate(edges, 1):
+            payload = transactions[edge[0]][0]
+            if transport == "http":
+                http = payload.get("http") or {}
+                url = urlsplit(str(http.get("url", "")))
+                query = parse_qs(url.query, keep_blank_values=True)
+                if (url.scheme or url.netloc or url.path != "/beacon"
+                        or query != {"run": [nonce], "v": [str(variant)], "n": [str(number)]}
+                        or str(http.get("http_method", "")).upper() != "GET"
+                        or http.get("status") != 200):
+                    raise CollectionError(
+                        "HTTP transaction violates the frozen request/response contract"
+                    )
+            elif transport == "dns":
+                suffix = str(draft.scenario_parameters["domain_suffix"]).casefold()
+                marker = "b" if suffix == "www.datn.test" else "r"
+                expected = f"{nonce}-{marker}{variant}-{number:02d}.{suffix}"
+                if actions[number - 1].dns_query.casefold().rstrip(".") != expected:
+                    raise CollectionError("DNS query violates the frozen name/sequence contract")
+        if transport == "dns":
+            dns_rows = [_windows_fields(event)[2] for event in windows
+                        if _windows_fields(event)[0] == "22"]
+            for row in dns_rows:
+                answers = re.split(r"[;,\s]+", str(row.get("queryResults", "")))
+                if str(row.get("queryStatus", "")) != "0" or "10.40.0.10" not in answers:
+                    raise CollectionError(
+                        "DNS success and expected answer are not proven by Sysmon"
+                    )
 
     nonce_references = unambiguous_transactions(nonce_references, maximum_delta)
     suricata: list[dict[str, Any]] = []
