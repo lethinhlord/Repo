@@ -236,7 +236,9 @@ def _c2_events(
         )
         event_index += 1
         for number in range(action_count):
-            query = f"{nonce}-{number}.{suffix}"
+            marker = "b" if suffix == "www.datn.test" else "r"
+            variant = draft.scenario_parameters["variant_index"]
+            query = f"{nonce}-{marker}{variant}-{number + 1:02d}.{suffix}"
             events.append(
                 _windows_event(
                     run_id,
@@ -245,6 +247,8 @@ def _c2_events(
                     {
                         "image": "powershell.exe",
                         "queryName": query,
+                        "queryStatus": "0",
+                        "queryResults": "10.40.0.10;",
                         "processGuid": process_guid,
                     },
                     event_index,
@@ -259,9 +263,19 @@ def _c2_events(
                 "dest_ip": "10.40.0.10",
                 "dest_port": 53,
                 "flow_id": f"{run_id}-{number}",
-                "dns": {"type": "query", "rrname": query},
+                "dns": {"version": 3, "type": "request", "id": 1000 + number,
+                        "opcode": 0, "qr": False,
+                        "tx_id": 0, "queries": [{"rrname": query, "rrtype": "A"}]},
             }
             events.append(_suricata_event(event_at, payload))
+            events.append(_suricata_event(event_at + timedelta(milliseconds=10), {
+                **payload, "src_ip": "10.40.0.10", "src_port": 53,
+                "dest_ip": "10.20.0.10", "dest_port": 50001 + number,
+                "dns": {**payload["dns"], "type": "response", "rcode": "NOERROR", "qr": True,
+                        "tx_id": 1,
+                        "answers": [{"rrname": query, "rrtype": "A", "ttl": 60,
+                                     "rdata": "10.40.0.10"}]},
+            }))
             signature = scenario.quality_gates.required_suricata_signature_ids[0]
             events.append(
                 _suricata_event(
@@ -298,10 +312,14 @@ def _c2_events(
         return events, event_at
 
     port = scenario.attribution.destination_ports[0]
-    command_term = scenario.attribution.command_contains_any[0]
     for number in range(action_count):
         process_guid = f"{{SYNTHETIC-{run_id}-{number}}}"
-        uri = f"{command_term}?run={nonce}&n={number}"
+        path = (
+            "/beacon"
+            if draft.scenario_parameters.get("execution_profile_version") == "lab-action-profile-v1"
+            else scenario.attribution.command_contains_any[0]
+        )
+        uri = f"{path}?run={nonce}&v={draft.scenario_parameters['variant_index']}&n={number + 1}"
         events.extend(
             [
                 _windows_event(
@@ -342,7 +360,7 @@ def _c2_events(
             "dest_ip": "10.40.0.10",
             "dest_port": port,
             "flow_id": f"{run_id}-{number}",
-            "http": {"url": uri},
+            "http": {"url": uri, "http_method": "GET", "status": 200},
         }
         events.append(_suricata_event(event_at, payload))
         if scenario.quality_gates.required_suricata_signature_ids:

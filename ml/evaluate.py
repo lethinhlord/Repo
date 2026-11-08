@@ -9,10 +9,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import joblib
 import numpy as np
 
-from ml.freeze_model import file_hash, verify_frozen_manifest
+from ml.evaluation_registry import transition
+from ml.freeze_model import file_hash, sign_evidence, verify_frozen_manifest
+from ml.inference import ModelRuntime
 from ml.metrics import classification_metrics
 
 
@@ -24,7 +25,8 @@ def _atomic_write(path: Path, value: dict[str, Any]) -> None:
             stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(name, path)
+        os.link(name, path)
+        os.unlink(name)
         if os.name != "nt":
             directory_fd = os.open(path.parent, os.O_RDONLY)
             try:
@@ -41,6 +43,7 @@ def evaluate_locked_test(
     locked_test_path: Path,
     *,
     unlock_locked_test: bool,
+    evidence_dir: Path | None = None,
 ) -> dict[str, Any]:
     if not unlock_locked_test:
         raise PermissionError(
@@ -53,12 +56,19 @@ def evaluate_locked_test(
         freeze = verify_frozen_manifest(package_dir)
     except ValueError as exc:
         raise PermissionError(str(exc)) from exc
-    opened_path = package_dir / "LOCKED_TEST_OPENED.json"
-    reservation_path = package_dir / "LOCKED_TEST_RESERVED"
-    metrics_path = package_dir / "metrics_locked_test.json"
+    # The exact runtime validator must pass before reservation or any test read.
+    runtime = ModelRuntime(package_dir, evidence_dir=evidence_dir)
+    if runtime.locked_test_status != "UNOPENED":
+        raise PermissionError("locked test has already been opened or evidence is invalid")
+    evidence_path = runtime.evidence_dir
+    evidence_path.mkdir(parents=True, exist_ok=True)
+    opened_path = evidence_path / "LOCKED_TEST_OPENED.json"
+    reservation_path = evidence_path / "LOCKED_TEST_RESERVED"
+    metrics_path = evidence_path / "metrics_locked_test.json"
     if (opened_path.exists() or opened_path.is_symlink()
             or metrics_path.exists() or metrics_path.is_symlink()):
         raise PermissionError("locked test has already been opened for this model package")
+    transition(package_dir, "locked_test", "RESERVED")
     try:
         fd = os.open(reservation_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError as exc:
@@ -71,16 +81,16 @@ def evaluate_locked_test(
         os.fsync(reservation.fileno())
     # Persist the directory entry where supported, before reading the locked test.
     if os.name != "nt":
-        directory_fd = os.open(package_dir, os.O_RDONLY)
+        directory_fd = os.open(evidence_path, os.O_RDONLY)
         try:
             os.fsync(directory_fd)
         finally:
             os.close(directory_fd)
-    metadata = json.loads((package_dir / "metadata.json").read_text(encoding="utf-8"))
+    metadata = runtime.metadata
     actual_test_hash = file_hash(locked_test_path)
     if actual_test_hash != metadata.get("locked_test_sha256"):
         raise PermissionError("locked test integrity check failed")
-    bundle = joblib.load(package_dir / "model.joblib")
+    bundle = runtime.bundle
     rows = [
         json.loads(line)
         for line in locked_test_path.read_text(encoding="utf-8").splitlines()
@@ -99,10 +109,11 @@ def evaluate_locked_test(
             raise ValueError(f"locked test must contain both labels for family {family}")
         probabilities = artifact["estimator"].predict_proba(x)[:, 1]
         output["families"][family] = classification_metrics(
-            labels, probabilities, float(artifact["threshold"])
+            labels, probabilities, float(artifact["threshold"]),
+            calibration_bins=int(metadata.get("calibration_bins", 10)),
         )
     output["locked_test_status"] = "EVALUATED"
-    path = package_dir / "metrics_locked_test.json"
+    path = evidence_path / "metrics_locked_test.json"
     _atomic_write(path, output)
     opened = {
         "status": "EVALUATED",
@@ -112,7 +123,10 @@ def evaluate_locked_test(
         "metrics_locked_test_sha256": file_hash(path),
         "freeze_sha256": hashlib.sha256(freeze_path.read_bytes()).hexdigest(),
     }
-    _atomic_write(opened_path, opened)
+    _atomic_write(opened_path, sign_evidence(opened))
+    transition(package_dir, "locked_test", "COMPLETE", files={
+        path.name: file_hash(path) for path in (reservation_path, opened_path, metrics_path)
+    })
     return output
 
 
@@ -123,11 +137,13 @@ def main() -> None:
         "--locked-test", type=Path, default=Path("data/processed/locked_test.jsonl")
     )
     parser.add_argument("--unlock-locked-test", action="store_true")
+    parser.add_argument("--evidence-dir", type=Path)
     args = parser.parse_args()
     result = evaluate_locked_test(
         args.package_dir,
         args.locked_test,
         unlock_locked_test=args.unlock_locked_test,
+        evidence_dir=args.evidence_dir,
     )
     print(f"Locked-test evaluation complete for {result['model_version']}")
 

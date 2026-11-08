@@ -14,6 +14,7 @@ from api.app.contracts import IncidentRequest
 from api.app.main import app, load_model_runtime
 from ml.behavior_features import C2_FEATURES
 from ml.evaluate import evaluate_locked_test
+from ml.evaluation_evidence import evidence_directory
 from ml.freeze_model import freeze
 from ml.inference import ModelPackageError, ModelRuntime
 
@@ -146,6 +147,37 @@ def create_package(
         (ROOT / "ml/feature_schema.json").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
+
+
+def freeze_legacy(package: Path) -> None:
+    """Synthesize an unbound historical release with explicit signed migration provenance."""
+    from ml.evaluation_registry import migrate_legacy_registry
+    from ml.freeze_model import sign_evidence
+
+    freeze(package)
+    path = package / "FROZEN.json"
+    document = json.loads(path.read_text())
+    document.pop("evaluation_registry_id")
+    document.pop("signature_hmac_sha256")
+    path.write_text(json.dumps(sign_evidence(document)))
+    archive = package.parent / "legacy-archive"
+    archive.mkdir()
+    (archive / "FROZEN.json").write_bytes(path.read_bytes())
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    receipt = package.parent / "legacy-migration.json"
+    receipt.write_text(json.dumps(sign_evidence({
+        "format_version": "evaluation-registry-migration-v1", "freeze_sha256": digest,
+        "statuses": {"locked_test": "UNOPENED", "challenge": "UNOPENED"},
+        "affirmative_unopened_attestation": True, "approved_by": "SYNTHETIC-UNIT",
+        "source_receipts": {"FROZEN.json": digest},
+    })))
+    migrate_legacy_registry(package, receipt, archive)
+
+
+def evidence_for_test(package: Path) -> Path:
+    path = evidence_directory(package)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def test_runtime_preserves_feature_order_and_package_versions(tmp_path: Path) -> None:
@@ -496,7 +528,7 @@ def test_locked_test_hash_is_verified_and_opening_is_recorded(tmp_path: Path) ->
     result = evaluate_locked_test(package, locked, unlock_locked_test=True)
 
     assert result["locked_test_status"] == "EVALUATED"
-    assert (package / "LOCKED_TEST_OPENED.json").is_file()
+    assert (ModelRuntime(package).evidence_dir / "LOCKED_TEST_OPENED.json").is_file()
     runtime = ModelRuntime(package)
     assert runtime.locked_test_status == "EVALUATED"
 
@@ -521,7 +553,7 @@ def test_locked_test_interruption_is_recorded_before_read(tmp_path, monkeypatch)
 def test_legacy_visible_metrics_without_markers_never_returns_unopened(tmp_path):
     package = tmp_path / "package"
     create_package(package)
-    freeze(package)
+    freeze_legacy(package)
     runtime = ModelRuntime(package)
     # Reproduce the pre-v38 crash: metrics reached disk, neither a reservation
     # nor the final opening record exists. This is exposure evidence, not a new test.
@@ -537,7 +569,7 @@ def test_legacy_visible_metrics_without_markers_never_returns_unopened(tmp_path)
 def test_opening_metrics_corruption_is_visible(tmp_path):
     package = tmp_path / 'package'
     create_package(package)
-    freeze(package)
+    freeze_legacy(package)
     freeze_hash = hashlib.sha256((package / 'FROZEN.json').read_bytes()).hexdigest()
     (package / 'LOCKED_TEST_OPENED.json').write_text(json.dumps({
         'status':'EVALUATED', 'model_version':'test-model-v1',
@@ -596,7 +628,7 @@ def test_runtime_observes_opening_after_initialization(tmp_path):
     freeze(package)
     runtime = ModelRuntime(package)
     assert runtime.locked_test_status == 'UNOPENED'
-    (package / 'LOCKED_TEST_RESERVED').write_text('reserved', encoding='utf-8')
+    (evidence_for_test(package) / 'LOCKED_TEST_RESERVED').write_text('reserved', encoding='utf-8')
     assert runtime.locked_test_status == 'OPENED_INCOMPLETE'
 
 
@@ -605,7 +637,9 @@ def test_invalid_locked_test_record_type_is_rejected(tmp_path, record):
     package = tmp_path / 'package'
     create_package(package)
     freeze(package)
-    (package / 'LOCKED_TEST_OPENED.json').write_text(json.dumps(record), encoding='utf-8')
+    (evidence_for_test(package) / 'LOCKED_TEST_OPENED.json').write_text(
+        json.dumps(record), encoding='utf-8',
+    )
     with pytest.raises(ModelPackageError, match='opening record'):
         ModelRuntime(package)
 
@@ -624,7 +658,7 @@ def test_cached_runtime_readiness_surfaces_opening_evidence_corruption(
     load_model_runtime.cache_clear()
     client = TestClient(app)
     assert client.get('/model/ready').json()['locked_test_status'] == 'UNOPENED'
-    opened = package / 'LOCKED_TEST_OPENED.json'
+    opened = evidence_for_test(package) / 'LOCKED_TEST_OPENED.json'
     if corruption == 'list':
         opened.write_text('[]', encoding='utf-8')
     elif corruption == 'identity':

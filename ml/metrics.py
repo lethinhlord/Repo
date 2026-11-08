@@ -57,6 +57,8 @@ def classification_metrics(
     labels: np.ndarray,
     probabilities: np.ndarray,
     threshold: float,
+    *,
+    calibration_bins: int = 10,
 ) -> dict[str, Any]:
     predictions = (probabilities >= threshold).astype(int)
     tn, fp, fn, tp = confusion_matrix(labels, predictions, labels=[0, 1]).ravel()
@@ -67,7 +69,8 @@ def classification_metrics(
         "pr_auc": average_precision_score(labels, probabilities),
         "fpr": float(fp / (fp + tn)) if fp + tn else 0.0,
         "brier": brier_score_loss(labels, probabilities),
-        "ece": expected_calibration_error(labels, probabilities),
+        "ece": expected_calibration_error(labels, probabilities, bins=calibration_bins),
+        "calibration_bins": calibration_bins,
         "confusion_matrix": {"tn": int(tn), "fp": int(fp), "fn": int(fn), "tp": int(tp)},
     }
 
@@ -121,6 +124,7 @@ def grouped_bootstrap_intervals(
     groups: np.ndarray,
     threshold: float,
     *,
+    calibration_bins: int = 10,
     iterations: int,
     confidence: float,
     random_seed: int,
@@ -145,6 +149,7 @@ def grouped_bootstrap_intervals(
             sample_labels,
             probabilities[selected_indices],
             threshold,
+            calibration_bins=calibration_bins,
         )
         for name in samples:
             samples[name].append(float(result[name]))

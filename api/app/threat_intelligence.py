@@ -17,7 +17,20 @@ _DOMAIN_RE = re.compile(
     r"(?=^.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+"
     r"[a-zA-Z]{2,63}$"
 )
-_RESERVED_SUFFIXES = (".example", ".invalid", ".localhost", ".test")
+# Conservative external-TI policy: every IANA special-use namespace (including
+# publicly resolvable documentation names), plus the explicitly private internal
+# namespace. Exact names and all descendants are excluded, not substring matches.
+# Registry snapshot: updated 2026-05-22, checked 2026-11-07.
+# https://www.iana.org/assignments/special-use-domain-names
+_PRIVATE_NAMESPACES = (
+    "alt", "6tisch.arpa", "eap.arpa", "eap-noob.arpa", "home.arpa",
+    "10.in-addr.arpa", "254.169.in-addr.arpa",
+    *(f"{n}.172.in-addr.arpa" for n in range(16, 32)),
+    "170.0.0.192.in-addr.arpa", "171.0.0.192.in-addr.arpa", "168.192.in-addr.arpa",
+    "8.e.f.ip6.arpa", "9.e.f.ip6.arpa", "a.e.f.ip6.arpa", "b.e.f.ip6.arpa",
+    "ipv4only.arpa", "resolver.arpa", "service.arpa", "example", "example.com",
+    "example.net", "example.org", "invalid", "local", "localhost", "onion", "test", "internal",
+)
 _Provider = Literal["mock-ti-v2", "virustotal-v3", "disabled"]
 
 
@@ -77,7 +90,10 @@ def _indicator_kind(indicator: str) -> Literal["ip_addresses", "domains"] | None
         address = ipaddress.ip_address(value)
     except ValueError:
         lowered = value.lower().rstrip(".")
-        if lowered.endswith(_RESERVED_SUFFIXES) or not _DOMAIN_RE.fullmatch(lowered):
+        if any(
+            lowered == namespace or lowered.endswith("." + namespace)
+            for namespace in _PRIVATE_NAMESPACES
+        ) or not _DOMAIN_RE.fullmatch(lowered):
             return None
         return "domains"
     return "ip_addresses" if address.is_global else None

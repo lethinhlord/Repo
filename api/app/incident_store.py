@@ -418,6 +418,21 @@ class IncidentStore:
                     raise ValueError(
                         "incident notification dispatch is already in progress"
                     )
+            # An active sender retains its receipt lease above. Once that lease
+            # expires, never reclaim an obsolete decision after an escalation.
+            latest_revision = connection.execute(
+                "SELECT MAX(revision) FROM notification_revisions WHERE incident_id=?",
+                (incident_id,),
+            ).fetchone()[0]
+            if revision < latest_revision:
+                connection.execute(
+                    "UPDATE notification_revisions SET status='SUPERSEDED' "
+                    "WHERE incident_id=? AND revision=?", (incident_id, revision),
+                )
+                return NotificationDispatchResponse(
+                    incident_id=incident_id, notification_revision=revision,
+                    notification_status="SUPERSEDED", superseded_by_revision=latest_revision,
+                )
             connection.execute(
                 "UPDATE notification_revisions SET status = 'SENDING', attempted_at = ?, "
                 "attempt_count = attempt_count + 1 WHERE incident_id = ? AND revision=?",

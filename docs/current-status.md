@@ -1,6 +1,6 @@
 # Trạng thái phần mềm và bàn giao
-Ngày 06/11/2026. Điểm vào: [runbook 4 VM](scenario-collection-runbook.md).
-Candidate: [collection-v4.0.0-candidate.1](https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.1).
+Ngày 08/11/2026. Điểm vào: [runbook 4 VM](scenario-collection-runbook.md).
+Candidate: [collection-v4.0.0-candidate.2](https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.2).
 
 - Thiết kế20trainable+8challenge đã triển khai:10pairedcohort, neutralusers,
   cùng HTTP/DNS endpoint/tool, schedule frozen theo seed và kiểm observed account.
@@ -15,7 +15,8 @@ Candidate: [collection-v4.0.0-candidate.1](https://github.com/lethinhlord/Repo/t
 - HTTP Event3 unknown-image chỉ được nhận khi có Event1GUID/PID/user/chronology
   nhất quán; conflicting creation vẫn bị chặn. DNS giữ strict.
 - Bốn pilot trong BAN-GIAO-THINH-4-PILOTS-FULL đã được replay VALID và supplementary
-  PASS bằng candidate;432file gốc không sửa. Chúng có purposepilot,không quota;
+  PASS tại lượt 06/11 với candidate.1;432file gốc không sửa. Kết quả đó không tự
+  nghiệm thu candidate.2. Chúng có purposepilot,không quota;
   source bundle cũ không được gán ngược thành source release này.
 - G7 của lab Kiên còn CHƯA NGHIỆM THU bằng candidate này. Phần mềm candidate đã
   sẵn sàng chạy quy trình; chỉ acceptance từ artifact thật trên lab mới mở trainable.
@@ -23,8 +24,16 @@ Candidate: [collection-v4.0.0-candidate.1](https://github.com/lethinhlord/Repo/t
 - Chưa train hoặc mở lockedtest thật; không deploy/chứng nhận strong response.
   Các biên bản3.7/3.8,R02/R03 và handoff04/11 là lịch sử, không chỉ dẫn thu mới.
 
+Candidate.2 khắc phục các lỗi audit ngày 07/11: bao phủ từng giao dịch/response,
+inventory backup hai chiều, checksum host không rỗng, quota/seed, provenance
+local/Colab, calibration, freeze/evaluation bất biến, retry notification và lọc TI.
+Runtime giữ process identity qua bucket nhưng không cộng hành vi bucket cũ.
+Biên bản 06/11 chỉ áp dụng candidate.1 tại thời điểm đó; xem biên bản 08/11 và
+test evidence mới trước khi dùng. Container local features-v2 chưa phải nghiệm
+thu candidate features-v3; không dùng health của container cũ làm bằng chứng mới.
+
 [Thiết kế/giới hạn](collection-training-design.md),
-[biên bản kiểm thử](collection-v4-verification-20261106.md),
+[biên bản kiểm thử](collection-v4-verification-20261108.md),
 [contract](week3-data-contract.md),
 [training](week3-model-training-runbook.md),
-[ledger công việc](../tasks/training-collection-release-20261106.md).
+[ledger công việc](../tasks/audit-remediation-20261107.md).

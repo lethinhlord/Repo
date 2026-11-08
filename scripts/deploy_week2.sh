@@ -24,6 +24,12 @@ set -a
 . ./.env
 set +a
 MODEL_PACKAGE_HOST_DIR="${MODEL_PACKAGE_HOST_DIR:-./ml/model-package}"
+MODEL_EVALUATION_REGISTRY_HOST_DIR="${MODEL_EVALUATION_REGISTRY_HOST_DIR:-./ml/.model-evaluation-registry}"
+if [ ! -d "$MODEL_EVALUATION_REGISTRY_HOST_DIR" ]; then
+  echo "Model evaluation registry is missing: $MODEL_EVALUATION_REGISTRY_HOST_DIR" >&2
+  echo "Use the retained registry created with this signed release; do not create an empty replacement." >&2
+  exit 1
+fi
 CONTEXT_BASELINE_HOST_FILE="${CONTEXT_BASELINE_HOST_FILE:-./evidence/context-baseline.json}"
 if [ ! -f "$CONTEXT_BASELINE_HOST_FILE" ]; then
   echo "Context baseline is missing: $CONTEXT_BASELINE_HOST_FILE" >&2

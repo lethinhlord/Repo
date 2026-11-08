@@ -17,6 +17,36 @@ from ml.collection_release import (
 )
 
 
+def _run_inventory(root: Path) -> tuple[list[str], list[str]]:
+    states = {}
+    evidence_root = root / "evidence/scenario-runs"
+    for directory in evidence_root.iterdir() if evidence_root.exists() else ():
+        if not directory.is_dir():
+            continue
+        state_path = directory / ".collection_state.json"
+        if not state_path.is_file():
+            raise ReleaseError(f"run evidence is missing state: {directory.name}")
+        state = _read_json(state_path)
+        if state.get("run_id") != directory.name:
+            raise ReleaseError(f"run state identity mismatch: {directory.name}")
+        status = state.get("status")
+        if status not in {"FINALIZED", "ABORTED"}:
+            raise ReleaseError("backup refused while a collection is active or incomplete")
+        states[directory.name] = status
+    runs = sorted(rid for rid, status in states.items() if status == "FINALIZED")
+    raw_root = root / "data/raw"
+    raw_runs = (
+        {p.name for p in raw_root.iterdir() if p.is_dir()} if raw_root.exists() else set()
+    )
+    if raw_runs != set(runs):
+        raise ReleaseError("finalized state and raw run inventories disagree")
+    for rid in runs:
+        if not (raw_root / rid / "scenario_manifest.json").is_file():
+            raise ReleaseError(f"finalized run is missing its manifest: {rid}")
+    aborted_runs = sorted(rid for rid, status in states.items() if status == "ABORTED")
+    return runs, aborted_runs
+
+
 def create_backup(root: Path, tag: str, output: Path) -> dict:
     from ml.scenario_collection import validate_run
 
@@ -29,13 +59,8 @@ def create_backup(root: Path, tag: str, output: Path) -> dict:
         with collection_operation(root):
             if (root / "evidence/scenario-runs/.active-run.json").exists():
                 raise ReleaseError("close the active run before backup")
-            for state in (root / "evidence/scenario-runs").glob("*/.collection_state.json"):
-                if _read_json(state).get("status") not in {"FINALIZED", "ABORTED"}:
-                    raise ReleaseError("backup refused while a collection is active or incomplete")
+            runs, aborted_runs = _run_inventory(root)
             candidate = collection_release.capture_candidate(root, tag)
-            runs = sorted(
-                p.parent.name for p in (root / "data/raw").glob("*/scenario_manifest.json")
-            )
             if not runs:
                 raise ReleaseError("backup requires finalized raw data")
             for rid in runs:
@@ -82,6 +107,8 @@ def create_backup(root: Path, tag: str, output: Path) -> dict:
             with tempfile.TemporaryDirectory(prefix="datn-backup-restore-") as temp:
                 restored = Path(temp)
                 _extract_backup(archive, restored)
+                if _run_inventory(restored) != (runs, aborted_runs):
+                    raise ReleaseError("restored run inventory differs from source")
                 for rid in runs:
                     validate_run(rid, restored)
             report = {
@@ -90,6 +117,7 @@ def create_backup(root: Path, tag: str, output: Path) -> dict:
                 "archive": archive.name,
                 "archive_sha256": _file_hash(archive),
                 "validated_runs": runs,
+                "aborted_runs": aborted_runs,
                 "candidate": candidate,
             }
             import json

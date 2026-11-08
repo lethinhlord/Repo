@@ -30,6 +30,25 @@ from ml.scenario_collection import (
 STRATA = ("account:benign", "account:malicious", "c2:benign", "c2:malicious")
 
 
+def target_repetition_errors(
+    counts: dict[str, int], cohorts: dict[str, str | None], design: dict[str, Any],
+) -> list[str]:
+    quota = design["quota"]
+    extras = set(quota["target_extra_repetition_cohort_suffixes"])
+    at_target = sum(counts.values()) == quota["target_runs_per_stratum"]
+    errors = []
+    for scenario, cohort in cohorts.items():
+        expected = quota["minimum_repetitions_per_scenario"] + int(
+            bool(cohort) and cohort.rsplit("-", 1)[-1] in extras
+        )
+        count = counts.get(scenario, 0)
+        if count > expected or (at_target and count != expected):
+            errors.append(
+                f"{scenario} has {count} repetitions; frozen target allocation={expected}"
+            )
+    return errors
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -524,6 +543,16 @@ def audit_dataset(
             expected_scenarios[f"{item.family}:{item.label}"].add(item.scenario_id)
     schema = load_feature_schema(Path(__file__).with_name("feature_schema.json"))
     design = load_collection_design(scenario_catalog_path)
+    if design:
+        quota = design["quota"]
+        if (
+            minimum_runs != quota["minimum_runs_per_stratum"]
+            or target_runs != quota["target_runs_per_stratum"]
+            or minimum_scenarios != quota["minimum_scenarios_per_stratum"]
+        ):
+            raise ValueError(
+                "collection design quota cannot be overridden; use the frozen design values"
+            )
     group_key = group_key or ("cohort_id" if design else "scenario_id")
     if group_key not in {"cohort_id", "scenario_id"} or (design and group_key != "cohort_id"):
         raise ValueError("collection design requires cohort-level splitting")
@@ -680,6 +709,18 @@ def audit_dataset(
     all_valid = {
         run_id: value for run_id, value in candidates.items() if run_id not in invalid_runs
     }
+    seed_owners: dict[int, str] = {}
+    for run_id, (manifest, _) in all_valid.items():
+        if manifest.collection_seed is None:
+            continue
+        previous_owner = seed_owners.setdefault(manifest.collection_seed, run_id)
+        if previous_owner != run_id:
+            _issue(
+                issues, "COLLECTION_SEED_REUSE",
+                f"collection seed {manifest.collection_seed} is shared with {previous_owner}; "
+                "each run needs a globally independent seed, including pilot and challenge",
+                run_id=run_id,
+            )
     excluded_purposes = Counter(
         manifest.purpose for manifest, _ in all_valid.values() if manifest.purpose != "trainable"
     )
@@ -695,13 +736,6 @@ def audit_dataset(
             (run_id, manifest.collection_seed, manifest.scenario_parameters)
         )
     for stratum, rows in parameter_rows.items():
-        seeds = [seed for _, seed, _ in rows]
-        if len(seeds) != len(set(seeds)):
-            _issue(
-                issues,
-                "COLLECTION_SEED_REUSE",
-                f"{stratum} reuses a collection seed; each run needs an independent seed",
-            )
         parameter_variants = {
             json.dumps(parameters, sort_keys=True, separators=(",", ":"))
             for _, _, parameters in rows
@@ -836,6 +870,28 @@ def audit_dataset(
     for name in STRATA:
         manifests = stratum_runs[name]
         scenarios = Counter(manifest.scenario_id for manifest in manifests)
+        if design:
+            quota = design["quota"]
+            for error in target_repetition_errors(
+                scenarios,
+                {s: catalog[s].cohort_id for s in expected_scenarios[name]},
+                design,
+            ):
+                _issue(issues, "TARGET_REPETITION_ALLOCATION", f"{name}: {error}")
+            cohorts = {m.cohort_id for m in manifests if m.cohort_id}
+            if len(cohorts) < quota["minimum_cohorts_per_stratum"]:
+                _issue(
+                    issues, "COHORT_SHORTAGE",
+                    f"{name} has {len(cohorts)} independent cohorts; "
+                    f"requires {quota['minimum_cohorts_per_stratum']}",
+                )
+            for scenario in sorted(expected_scenarios[name]):
+                if scenarios[scenario] < quota["minimum_repetitions_per_scenario"]:
+                    _issue(
+                        issues, "SCENARIO_REPETITION_SHORTAGE",
+                        f"{name} scenario {scenario} has {scenarios[scenario]} repetitions; "
+                        f"requires {quota['minimum_repetitions_per_scenario']}",
+                    )
         count = len(manifests)
         largest = max(scenarios.values(), default=0)
         largest_share = largest / count if count else 0.0
@@ -904,6 +960,8 @@ def audit_dataset(
         # Only collection progress/design checks may be deferred. All raw,
         # checksum, provenance, collision and contract errors remain blocking.
         progress_codes = {
+            "COHORT_SHORTAGE",
+            "SCENARIO_REPETITION_SHORTAGE",
             "STRATUM_SHORTAGE",
             "SCENARIO_DIVERSITY",
             "SCENARIO_CONCENTRATION",

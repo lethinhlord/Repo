@@ -191,11 +191,15 @@ model and dataset provenance, and signs a new versioned directory under
 `artifacts/runtime/model-releases/`. It prints the verified absolute host path. Do not
 use the smoke verifier as acceptance of the Colab archive. A failed handoff must not be
 activated. For the Ubuntu-local training option, the trusted output is
-`ml/model-package`; freeze it once on the trusted VM before the verify step below.
+`ml/model-package`; create and freeze its immutable release using section 2 of
+[the model operations runbook](model-operations-runbook.md) before continuing. That
+procedure uses UID 0 for the registry, matching the shipped Docker image, and persists
+both package and registry host paths.
 
 Load the protected environment, then set `MODEL_PACKAGE_HOST_DIR` to the **verified
 absolute host path** of the selected package (for Colab, the path printed by its
-successful handoff; for local training, `$(pwd -P)/ml/model-package`). Compose mounts
+successful handoff; for local training, the versioned release path). Also select
+`MODEL_EVALUATION_REGISTRY_HOST_DIR` from the same handoff/freeze. Compose mounts
 that exact host directory at the container path `/app/ml/model-package`. Verify the
 actual host package before building and starting SHADOW:
 
@@ -203,20 +207,34 @@ actual host package before building and starting SHADOW:
 set -eu
 : "${MODEL_PACKAGE_HOST_DIR:?Set the verified absolute host package path}"
 : "${EXPECTED_MODEL_VERSION:?Set the model version recorded from trusted training}"
+: "${MODEL_EVALUATION_REGISTRY_HOST_DIR:?Set the retained registry initialized for this release}"
 DATN_SELECTED_PACKAGE_HOST_DIR=$(realpath -e -- "$MODEL_PACKAGE_HOST_DIR")
+DATN_SELECTED_REGISTRY_HOST_DIR=$(realpath -e -- "$MODEL_EVALUATION_REGISTRY_HOST_DIR")
 DATN_EXPECTED_ACTIVATION_VERSION="$EXPECTED_MODEL_VERSION"
-readonly DATN_SELECTED_PACKAGE_HOST_DIR DATN_EXPECTED_ACTIVATION_VERSION
+readonly DATN_SELECTED_PACKAGE_HOST_DIR DATN_SELECTED_REGISTRY_HOST_DIR DATN_EXPECTED_ACTIVATION_VERSION
 set -a
 . ./.env
 set +a
 export MODEL_PACKAGE_HOST_DIR="$DATN_SELECTED_PACKAGE_HOST_DIR"
+export MODEL_EVALUATION_REGISTRY_HOST_DIR="$DATN_SELECTED_REGISTRY_HOST_DIR"
+export MODEL_EVALUATION_REGISTRY_DIR="$DATN_SELECTED_REGISTRY_HOST_DIR"
 .venv-ml/bin/python - "$MODEL_PACKAGE_HOST_DIR" "$DATN_EXPECTED_ACTIVATION_VERSION" <<'PY'
 import json, pathlib, sys
 metadata = json.loads((pathlib.Path(sys.argv[1]) / "metadata.json").read_text())
 if metadata.get("model_version") != sys.argv[2]:
     raise SystemExit("Selected package identity differs from trusted training version")
 PY
-.venv-ml/bin/python -m ml.freeze_model --verify-only --package-dir "$MODEL_PACKAGE_HOST_DIR"
+sudo --preserve-env=MODEL_PACKAGE_SIGNING_KEY,MODEL_PACKAGE_VERIFICATION_KEYS,MODEL_EVALUATION_REGISTRY_DIR \
+  .venv-ml/bin/python -m ml.freeze_model --verify-only --package-dir "$MODEL_PACKAGE_HOST_DIR"
+python3 - "$MODEL_PACKAGE_HOST_DIR" "$MODEL_EVALUATION_REGISTRY_HOST_DIR" <<'PY'
+from pathlib import Path
+import sys
+path = Path(".env")
+keys = ("MODEL_PACKAGE_HOST_DIR", "MODEL_EVALUATION_REGISTRY_HOST_DIR")
+lines = [line for line in path.read_text().splitlines() if not any(line.startswith(key + "=") for key in keys)]
+lines.extend(key + "=" + value for key, value in zip(keys, sys.argv[1:], strict=True))
+path.write_text("\n".join(lines) + "\n")
+PY
 export MODEL_PACKAGE_DIR=/app/ml/model-package
 ./scripts/build_reproducible_image.sh datn-ai-soar-api:week3
 docker compose up -d api n8n
@@ -226,7 +244,7 @@ curl -fsS http://127.0.0.1:8000/model/ready | python3 -c \
 curl -fsS http://127.0.0.1:8000/ready | python3 -m json.tool
 ```
 
-The selected host path and expected version are captured before loading `.env`;
+The selected package/registry host paths and expected version are captured before loading `.env`;
 an older `.env` selection cannot silently activate another frozen package.
 
 `/model/ready` must report `mode: trained`, the package model version, and
@@ -239,16 +257,16 @@ directories, monitoring, analyst feedback, retraining and rollback.
 ## 7. Freeze before deployment; evaluate locked test only at the Week 6 gate
 
 Freezing signs the selected package and does not read the locked test. The Colab
-handoff freezes its selected release; for locally trained output, freeze it once with
-`.venv-ml/bin/python -m ml.freeze_model --package-dir "$MODEL_PACKAGE_HOST_DIR"`
-before activation. The following evaluator command is for
+handoff freezes its selected release on the trusted Ubuntu VM, not in Colab. Locally
+trained output follows the same UID 0 freeze/registry procedure in the model operations
+runbook before activation. The following evaluator command is for
 the approved Week 6 gate only:
 
 ```bash
-.venv-ml/bin/python -m ml.evaluate \
-  --package-dir "$MODEL_PACKAGE_HOST_DIR" \
-  --locked-test data/processed/locked_test.jsonl \
-  --unlock-locked-test
+docker compose run --rm --no-deps \
+  -v "$PWD/data/processed:/evaluation-input:ro" api \
+  python -m ml.evaluate --package-dir /app/ml/model-package \
+  --locked-test /evaluation-input/locked_test.jsonl --unlock-locked-test
 ```
 
 Before `FROZEN.json` exists, both runtime and evaluator refuse the package. After
@@ -291,3 +309,67 @@ taskbar or VMware frame.
     version without raw features or incident identifiers.
 
 Do not capture passwords, SSH private keys, API keys, `.env`, or raw personal data.
+
+
+## Audit corrections: provenance, calibration and challenge replay
+
+Local training and the Colab partition gate use the same builder provenance validator.
+The builder commit must equal the executing training commit, and the byte hash of the
+training configuration must equal the builder configuration hash, before train or
+validation is read. Rebuild under an approved source/configuration if they differ; do
+not edit manifest hashes to bypass this gate. The Colab pre-install owner approval and
+detached source checkout checks remain in force.
+
+`selection.calibration_bins` now defines validation ECE, reliability curves, bootstrap
+ECE intervals and the calibration gate consistently. Its value is frozen in metadata
+and used again for locked-test metrics. Threshold stability compares validation
+probabilities with calibrated out-of-fold training probabilities. Each outer held-out
+group is excluded from candidate ranking, estimator fitting and inner grouped calibration; the
+chosen stability threshold, each fold's selected candidate, selection metrics and group
+inventory are retained in validation metrics. Each outer fit partition independently
+ranks all candidates using only its inner grouped CV labels; the globally selected
+final model is not reused to select the outer-fold estimator.
+Candidate ranking retains its original uncalibrated inner-CV metrics. Nested calibration
+requires at least two fitting groups per label in every outer fold; it fails closed
+when the dataset cannot support this. Existing calibration limits and insufficient
+independent validation group safeguards remain unchanged.
+
+For an immutable release, use the shared writable evidence volume described in
+`model-operations-runbook.md`. Both evaluation commands use Compose so they share the
+deployment registry and writable evidence volume; no undefined host evidence-root
+variable or separate host history is used. Never make the release writable for evaluation.
+
+Challenge evaluation is a separate, post-freeze, write-once replay and does not open
+locked-test data or change thresholds. Newly trained metadata binds the dataset
+manifest, collection design and runtime decision code; the preserved `incident`
+payload supplies original context, observation quality and review reasons to
+`ModelRuntime.predict`. The evaluator never injects the expected REVIEW decision.
+
+```bash
+docker compose run --rm --no-deps \
+  -v "$PWD/data/processed:/evaluation-input:ro" \
+  -v "$PWD/config/collection-design.yaml:/evaluation-design.yaml:ro" api \
+  python -m ml.evaluate_challenge --package-dir /app/ml/model-package \
+  --challenge /evaluation-input/challenge.jsonl \
+  --manifest /evaluation-input/dataset_manifest.json \
+  --design /evaluation-design.yaml
+```
+
+The signed report contains per-scenario expected/actual decisions, review and confident
+benign/malicious rates, scenario coverage, missing scenarios and pair agreement
+(equal decision distributions across observed scenarios in a cohort). A confident
+binary decision against a REVIEW expectation is reported as FAIL, not rewritten as
+REVIEW. Incomplete coverage also fails. Preserve `CHALLENGE_RESERVED` and the report
+in the release evidence namespace, including interrupted or failing attempts. Do not
+use the challenge result for tuning this release. Legacy packages without the runtime
+policy commitment or datasets without preserved incident context cannot be replayed;
+prepare a new reviewed dataset/package before challenge evaluation. Synthetic replay
+tests establish tooling behavior only, not four-VM acceptance or real model quality.
+
+
+Every release now also requires its pre-existing durable evaluation registry. Freeze
+creates the signed registry binding; runtime and evaluators only open existing storage.
+Copy/mount the registry and retained evidence with the package, following
+`model-operations-runbook.md`. Deleting a challenge or locked-test result directory
+does not reset the registry's consumed state. Legacy releases require explicit,
+provenance-backed migration; missing files do not establish UNOPENED status.

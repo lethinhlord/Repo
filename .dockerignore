@@ -6,7 +6,11 @@
 !config/
 !config/**
 !requirements-runtime.lock
+!requirements.lock
 
 **/__pycache__/
 **/*.pyc
 ml/model-package/
+**/.model-evaluation-registry/
+**/.model-evaluation-evidence/
+ml/splits/*.txt

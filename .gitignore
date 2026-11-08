@@ -39,6 +39,8 @@ n8n/data/
 artifacts/runtime/
 ml/splits/*.txt
 ml/model-package/*
+**/.model-evaluation-registry/
+**/.model-evaluation-evidence/
 !ml/model-package/README.md
 *.pem
 *.key

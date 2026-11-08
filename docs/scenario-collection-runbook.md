@@ -1,6 +1,6 @@
 # HƯỚNG DẪN THU DATASET SOC–AI–SOAR — 4 VM
-Bản vận hành 06/11/2026. Mọi code/resource lấy từ GitHub:
-https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.1
+Bản vận hành 08/11/2026. Mọi code/resource lấy từ GitHub:
+https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.2
 
 ## 0. Phạm vi và trạng thái
 
@@ -43,6 +43,15 @@ Một run đạt cần FINALIZED, validate VALID, RUN_EVIDENCE_CHECK_PASS, conte
 AVAILABLE, observation_quality COMPLETE, đủ 24 feature, checksum và full-capture
 parity. Collector tự tạo scenario_manifest.json/incidents.jsonl sau finalize.
 Không tạo file mẫu rồi coi là dữ liệu train.
+
+Candidate.2 kiểm từng hành động Sysmon với transaction EVE và final flow, cùng
+HTTP endpoint/sequence/status và DNS query status/answer. Thiếu một transaction
+hoặc sai response không được xem là COMPLETE dù số event còn lại đủ min gate.
+Không bỏ dòng gây lỗi; giữ evidence, abort đúng quy trình và chạy mới theo retry plan.
+Auditor lấy quota/repetition từ collection design; không hạ tham số để ép READY.
+Seed mỗi run phải duy nhất toàn bộ bốn nhóm và cả pilot/challenge, không chỉ trong
+từng nhãn. Mục tiêu48 phải thêm đúng PAIR-01/02; không chuyển lần thứ ba sang
+PAIR-03/04 để ép TARGET_MET.
 
 ## 2. Kiến trúc cố định
 
@@ -526,7 +535,7 @@ cũ ngoài checkout. COLLECTION_BASELINE_COMMIT lấy từ tag này, không dùn
 set -euo pipefail
 test "$(id -u)" -ne 0
 PROJECT_ROOT="$HOME/datn-ai-soar-v4"
-COLLECTION_TAG=collection-v4.0.0-candidate.1
+COLLECTION_TAG=collection-v4.0.0-candidate.2
 test ! -e "$PROJECT_ROOT"
 git clone --branch "$COLLECTION_TAG" --single-branch https://github.com/lethinhlord/Repo.git "$PROJECT_ROOT"
 cd "$PROJECT_ROOT"
@@ -826,7 +835,9 @@ C:\DATN\Sysmon\Sysmon64.exe -c
 Get-Service Sysmon64
 ```
 
-Config repo bật ProcessCreate (ID 1), NetworkConnect (ID 3) và DnsQuery (ID 22). Không
+Config repo bật ProcessCreate (ID 1), NetworkConnect (ID 3), ProcessTerminate (ID 5)
+và DnsQuery (ID 22). Event 5 cũng được forward qua Wazuh để đóng lifecycle index;
+không bỏ query EventID=5 trong localfile. Không
 dùng DNS Internet để test. Sau khi dịch vụ Kali ở mục 9 đã chạy, tạo traffic lab (chưa
 dùng làm dữ liệu train), sau đó xác nhận:
 
@@ -842,7 +853,7 @@ policy toàn máy. Đối chiếu phạm vi và thứ tự ưu tiên tại
 Test-NetConnection 192.168.58.147 -Port 443
 Resolve-DnsName www.datn.test -Server 10.40.0.10
 Start-Process "$env:SystemRoot\System32\cmd.exe" -ArgumentList '/c whoami' -Wait
-1,3,22 | ForEach-Object {
+1,3,5,22 | ForEach-Object {
   Get-WinEvent -FilterHashtable @{
     LogName='Microsoft-Windows-Sysmon/Operational'; Id=$_
   } -MaxEvents 1 | Select-Object Id,TimeCreated,MachineName
@@ -1050,7 +1061,10 @@ outputs:
       filename: eve.json
       types:
         - alert
-        - dns
+        - dns:
+            version: 3
+            requests: yes
+            responses: yes
         - http
         - tls
         - flow
@@ -1089,6 +1103,10 @@ sudo tail -n 5 /var/log/suricata/eve.json | jq -c .
 ```
 
 Ba SID local 900001/900002/900004 nhận diện traffic mô phỏng HTTP/DNS/canary trong lab.
+DNS phải có cả request và response thành công trên UDP53 tại resolver đã đóng băng.
+Suricata 8.0.7 dùng type=request/response; wire dns.id phải khớp, còn tx_id của
+request và response có thể khác nhau. Không sửa tx_id trong raw để ép bằng nhau.
+Định dạng: https://docs.suricata.io/en/suricata-8.0.7/upgrade/8.0-dns-logging-changes.html
 SID không phải ground truth ý định; mọi HTTP profile trainable của cả hai nhãn
 dùng cùng endpoint và rule. DNS cả hai nhãn cũng dùng cùng suffix/rule.
 Alert count có thể phản ánh action count, nhưng tên SID/severity riêng theo nhãn
@@ -1592,7 +1610,7 @@ test "$AVAILABLE_KB" -ge 2097152
 test "$FREE_KB" -ge 10485760
 cd "$HOME/datn-ai-soar-v4"
 test -z "$(git status --porcelain)"
-COLLECTION_TAG=collection-v4.0.0-candidate.1
+COLLECTION_TAG=collection-v4.0.0-candidate.2
 .venv-ml/bin/python -m scripts.collection_release candidate --tag "$COLLECTION_TAG" > operator-logs/releases/candidate-current.json
 cmp operator-logs/releases/candidate.json operator-logs/releases/candidate-current.json
 mkdir -p evidence/scenario-runs
@@ -2066,7 +2084,7 @@ ordinal1..4. Mỗi pilot phải VALID/PASS; failed giữ nguyên, ID không tái
 
 ```bash
 set -euo pipefail
-COLLECTION_TAG=collection-v4.0.0-candidate.1
+COLLECTION_TAG=collection-v4.0.0-candidate.2
 BACKUP_ID="PILOT-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM"
 BACKUP_DIR="$HOME/datn-backups/$BACKUP_ID"
 .venv-ml/bin/python -m scripts.collection_release backup \
@@ -2434,7 +2452,7 @@ Không active run. Backup mới sau mỗi buổi, không ghi đè backup gắn a
 
 ```bash
 set -euo pipefail
-COLLECTION_TAG=collection-v4.0.0-candidate.1
+COLLECTION_TAG=collection-v4.0.0-candidate.2
 BACKUP_ID="DATASET-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM"
 BACKUP_DIR="$HOME/datn-backups/$BACKUP_ID"
 .venv-ml/bin/python -m scripts.collection_release backup --tag "$COLLECTION_TAG" \
@@ -2463,18 +2481,31 @@ if (Test-Path -LiteralPath $Destination) { throw 'Destination exists' }
 New-Item -ItemType Directory -Force (Split-Path $Destination) | Out-Null
 scp -r "${SocUser}@192.168.58.147:datn-backups/$BackupId" $Destination
 if ($LASTEXITCODE -ne 0) { throw 'Copy failed' }
-Push-Location $Destination
-try {
- foreach ($line in Get-Content -LiteralPath checksums.sha256) {
-  if ($line -notmatch '^([0-9a-f]{64})  ([A-Za-z0-9._-]+)$') { throw 'Invalid checksum' }
-  $expected=$Matches[1]; $name=$Matches[2]
-  if ((Get-FileHash -LiteralPath $name -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw "Hash mismatch: $name" }
- }
- 'HOST_BACKUP_VERIFY=PASS'
-} finally { Pop-Location }
+$CollectionTag='collection-v4.0.0-candidate.2'
+git --version
+if ($LASTEXITCODE -ne 0) { throw 'Install Git for Windows, reopen PowerShell, then retry verification' }
+$Tools="D:\DATN-TOOLS\$CollectionTag-$BackupId"
+if (Test-Path -LiteralPath $Tools) { throw 'Choose a fresh tools directory; do not reuse an unverified checkout' }
+New-Item -ItemType Directory -Force (Split-Path $Tools) | Out-Null
+git clone --depth 1 --branch $CollectionTag https://github.com/lethinhlord/Repo.git $Tools
+if ($LASTEXITCODE -ne 0) { throw 'GitHub tools checkout failed' }
+$ToolCommit=(git -C $Tools rev-parse HEAD)
+if ($LASTEXITCODE -ne 0) { throw 'Cannot read tools commit' }
+$SourceCommit=(Get-Content -LiteralPath (Join-Path $Destination 'git-commit.txt') -Raw).Trim()
+if ($ToolCommit -cne $SourceCommit) { throw 'Backup commit differs from the selected GitHub tag' }
+powershell.exe -NoProfile -NonInteractive -File "$Tools\scripts\verify_collection_backup.ps1" -Directory $Destination
+if ($LASTEXITCODE -ne 0) { throw 'Host backup verification failed; keep evidence and stop handoff' }
 ```
 
 Thịnh kiểm trên bản sao với cùng GitHubSHA, không sửa dataset gốc Kiên bàn giao.
+Host cần Git for Windows và OpenSSH Client. Nếu thiếu Git, cài từ
+https://git-scm.com/download/win hoặc chạy
+winget install --id Git.Git --exact --source winget rồi mở PowerShell mới.
+Không tải script từ gói data hoặc copy code offline: lấy đúng GitHub tag bên trên.
+Verifier bắt buộc archive, 4 descriptor, restore report, checksum đầy đủ/không trùng,
+run inventory không rỗng và source metadata khớp. File checksum rỗng không đạt.
+Chỉ tiếp tục khi script trả exit code 0 và HOST_BACKUP_VERIFY=PASS.
+Đây là kiểm tra chuyển file; việc restore/validate raw thực do backup collector làm.
 Raw và evidence đi cùng nhau, không chỉ8file output. Layout events_raw.jsonl/
 WIN11-01 cũ là incompatible raw dataset layout: giữ ngoài checkout mới, thu lại,
 không convert nhãn để đủquota.

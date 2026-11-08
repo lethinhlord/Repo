@@ -13,6 +13,7 @@ from api.app.contracts import FeatureStateResponse, WazuhAlert
 from ml.behavior_features import FEATURE_SCHEMA_VERSION
 from ml.feature_pipeline import aggregate_wazuh_alerts, alert_event_time, window_start
 from ml.intake_window import receipt_timely
+from ml.telemetry import process_guid, windows_fields
 
 
 class FeatureStateConflictError(ValueError):
@@ -109,6 +110,76 @@ class FeatureStateStore:
                     "ALTER TABLE wazuh_alerts ADD COLUMN feature_schema_version "
                     "TEXT NOT NULL DEFAULT 'features-v2'"
                 )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS process_identity_events ("
+                "alert_id TEXT PRIMARY KEY, payload_hash TEXT NOT NULL, "
+                "payload_json TEXT NOT NULL, "
+                "event_timestamp REAL NOT NULL, received_at REAL NOT NULL, "
+                "agent_name TEXT NOT NULL, process_guid TEXT NOT NULL, event_kind TEXT NOT NULL)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS ix_process_identity_scope "
+                "ON process_identity_events(agent_name,process_guid,event_timestamp)"
+            )
+            # Upgrade from retained raw evidence only, never reconstructed features.
+            for row in connection.execute(
+                "SELECT * FROM wazuh_alerts WHERE feature_schema_version=?",
+                (FEATURE_SCHEMA_VERSION,),
+            ).fetchall():
+                self._retain_process_identity(
+                    connection, WazuhAlert.model_validate_json(row["payload_json"]),
+                    row["payload_json"], row["payload_hash"],
+                    row["event_timestamp"], row["received_at"],
+                    migration=True,
+                )
+
+    def _retain_process_identity(
+        self, connection: sqlite3.Connection, alert: WazuhAlert, payload: str,
+        payload_hash: str, event_time: float, received_at: float, *, migration: bool = False,
+    ) -> None:
+        previous = connection.execute(
+            "SELECT payload_hash FROM process_identity_events WHERE alert_id=?", (alert.id,),
+        ).fetchone()
+        if previous is not None and previous[0] != payload_hash:
+            raise FeatureStateConflictError(
+                f"alert id {alert.id!r} was replayed with a conflicting payload"
+            )
+        event_id, _, fields = windows_fields(alert.model_dump(mode="json"))
+        guid = process_guid(fields)
+        if event_id not in {"1", "5"} or not guid:
+            return
+        if previous is None and event_id == "1" and event_time < (
+            received_at - self.retention_seconds
+        ):
+            # An active proof already retained above remains usable. An absent
+            # expired start cannot recreate a lifetime whose exit was evicted.
+            if migration:
+                return
+            raise FeatureStateConflictError("stale process creation exceeds identity retention")
+        connection.execute(
+            "INSERT OR IGNORE INTO process_identity_events VALUES (?,?,?,?,?,?,?,?)",
+            (alert.id, payload_hash, payload, event_time, received_at,
+             alert.agent.name, guid, event_id),
+        )
+
+    @staticmethod
+    def _process_context(
+        connection: sqlite3.Connection, alerts: list[WazuhAlert],
+    ) -> list[sqlite3.Row]:
+        """Return only same-agent/GUID lifecycle proof as of an observed network event."""
+        identities = {}
+        for alert in alerts:
+            event_id, _, fields = windows_fields(alert.model_dump(mode="json"))
+            guid = process_guid(fields)
+            if event_id not in {"3", "22"} or not guid:
+                continue
+            for row in connection.execute(
+                "SELECT * FROM process_identity_events WHERE agent_name=? AND process_guid=? "
+                "AND event_timestamp<=? ORDER BY event_timestamp,alert_id",
+                (alert.agent.name, guid, alert_event_time(alert).timestamp()),
+            ).fetchall():
+                identities[row["alert_id"]] = row
+        return sorted(identities.values(), key=lambda row: row["alert_id"])
 
     @staticmethod
     def _next_revision(connection: sqlite3.Connection) -> int:
@@ -139,6 +210,18 @@ class FeatureStateStore:
 
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            self._retain_process_identity(connection, alert, payload, payload_hash, event_time, now)
+            # Open processes retain their original proof for their lifetime.
+            # Closed lifetimes can expire once no retained window may need them.
+            connection.execute(
+                "DELETE FROM process_identity_events AS identity WHERE EXISTS ("
+                "SELECT 1 FROM process_identity_events exited "
+                "WHERE exited.agent_name=identity.agent_name "
+                "AND exited.process_guid=identity.process_guid AND exited.event_kind='5' "
+                "AND exited.event_timestamp>=identity.event_timestamp "
+                "AND exited.event_timestamp<? AND exited.received_at<?)",
+                (now - self.retention_seconds, now - self.retention_seconds),
+            )
             # Persist loss evidence before deleting raw rows. A surviving anchor
             # alone cannot prove the window still contains every original member.
             connection.execute(
@@ -218,7 +301,13 @@ class FeatureStateStore:
                 (bucket_start, bucket_start + horizon, window_minutes, FEATURE_SCHEMA_VERSION),
             ).fetchall()
             alerts = [WazuhAlert.model_validate_json(row["payload_json"]) for row in rows]
-            batch = aggregate_wazuh_alerts(alerts, window_minutes=window_minutes)
+            identities = self._process_context(connection, alerts)
+            batch = aggregate_wazuh_alerts(
+                alerts, window_minutes=window_minutes,
+                process_context=[
+                    WazuhAlert.model_validate_json(row["payload_json"]) for row in identities
+                ],
+            )
             reference = f"wazuh-alert:{alert.id}"
             feature = next(
                 (item for item in batch.incidents if reference in item.incident.raw_refs),
@@ -294,9 +383,14 @@ class FeatureStateStore:
                 "AND window_minutes=? AND feature_schema_version=? ORDER BY alert_id",
                 (start, end, window_minutes, FEATURE_SCHEMA_VERSION),
             ).fetchall()
+            alerts = [WazuhAlert.model_validate_json(row['payload_json']) for row in rows]
+            identities = self._process_context(connection, alerts)
             batch = aggregate_wazuh_alerts(
-                [WazuhAlert.model_validate_json(row['payload_json']) for row in rows],
+                alerts,
                 window_minutes=window_minutes,
+                process_context=[
+                    WazuhAlert.model_validate_json(row["payload_json"]) for row in identities
+                ],
             )
             feature = next(
                 item for item in batch.incidents
@@ -304,16 +398,19 @@ class FeatureStateStore:
             )
             references = set(feature.incident.raw_refs)
             members = [row for row in rows if f"wazuh-alert:{row['alert_id']}" in references]
+            member_alerts = [WazuhAlert.model_validate_json(row["payload_json"]) for row in members]
+            identities = self._process_context(connection, member_alerts)
             if any(not receipt_timely(
                 datetime.fromtimestamp(row['received_at'], UTC),
                 datetime.fromtimestamp(close_at, UTC),
-            ) for row in members):
+            ) for row in [*members, *identities]):
                 raise FeatureStateConflictError("late input changed the window after its watermark")
             if any(row['received_at'] < now - self.retention_seconds for row in members):
                 raise FeatureStateConflictError("window close exceeds raw retention; recollect")
-            digest = hashlib.sha256(json.dumps([
-                (row['alert_id'], row['payload_hash']) for row in members
-            ], separators=(',', ':')).encode()).hexdigest()
+            evidence = {row['alert_id']: row['payload_hash'] for row in [*members, *identities]}
+            digest = hashlib.sha256(json.dumps(
+                sorted(evidence.items()), separators=(',', ':'),
+            ).encode()).hexdigest()
             previous = connection.execute(
                 "SELECT * FROM closed_feature_windows WHERE incident_id=?",
                 (feature.incident.incident_id,),

@@ -8,14 +8,25 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_schema_export_script_runs_without_pythonpath_override() -> None:
+def test_schema_export_script_runs_without_pythonpath_override(tmp_path: Path) -> None:
+    output_dir = tmp_path / "generated" / "schemas"
     subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "export_week2_contracts.py")],
+        [sys.executable, str(ROOT / "scripts" / "export_week2_contracts.py"),
+         "--output-dir", str(output_dir)],
         cwd=ROOT,
         check=True,
         capture_output=True,
         text=True,
     )
+    # Only these three contracts belong to the separate legacy exporter.
+    legacy = {"decision-record.schema.json", "incident-request.schema.json", "openapi-v1.json"}
+    expected = {path.name for path in (ROOT / "schemas").glob("*.json")} - legacy
+    exported = {path.name for path in output_dir.glob("*.json")}
+    assert exported == expected
+    for name in exported:
+        assert json.loads((output_dir / name).read_text(encoding="utf-8")) == json.loads(
+            (ROOT / "schemas" / name).read_text(encoding="utf-8")
+        )
 
 
 def test_signed_webhook_script_runs_without_pythonpath_override() -> None:

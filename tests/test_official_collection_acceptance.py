@@ -124,7 +124,9 @@ def prepare_official(root, monkeypatch):
     candidate = {
         "version": "collection-candidate-v1",
         "commit": "a" * 40,
-        "tag": "collection-v4.0.0-candidate.1",
+        "tag": yaml.safe_load(
+            (root / "config/collection-design.yaml").read_text()
+        )["candidate_tag"],
         "tag_object": "b" * 40,
         "origin": "https://github.com/lethinhlord/Repo.git",
         "tracked_files_sha256": "c" * 64,
@@ -215,7 +217,10 @@ def test_official_pilots_acceptance_backup_and_trainable_start(tmp_path, monkeyp
     assert not (tmp_path / "evidence/scenario-runs/.active-run.json").exists()
 
 
-def test_official_40_fresh_trainable_runs_reach_cohort_split_without_pilots(tmp_path, monkeypatch):
+@pytest.mark.parametrize("preferred", [False, True])
+def test_official_40_fresh_trainable_runs_reach_cohort_split_without_pilots(
+    tmp_path, monkeypatch, preferred,
+):
     from ml import build_dataset as builder
 
     archive, source, catalog, _, _, _, _ = accept_official_lab(tmp_path, monkeypatch)
@@ -228,19 +233,26 @@ def test_official_40_fresh_trainable_runs_reach_cohort_split_without_pilots(tmp_
                 tmp_path, archive, source, scenario, sequence=sequence, repeat=repeat
             )
             sequence += 1
+    if preferred:
+        for scenario in catalog.scenarios:
+            if scenario.purpose == "trainable" and scenario.cohort_id.endswith(("01", "02")):
+                fixture._collect_run(
+                    tmp_path, archive, source, scenario, sequence=sequence, repeat=12,
+                )
+                sequence += 1
     report = fixture._audit(tmp_path, source)
     fixture._assert_balanced_report(
         report,
-        expected_status="READY",
-        expected_runs_per_stratum=10,
-        expected_scenario_counts=[2, 2, 2, 2, 2],
+        expected_status="TARGET_MET" if preferred else "READY",
+        expected_runs_per_stratum=12 if preferred else 10,
+        expected_scenario_counts=[2, 2, 2, 3, 3] if preferred else [2, 2, 2, 2, 2],
     )
     assert report["split_group_key"] == "cohort_id"
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(builder, "_git_commit", lambda: "a" * 40)
     manifest = builder.build_dataset(Path("ml/training_config.yaml"))
     assert manifest["group_key"] == "cohort_id"
-    assert sum(manifest["record_counts"].values()) == 40
+    assert sum(manifest["record_counts"].values()) == (48 if preferred else 40)
     assert manifest["locked_test_status"] == "UNOPENED"
     assert manifest["provenance"]["collection_design_sha256"]
     partitions = {}

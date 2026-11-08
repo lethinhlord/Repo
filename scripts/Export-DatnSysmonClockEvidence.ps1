@@ -40,7 +40,7 @@ function Get-DatnSysmonClockRecord {
         DeltaSeconds = $null
         Status = 'INVALID'
     }
-    if ($result.Provider -ne 'Microsoft-Windows-Sysmon' -or $result.EventID -notin '1','3','22') {
+    if ($result.Provider -ne 'Microsoft-Windows-Sysmon' -or $result.EventID -notin '1','3','5','22') {
         $result.Status = 'NOT_SYSMON_SIGNAL'
     } elseif ($result.SystemTime -match '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,7})?(Z|[+]00:00)$' -and
               $result.UtcTime -match '^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d{1,7})?(Z|[+]00:00)?$') {
@@ -86,7 +86,7 @@ function Export-DatnSysmonClockEvidence {
     if (Test-Path -LiteralPath $Directory) { throw 'Output already exists; select a new forensic directory' }
     if (@($RecordIds | Where-Object { $_ -le 0 }).Count) { throw 'Record IDs must be positive' }
     $channel = 'Microsoft-Windows-Sysmon/Operational'
-    $xpath = '*[System[(EventID=1 or EventID=3 or EventID=22)]]'
+    $xpath = '*[System[(EventID=1 or EventID=3 or EventID=5 or EventID=22)]]'
     if ($RecordIds.Count) {
         $uniqueIds=@($RecordIds | Select-Object -Unique)
         if ($uniqueIds.Count -gt $Limit) { throw 'Requested record IDs exceed MaxEvents; increase the explicit limit' }
