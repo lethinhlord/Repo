@@ -74,3 +74,36 @@ def test_declared_design_quota_is_complete_and_strict():
     from ml.collection_design import load_collection_design
     doc = yaml.safe_load((ROOT/"config/collection-design.yaml").read_text())
     assert load_collection_design(ROOT/"config/scenario-catalog.yaml")["quota"] == doc["quota"]
+
+
+@pytest.mark.parametrize("purpose", ["pilot", "challenge"])
+def test_seed_reuse_with_excluded_purpose_remains_blocking(tmp_path, monkeypatch, purpose):
+    import test_dataset_audit as fixture
+
+    from ml import dataset_audit
+
+    fixture.populate(tmp_path)
+    original = dataset_audit._audit_run
+
+    def alter_validated_scope(*args, **kwargs):
+        manifest, incidents, errors = original(*args, **kwargs)
+        if manifest is not None and manifest.run_id == "ACCOUNT-BENIGN-00":
+            manifest.purpose = purpose
+            manifest.collection_seed = 1000  # Same seed as ACCOUNT-MALICIOUS-00.
+        return manifest, incidents, errors
+
+    monkeypatch.setattr(dataset_audit, "_audit_run", alter_validated_scope)
+    report = fixture.run_audit(tmp_path)
+    assert any(i["code"] == "COLLECTION_SEED_REUSE" for i in report["issues"])
+
+
+def test_target_extras_must_follow_frozen_cohorts():
+    from ml import dataset_audit
+    from ml.collection_design import load_collection_design
+
+    design = load_collection_design(ROOT/"config/scenario-catalog.yaml")
+    correct = {f"S{i}": (3 if i in (1, 2) else 2) for i in range(1, 6)}
+    wrong = {f"S{i}": (3 if i in (3, 4) else 2) for i in range(1, 6)}
+    cohorts = {f"S{i}": f"ACCOUNT-PAIR-{i:02d}" for i in range(1, 6)}
+    assert dataset_audit.target_repetition_errors(correct, cohorts, design) == []
+    assert dataset_audit.target_repetition_errors(wrong, cohorts, design)

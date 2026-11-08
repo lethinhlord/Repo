@@ -51,6 +51,17 @@ def load_collection_design(catalog_path: Path) -> dict[str, Any] | None:
         )
     ):
         raise ValueError("invalid collection design quota")
+    extras = quota.get("target_extra_repetition_cohort_suffixes")
+    if (
+        not isinstance(extras, list)
+        or any(not isinstance(suffix, str) or not suffix for suffix in extras)
+        or len(set(extras)) != len(extras)
+        or quota["target_runs_per_stratum"] != (
+            quota["minimum_repetitions_per_scenario"] * quota["minimum_scenarios_per_stratum"]
+            + len(extras)
+        )
+    ):
+        raise ValueError("invalid collection design quota target cohort allocation")
     policy = doc.get("audit_policy", {})
     if any(
         policy.get(k) != v

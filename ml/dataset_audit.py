@@ -30,6 +30,25 @@ from ml.scenario_collection import (
 STRATA = ("account:benign", "account:malicious", "c2:benign", "c2:malicious")
 
 
+def target_repetition_errors(
+    counts: dict[str, int], cohorts: dict[str, str | None], design: dict[str, Any],
+) -> list[str]:
+    quota = design["quota"]
+    extras = set(quota["target_extra_repetition_cohort_suffixes"])
+    at_target = sum(counts.values()) == quota["target_runs_per_stratum"]
+    errors = []
+    for scenario, cohort in cohorts.items():
+        expected = quota["minimum_repetitions_per_scenario"] + int(
+            bool(cohort) and cohort.rsplit("-", 1)[-1] in extras
+        )
+        count = counts.get(scenario, 0)
+        if count > expected or (at_target and count != expected):
+            errors.append(
+                f"{scenario} has {count} repetitions; frozen target allocation={expected}"
+            )
+    return errors
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -690,15 +709,8 @@ def audit_dataset(
     all_valid = {
         run_id: value for run_id, value in candidates.items() if run_id not in invalid_runs
     }
-    excluded_purposes = Counter(
-        manifest.purpose for manifest, _ in all_valid.values() if manifest.purpose != "trainable"
-    )
-    valid = {
-        run_id: value for run_id, value in all_valid.items() if value[0].purpose == "trainable"
-    }
-    parameter_rows: dict[str, list[tuple[str, int, dict[str, Any]]]] = {name: [] for name in STRATA}
     seed_owners: dict[int, str] = {}
-    for run_id, (manifest, _) in valid.items():
+    for run_id, (manifest, _) in all_valid.items():
         if manifest.collection_seed is None:
             continue
         previous_owner = seed_owners.setdefault(manifest.collection_seed, run_id)
@@ -706,9 +718,19 @@ def audit_dataset(
             _issue(
                 issues, "COLLECTION_SEED_REUSE",
                 f"collection seed {manifest.collection_seed} is shared with {previous_owner}; "
-                "each trainable run needs a globally independent seed",
+                "each run needs a globally independent seed, including pilot and challenge",
                 run_id=run_id,
             )
+    excluded_purposes = Counter(
+        manifest.purpose for manifest, _ in all_valid.values() if manifest.purpose != "trainable"
+    )
+    valid = {
+        run_id: value for run_id, value in all_valid.items() if value[0].purpose == "trainable"
+    }
+    parameter_rows: dict[str, list[tuple[str, int, dict[str, Any]]]] = {name: [] for name in STRATA}
+    for run_id, (manifest, _) in valid.items():
+        if manifest.collection_seed is None:
+            continue
         stratum = f"{manifest.family}:{manifest.label}"
         parameter_rows[stratum].append(
             (run_id, manifest.collection_seed, manifest.scenario_parameters)
@@ -850,6 +872,12 @@ def audit_dataset(
         scenarios = Counter(manifest.scenario_id for manifest in manifests)
         if design:
             quota = design["quota"]
+            for error in target_repetition_errors(
+                scenarios,
+                {s: catalog[s].cohort_id for s in expected_scenarios[name]},
+                design,
+            ):
+                _issue(issues, "TARGET_REPETITION_ALLOCATION", f"{name}: {error}")
             cohorts = {m.cohort_id for m in manifests if m.cohort_id}
             if len(cohorts) < quota["minimum_cohorts_per_stratum"]:
                 _issue(

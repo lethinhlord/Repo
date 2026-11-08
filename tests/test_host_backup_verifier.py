@@ -4,16 +4,31 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import shutil
 import subprocess
+import sys
 import tarfile
 from pathlib import Path
 
 import pytest
 
 PS = shutil.which("pwsh") or shutil.which("powershell.exe")
+SHELLS = list(dict.fromkeys(
+    p for p in (shutil.which("pwsh"), shutil.which("powershell.exe")) if p
+))
 ROOT = Path(__file__).resolve().parents[1]
 pytestmark = pytest.mark.skipif(PS is None, reason="Native PowerShell is not installed")
+
+
+@pytest.fixture(params=SHELLS or [None], autouse=True)
+def select_native_shell(request, monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "PS", request.param)
+    if request.param and Path(request.param).name.casefold() == "powershell.exe":
+        monkeypatch.setenv("PSModulePath", str(
+            Path(os.environ.get("SYSTEMROOT", "C:/Windows"))/
+            "System32/WindowsPowerShell/v1.0/Modules"
+        ))
 
 
 def verify(directory):
