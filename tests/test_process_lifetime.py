@@ -154,4 +154,44 @@ def test_out_of_order_terminated_identity_expires_without_resurrection(tmp_path,
     result = store.ingest(connection(seconds=901))
     assert result.feature.incident.features["outbound_connection_count"] == 0
     with sqlite3.connect(path) as connection_db:
-        assert connection_db.execute("SELECT COUNT(*) FROM process_identity_events").fetchone()[0] == 0
+        rows = connection_db.execute("SELECT COUNT(*) FROM process_identity_events").fetchone()[0]
+        assert rows == 0
+
+
+def test_expired_creation_cannot_reactivate_an_expired_terminated_process(tmp_path, monkeypatch):
+    path = tmp_path / "state.sqlite3"
+    monkeypatch.setattr("api.app.feature_state.time.time", lambda: START.timestamp() + 302)
+    store = FeatureStateStore(path, retention_seconds=600)
+    store.ingest(event("EXIT", 5, 300))
+    store.ingest(event("PROCESS", 1, 299))
+    monkeypatch.setattr("api.app.feature_state.time.time", lambda: START.timestamp() + 903)
+    store.ingest(connection(seconds=901))
+    monkeypatch.setattr("api.app.feature_state.time.time", lambda: START.timestamp() + 904)
+    with pytest.raises(FeatureStateConflictError, match="stale|expired"):
+        store.ingest(event("PROCESS", 1, 299))
+
+
+def test_retained_identity_rejects_its_id_reused_as_network_after_raw_expiry(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setattr("api.app.feature_state.time.time", lambda: START.timestamp() + 1)
+    store = FeatureStateStore(tmp_path / "state.sqlite3", retention_seconds=600)
+    store.ingest(event("SAME", 1, 0))
+    monkeypatch.setattr("api.app.feature_state.time.time", lambda: START.timestamp() + 902)
+    with pytest.raises(FeatureStateConflictError, match="conflicting payload"):
+        store.ingest(connection("SAME", 901))
+
+
+def test_batch_rejects_id_collision_between_context_and_current_alert():
+    with pytest.raises(ValueError, match="conflicting payload"):
+        aggregate_wazuh_alerts(
+            [connection("SAME")], process_context=[event("SAME", 1, 299)],
+        )
+
+
+def test_process_termination_native_clock_is_validated():
+    from ml.telemetry import sysmon_clock_issues
+
+    terminated = event("EXIT", 5, 300, utcTime="2026-11-07T00:00:00Z").model_dump(mode="json")
+    terminated["data"]["win"]["system"]["providerName"] = "Microsoft-Windows-Sysmon"
+    assert sysmon_clock_issues(terminated)

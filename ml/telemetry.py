@@ -77,7 +77,7 @@ def sysmon_clock_issues(event: dict[str, Any], *, maximum_skew_seconds: float = 
     Named Sysmon UtcTime values without an offset have a documented UTC meaning.
     """
     event_id, system, fields = windows_fields(event)
-    if event_id not in {"1", "3", "22"}:
+    if event_id not in {"1", "3", "5", "22"}:
         return []
     provider = str(system.get("providerName", "")).strip().casefold()
     decoder = event.get("decoder")

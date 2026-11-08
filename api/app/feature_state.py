@@ -130,17 +130,13 @@ class FeatureStateStore:
                     connection, WazuhAlert.model_validate_json(row["payload_json"]),
                     row["payload_json"], row["payload_hash"],
                     row["event_timestamp"], row["received_at"],
+                    migration=True,
                 )
 
-    @staticmethod
     def _retain_process_identity(
-        connection: sqlite3.Connection, alert: WazuhAlert, payload: str,
-        payload_hash: str, event_time: float, received_at: float,
+        self, connection: sqlite3.Connection, alert: WazuhAlert, payload: str,
+        payload_hash: str, event_time: float, received_at: float, *, migration: bool = False,
     ) -> None:
-        event_id, _, fields = windows_fields(alert.model_dump(mode="json"))
-        guid = process_guid(fields)
-        if event_id not in {"1", "5"} or not guid:
-            return
         previous = connection.execute(
             "SELECT payload_hash FROM process_identity_events WHERE alert_id=?", (alert.id,),
         ).fetchone()
@@ -148,6 +144,18 @@ class FeatureStateStore:
             raise FeatureStateConflictError(
                 f"alert id {alert.id!r} was replayed with a conflicting payload"
             )
+        event_id, _, fields = windows_fields(alert.model_dump(mode="json"))
+        guid = process_guid(fields)
+        if event_id not in {"1", "5"} or not guid:
+            return
+        if previous is None and event_id == "1" and event_time < (
+            received_at - self.retention_seconds
+        ):
+            # An active proof already retained above remains usable. An absent
+            # expired start cannot recreate a lifetime whose exit was evicted.
+            if migration:
+                return
+            raise FeatureStateConflictError("stale process creation exceeds identity retention")
         connection.execute(
             "INSERT OR IGNORE INTO process_identity_events VALUES (?,?,?,?,?,?,?,?)",
             (alert.id, payload_hash, payload, event_time, received_at,

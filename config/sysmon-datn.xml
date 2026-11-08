@@ -4,6 +4,7 @@
   <EventFiltering>
     <!-- Empty exclude rules mean that the required event family is collected. -->
     <ProcessCreate onmatch="exclude" />
+    <ProcessTerminate onmatch="exclude" />
     <NetworkConnect onmatch="exclude" />
     <DnsQuery onmatch="exclude" />
   </EventFiltering>

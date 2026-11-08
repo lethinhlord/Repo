@@ -430,7 +430,14 @@ def test_offline_and_online_derive_the_same_c2_vector_for_same_raw_window(
     # Full collection requires it; both feature results must remain PARTIAL here.
     source = source.model_copy(update={"require_flow_counters": False})
     taxonomy = yaml.safe_load((ROOT / "config/suspicious-process-taxonomy.yaml").read_text())
-    alerts = [process, network, eve]
+    # The alert is a signature observation, not proof that a protocol transaction
+    # was logged. Preserve it and supply the separate actual EVE transaction.
+    transaction_payload = eve.model_dump(mode="json")
+    transaction_payload["id"] = "PARITY-TRANSACTION"
+    transaction_payload["data"]["event_type"] = "dns" if dns else "http"
+    transaction_payload["data"].pop("alert")
+    transaction = WazuhAlert.model_validate(transaction_payload)
+    alerts = [process, network, eve, transaction]
     if eve_second == 16:
         with pytest.raises(CollectionError, match="Suricata"):
             _derive_c2(

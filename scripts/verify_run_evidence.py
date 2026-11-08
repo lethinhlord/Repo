@@ -55,7 +55,7 @@ def verify_run_evidence(run_id: str, project_root: Path) -> dict[str, Any]:
     checked = 0
     for number, event in enumerate(windows, 1):
         event_id, system, fields = windows_fields(event)
-        if event_id in {"1", "3", "22"}:
+        if event_id in {"1", "3", "5", "22"}:
             checked += 1
             # Preserve the original runbook's strict raw-export gate. Historical
             # provider-less online adapters remain supported by the central

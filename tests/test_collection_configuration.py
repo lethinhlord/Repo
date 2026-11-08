@@ -113,7 +113,7 @@ def test_sysmon_configuration_enables_required_event_families() -> None:
         for child in event_filtering
         if child.attrib.get("onmatch") == "exclude"
     }
-    assert {"ProcessCreate", "NetworkConnect", "DnsQuery"} <= enabled
+    assert {"ProcessCreate", "ProcessTerminate", "NetworkConnect", "DnsQuery"} <= enabled
 
 
 def test_windows_wazuh_snippet_adds_sysmon_without_duplicate_security_channel() -> None:
@@ -126,6 +126,7 @@ def test_windows_wazuh_snippet_adds_sysmon_without_duplicate_security_channel() 
 
     assert locations == ["Microsoft-Windows-Sysmon/Operational"]
     assert "<location>Security</location>" not in snippet
+    assert "EventID=5" in snippet
 
 
 def test_suricata_lab_rules_use_unique_local_signature_ids() -> None:

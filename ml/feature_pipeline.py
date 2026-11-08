@@ -303,9 +303,12 @@ def _derive_raw_group(
         attributed: list[WazuhAlert] = []
         windows_agent, sensor_agent = _collection_sources(config)
         configured_sources = {normalize_ip(value) for value in config.get("windows_source_ips", [])}
-        identity_events = {
-            item.id: item.model_dump(mode="json") for item in [*(process_context or []), *alerts]
-        }
+        identity_events = {}
+        for item in [*(process_context or []), *alerts]:
+            payload = item.model_dump(mode="json")
+            if item.id in identity_events and identity_events[item.id] != payload:
+                raise ValueError(f"duplicate alert id has conflicting payload: {item.id}")
+            identity_events[item.id] = payload
         identities_by_guid: dict[str, list[dict[str, Any]]] = {}
         for identity in identity_events.values():
             kind, _, fields = windows_fields(identity)
