@@ -1,5 +1,33 @@
 # Changelog
 
+## collection-v4.0.0-candidate.2 — 2026-11-08
+
+### Fixed
+
+- Require every frozen C2 action, its protocol result and final flow; validate
+  actual Suricata 8 DNS request/response semantics using wire DNS identity.
+- Validate every finalized/aborted backup inventory and reject empty, incomplete
+  or inconsistent Windows handoffs.
+- Enforce frozen quotas, designated extra repetitions and globally unique seeds
+  across trainable, pilot and challenge runs.
+- Bind local/Colab training provenance, calibration bins and nested model selection.
+- Preserve immutable releases with a separately signed durable evaluation registry,
+  external write-once output evidence and verified legacy migration.
+- Prevent expired notification retries from sending obsolete decisions; exclude
+  all declared private/special-use DNS namespaces from external TI lookup.
+- Retain as-of process lifecycle proof across feature windows, reject retired
+  identity replay/collisions and collect ProcessTerminate through Sysmon/Wazuh.
+- Restore isolated model-free Week 1 deployment with runtime source/dependency
+  attestation before QA checkout mounts.
+
+### Added
+
+- Post-freeze challenge replay with full incident context, policy/data commitments
+  and honest REVIEW/confident-classification/coverage/pair-agreement reporting.
+
+Actual four-VM acceptance and new data/model training remain separate lab work.
+This release preserves SHADOW/ASSISTED and the locked-test evaluation boundary.
+
 ## Unreleased
 
 ### Fixed

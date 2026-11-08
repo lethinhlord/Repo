@@ -23,7 +23,7 @@ Real-lab collection uses the four-VM procedure in
 measured clock preflight, context enrollment and pilot gates in order. Run drafts
 require `--clock-preflight` from that measured preflight; an abbreviated command
 cannot replace it. The current candidate is
-[collection-v4.0.0-candidate.1](https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.1).
+[collection-v4.0.0-candidate.2](https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.2).
 It implements the paired cohort design, neutral actor runners and evidence-bound
 per-lab acceptance. Pilot → preflight replay → backup restore → acceptance must
 succeed on the actual four VMs before trainable collection opens. Repository tests
@@ -31,8 +31,9 @@ do not certify the remote lab or a trained model.
 
 See [current status](docs/current-status.md) and the
 [collection design and limits](docs/collection-training-design.md). The new four-pilot
-handoff replays VALID/PASS with this candidate; historical handoff clock failures
-remain historical evidence and are not rewritten.
+handoff replayed VALID/PASS in the candidate.1 verification. That historical result
+does not certify candidate.2's stricter source/response contract. Collect fresh
+candidate.2 pilots; historical data, results and failures are not rewritten.
 
 Use `main` as the maintained entry point and the exact approved source SHA for
 collection, dataset building and training. The Colab notebook accepts
