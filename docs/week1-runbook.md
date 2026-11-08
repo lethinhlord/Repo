@@ -19,7 +19,7 @@ chmod +x scripts/*.sh
 ```
 
 Use a clean committed checkout: the reproducible image builder rejects changed
-runtime inputs. Install Docker with Compose/Buildx, OpenSSL, Git and curl first.
+runtime inputs. Install Docker with Compose/Buildx, Python 3, OpenSSL, Git and curl first.
 No trained model package or enrolled context baseline is needed for this slice.
 
 The first deploy creates `.env.week1` with random n8n encryption, webhook and
@@ -43,6 +43,11 @@ The API uses the reproducible `datn-ai-soar-api:week1` tag. Verification derives
 `datn-ai-soar-api:week1-qa` from that tag and installs Git plus the pinned QA
 requirements (including pytest/Ruff) there; the runtime image continues to
 contain runtime dependencies only.
+Before mounting the checkout for tests, the verifier compares the complete image
+API/ML/config inventory and bytes against that checkout and verifies that QA has
+not changed any runtime distribution version. It also compares the running API
+container's image ID with the selected runtime tag. A stale/different image fails.
+The attestation is saved in evidence/week1-runtime-artifact.json.
 The verifier runs tests/lint in the QA image, validates the selected Compose
 file, retries webhook registration, and stores the API and end-to-end responses
 under `evidence/week1-*.json`.

@@ -10,6 +10,7 @@ services:
       VT_TIMEOUT_SECONDS: "${VT_TIMEOUT_SECONDS:-5}"
       MODEL_PACKAGE_DIR: "${MODEL_PACKAGE_DIR:-/app/ml/model-package}"
       MODEL_EVALUATION_EVIDENCE_DIR: "/app/state/model-evaluations"
+      MODEL_EVALUATION_REGISTRY_DIR: "/app/model-evaluation-registry"
       MODEL_PACKAGE_SIGNING_KEY: "${MODEL_PACKAGE_SIGNING_KEY:?Set MODEL_PACKAGE_SIGNING_KEY in .env}"
       MODEL_PACKAGE_VERIFICATION_KEYS: "${MODEL_PACKAGE_VERIFICATION_KEYS:-[]}"
       FEATURE_STATE_DB: "/app/state/feature-state.sqlite3"
@@ -29,6 +30,11 @@ services:
     volumes:
       - ${MODEL_PACKAGE_HOST_DIR:-./ml/model-package}:/app/ml/model-package:ro
       - feature_state:/app/state
+      - type: bind
+        source: ${MODEL_EVALUATION_REGISTRY_HOST_DIR:-./ml/.model-evaluation-registry}
+        target: /app/model-evaluation-registry
+        bind:
+          create_host_path: false
       - type: bind
         source: ${CONTEXT_BASELINE_HOST_FILE:-./evidence/context-baseline.json}
         target: /app/context-baseline.json

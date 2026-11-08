@@ -11,9 +11,15 @@ ARG API_IMAGE
 FROM ${API_IMAGE}
 RUN apt-get update && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
+RUN git config --system --add safe.directory /app
 COPY requirements.lock /tmp/requirements-qa.lock
 RUN pip install --no-cache-dir --only-binary=:all: -r /tmp/requirements-qa.lock
 DOCKERFILE
+API_CONTAINER=$(docker compose -p datn-week1 -f compose.week1.yaml --env-file .env.week1 ps -q api)
+test -n "$API_CONTAINER" || { echo "Week 1 API container is missing" >&2; exit 1; }
+python3 scripts/verify_runtime_artifact.py --runtime-image datn-ai-soar-api:week1 \
+  --qa-image datn-ai-soar-api:week1-qa --container "$API_CONTAINER" \
+  > evidence/week1-runtime-artifact.json
 docker run --rm --mount "type=bind,src=$PWD,dst=/app,readonly" \
   datn-ai-soar-api:week1-qa python -m pytest -q -p no:cacheprovider
 docker run --rm --mount "type=bind,src=$PWD,dst=/app,readonly" \

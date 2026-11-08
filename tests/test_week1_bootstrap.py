@@ -38,7 +38,12 @@ def test_fresh_week1_bootstrap_and_repeat_preserve_secrets_and_use_matching_qa_i
     for name in ("deploy_week1.sh", "verify_week1.sh"):
         shutil.copyfile(ROOT / "scripts" / name, tmp_path / "scripts" / name)
     for name, body in {
-        "bin/docker": '#!/bin/sh\nprintf "%s\\n" "$*" >> cli.log\ncat >/dev/null\n',
+        "bin/docker": (
+            '#!/bin/sh\nprintf "%s\\n" "$*" >> cli.log\n'
+            'case "$*" in *" ps -q api") printf "fixture-api-container\\n";; esac\n'
+            'cat >/dev/null\n'
+        ),
+        "bin/python3": '#!/bin/sh\nprintf "python3 %s\\n" "$*" >> cli.log\n',
         "bin/curl": '#!/bin/sh\nprintf "{}"\n',
         "bin/openssl": '#!/bin/sh\nprintf "isolated-test-secret-01234567890123456789"\n',
         "scripts/build_reproducible_image.sh": '#!/bin/sh\nprintf "build %s\\n" "$*" >> cli.log\n',
@@ -74,5 +79,6 @@ def test_fresh_week1_bootstrap_and_repeat_preserve_secrets_and_use_matching_qa_i
     assert "datn-ai-soar-api:week1-qa python -m pytest" in commands
     assert "datn-ai-soar-api:week1-qa python -m ruff" in commands
     assert "--build-arg API_IMAGE=datn-ai-soar-api:week1" in commands
+    assert "verify_runtime_artifact.py --runtime-image datn-ai-soar-api:week1" in commands
     assert "-f compose.week1.yaml --env-file .env.week1" in commands
     assert "compose down" not in commands
