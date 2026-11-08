@@ -1,3 +1,4 @@
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -32,7 +33,7 @@ SCHEMA_DIR = ROOT / "schemas"
 
 
 def write_json(name: str, value: dict) -> None:
-    SCHEMA_DIR.mkdir(exist_ok=True)
+    SCHEMA_DIR.mkdir(parents=True, exist_ok=True)
     (SCHEMA_DIR / name).write_text(
         json.dumps(value, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
@@ -41,6 +42,9 @@ def write_json(name: str, value: dict) -> None:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Export API contracts as JSON schemas.")
+    parser.add_argument("--output-dir", type=Path, default=SCHEMA_DIR)
+    SCHEMA_DIR = parser.parse_args().output_dir
     write_json(
         "feature-pipeline-response.schema.json",
         FeaturePipelineResponse.model_json_schema(),
