@@ -93,6 +93,9 @@ def main() -> None:
         "status": "RUNTIME_ARTIFACT_MATCH", "runtime_image_id": runtime_id,
         "source_files": len(runtime["sources"]), "runtime_distributions": len(runtime["packages"]),
         "qa_additional_distributions": sorted(set(qa["packages"]) - set(runtime["packages"])),
+        "qa_node_version": docker(
+            "run", "--rm", "--network", "none", "--entrypoint", "node", args.qa_image, "--version"
+        ),
     }, indent=2))
 
 

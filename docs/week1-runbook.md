@@ -41,7 +41,7 @@ in the returned execution data and does not send a real external notification.
 
 The API uses the reproducible `datn-ai-soar-api:week1` tag. Verification derives
 `datn-ai-soar-api:week1-qa` from that tag and installs Git plus the pinned QA
-requirements (including pytest/Ruff) there; the runtime image continues to
+requirements (including pytest/Ruff), Git and Node.js there; the runtime image continues to
 contain runtime dependencies only.
 Before mounting the checkout for tests, the verifier compares the complete image
 API/ML/config inventory and bytes against that checkout and verifies that QA has

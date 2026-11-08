@@ -9,7 +9,7 @@ docker build --build-arg API_IMAGE=datn-ai-soar-api:week1 \
   --tag datn-ai-soar-api:week1-qa --file - . <<'DOCKERFILE'
 ARG API_IMAGE
 FROM ${API_IMAGE}
-RUN apt-get update && apt-get install -y --no-install-recommends git \
+RUN apt-get update && apt-get install -y --no-install-recommends git nodejs \
     && rm -rf /var/lib/apt/lists/*
 RUN git config --system --add safe.directory /app
 COPY requirements.lock /tmp/requirements-qa.lock
