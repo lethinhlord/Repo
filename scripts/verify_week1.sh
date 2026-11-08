@@ -13,7 +13,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends git nodejs \
     && rm -rf /var/lib/apt/lists/*
 RUN git config --system --add safe.directory /app
 COPY requirements.lock /tmp/requirements-qa.lock
-RUN pip install --no-cache-dir --only-binary=:all: -r /tmp/requirements-qa.lock
+RUN grep -E '^(pytest|ruff)==' /tmp/requirements-qa.lock > /tmp/requirements-qa-only.lock \
+    && test "$(wc -l < /tmp/requirements-qa-only.lock)" -eq 2 \
+    && pip install --no-cache-dir --only-binary=:all: -r /tmp/requirements-qa-only.lock
 DOCKERFILE
 API_CONTAINER=$(docker compose -p datn-week1 -f compose.week1.yaml --env-file .env.week1 ps -q api)
 test -n "$API_CONTAINER" || { echo "Week 1 API container is missing" >&2; exit 1; }

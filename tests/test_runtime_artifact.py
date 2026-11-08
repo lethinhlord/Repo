@@ -10,7 +10,7 @@ def test_runtime_qa_and_checkout_must_agree_without_dependency_drift():
     base = {"sources": source, "packages": {"runtime-lib": "1.0"}}
     qa = {"sources": source, "packages": {"runtime-lib": "1.0", "pytest": "9.1.1"}}
     verify_snapshots(source, base, qa)
-    for fault in ("source", "extra_source", "qa_source", "runtime_dependency"):
+    for fault in ("source", "extra_source", "qa_source", "runtime_dependency", "optional_runtime"):
         damaged_base, damaged_qa = copy.deepcopy(base), copy.deepcopy(qa)
         if fault == "source":
             damaged_base["sources"]["ml/model.py"] = "c"*64
@@ -18,8 +18,10 @@ def test_runtime_qa_and_checkout_must_agree_without_dependency_drift():
             damaged_base["sources"]["api/unexpected.py"] = "d"*64
         elif fault == "qa_source":
             damaged_qa["sources"]["api/app.py"] = "e"*64
-        else:
+        elif fault == "runtime_dependency":
             damaged_qa["packages"]["runtime-lib"] = "2.0"
+        else:
+            damaged_qa["packages"]["uvloop"] = "0.22.0"
         with pytest.raises(ValueError):
             verify_snapshots(source, damaged_base, damaged_qa)
 

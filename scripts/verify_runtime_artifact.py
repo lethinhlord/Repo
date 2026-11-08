@@ -49,6 +49,13 @@ def verify_snapshots(
         raise ValueError("runtime image source differs from the tested checkout")
     if qa["sources"] != runtime["sources"]:
         raise ValueError("QA image source differs from the runtime image")
+    qa_tools = {
+        "pytest", "ruff", "iniconfig", "packaging", "pluggy", "pygments",
+        "exceptiongroup", "tomli", "colorama",
+    }
+    unexpected = set(qa["packages"]) - set(runtime["packages"]) - qa_tools
+    if unexpected:
+        raise ValueError(f"QA added non-test runtime distributions: {sorted(unexpected)}")
     for name, version in runtime["packages"].items():
         if qa["packages"].get(name) != version:
             raise ValueError(f"QA changed runtime distribution: {name}")
