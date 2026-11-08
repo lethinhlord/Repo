@@ -8,6 +8,7 @@ from test_ml_package import SIGNING_KEY, account_features, c2_features, create_p
 from test_training_integrity import prepare_dataset
 
 from ml.evaluate import evaluate_locked_test
+from ml.evaluation_evidence import evidence_directory
 from ml.freeze_model import freeze
 from ml.inference import ModelRuntime
 from ml.metrics import classification_metrics, expected_calibration_error
@@ -74,6 +75,7 @@ def test_evaluation_preflight_precedes_reservation_and_test_read(tmp_path, fault
     ):
         evaluate_locked_test(package, tmp_path / "DOES_NOT_EXIST", unlock_locked_test=True)
     assert not (package / "LOCKED_TEST_RESERVED").exists()
+    assert not (evidence_directory(package) / "LOCKED_TEST_RESERVED").exists()
 
 
 def prepared_locked(tmp_path):
@@ -187,3 +189,4 @@ def test_invalid_metric_and_ood_policy_rejected_before_test_open(tmp_path, fault
     with pytest.raises(RuntimeError, match="calibration|profile"):
         evaluate_locked_test(package, tmp_path / "ABSENT", unlock_locked_test=True)
     assert not (package / "LOCKED_TEST_RESERVED").exists()
+    assert not (evidence_directory(package) / "LOCKED_TEST_RESERVED").exists()

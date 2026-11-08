@@ -11,6 +11,7 @@ from typing import Any
 
 import numpy as np
 
+from ml.evaluation_registry import transition
 from ml.freeze_model import file_hash, sign_evidence, verify_frozen_manifest
 from ml.inference import ModelRuntime
 from ml.metrics import classification_metrics
@@ -67,6 +68,7 @@ def evaluate_locked_test(
     if (opened_path.exists() or opened_path.is_symlink()
             or metrics_path.exists() or metrics_path.is_symlink()):
         raise PermissionError("locked test has already been opened for this model package")
+    transition(package_dir, "locked_test", "RESERVED")
     try:
         fd = os.open(reservation_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError as exc:
@@ -122,6 +124,9 @@ def evaluate_locked_test(
         "freeze_sha256": hashlib.sha256(freeze_path.read_bytes()).hexdigest(),
     }
     _atomic_write(opened_path, sign_evidence(opened))
+    transition(package_dir, "locked_test", "COMPLETE", files={
+        path.name: file_hash(path) for path in (reservation_path, opened_path, metrics_path)
+    })
     return output
 
 

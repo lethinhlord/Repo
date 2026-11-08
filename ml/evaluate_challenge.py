@@ -15,6 +15,7 @@ import yaml
 from api.app.contracts import IncidentRequest
 from ml.evaluate import _atomic_write
 from ml.evaluation_evidence import runtime_policy_hash
+from ml.evaluation_registry import check_output_evidence, transition
 from ml.freeze_model import file_hash, sign_evidence
 from ml.inference import ModelRuntime
 
@@ -28,6 +29,8 @@ def evaluate_challenge(
     evidence_dir: Path | None = None,
 ) -> dict[str, Any]:
     runtime = ModelRuntime(package_dir, evidence_dir=evidence_dir)
+    if check_output_evidence(package_dir, runtime.evidence_dir, "challenge") != "UNOPENED":
+        raise PermissionError("challenge evaluation already consumed or reserved in registry")
     metadata = runtime.metadata
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest_hash = hashlib.sha256(
@@ -67,6 +70,7 @@ def evaluate_challenge(
     report_path = evidence / "challenge_evaluation.json"
     if report_path.exists() or report_path.is_symlink():
         raise PermissionError("challenge evaluation already completed")
+    transition(package_dir, "challenge", "RESERVED")
     try:
         _atomic_write(
             reservation,
@@ -172,6 +176,9 @@ def evaluate_challenge(
         "threshold_tuning_allowed": False,
     }
     _atomic_write(report_path, sign_evidence(output))
+    transition(package_dir, "challenge", "COMPLETE", files={
+        path.name: file_hash(path) for path in (reservation, report_path)
+    })
     return output
 
 

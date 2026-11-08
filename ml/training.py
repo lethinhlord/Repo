@@ -289,10 +289,12 @@ def _inner_splits(
 def grouped_calibrated_probabilities(
     estimator, x: np.ndarray, labels: np.ndarray, groups: np.ndarray, *,
     outer_splits: list[tuple[np.ndarray, np.ndarray]], folds: int,
-    method: str, random_seed: int,
+    method: str, random_seed: int, minimum_precision: float = 0.9,
+    calibration_bins: int = 10,
 ) -> tuple[np.ndarray, dict[str, Any]]:
-    """Cross-fit calibration entirely inside each outer training group partition."""
-    probabilities = np.empty(len(labels), dtype=float)
+    """Select and calibrate independently inside each outer fitting partition."""
+    candidates = estimator if isinstance(estimator, dict) else {"estimator": estimator}
+    probabilities = np.full(len(labels), np.nan, dtype=float)
     audit: dict[str, Any] = {"probability_scale": "calibrated_probability", "folds": []}
     for fitted, heldout in outer_splits:
         calibration_folds = min(folds, *(len(np.unique(groups[fitted][labels[fitted] == label]))
@@ -302,12 +304,38 @@ def grouped_calibrated_probabilities(
         inner = _inner_splits(
             labels[fitted], groups[fitted], folds=calibration_folds, random_seed=random_seed,
         )
+        outer_candidates = {name: clone(candidate) for name, candidate in candidates.items()}
+        selection_metrics = {}
+        for name, candidate in outer_candidates.items():
+            if name == "xgboost":
+                candidate.set_params(scale_pos_weight=(
+                    np.sum(labels[fitted] == 0) / np.sum(labels[fitted] == 1)
+                ))
+            selected_probabilities = cross_val_predict(
+                candidate, x[fitted], labels[fitted], cv=inner, method="predict_proba", n_jobs=1,
+            )[:, 1]
+            # Rank with the same PR-AUC/F1/Brier rule as final selection; all labels
+            # participating here belong exclusively to the outer fitting partition.
+            candidate_threshold = select_threshold(
+                labels[fitted], selected_probabilities, minimum_precision=minimum_precision,
+            )
+            selection_metrics[name] = classification_metrics(
+                labels[fitted], selected_probabilities, candidate_threshold["threshold"],
+                calibration_bins=calibration_bins,
+            )
+        selected_name = max(selection_metrics, key=lambda name: (
+            selection_metrics[name]["pr_auc"], selection_metrics[name]["f1"],
+            -selection_metrics[name]["brier"],
+        ))
         model = CalibratedClassifierCV(
-            estimator=clone(estimator), method=method, cv=inner, ensemble=False,
+            estimator=outer_candidates[selected_name], method=method, cv=inner, ensemble=False,
         )
         model.fit(x[fitted], labels[fitted])
         probabilities[heldout] = model.predict_proba(x[heldout])[:, 1]
         audit["folds"].append({
+            "selected_model": selected_name,
+            "selection_groups": np.unique(groups[fitted]).tolist(),
+            "selection_metrics": selection_metrics,
             "fit_groups": np.unique(groups[fitted]).tolist(),
             "assessment_groups": np.unique(groups[heldout]).tolist(),
             "calibration_folds": [{
@@ -483,10 +511,12 @@ def train(config_path: Path) -> dict[str, Any]:
             selected_threshold["threshold"],
         )
         stability_probabilities, stability_audit = grouped_calibrated_probabilities(
-            candidates[selected_name], x_train, y_train, train_groups,
+            candidates, x_train, y_train, train_groups,
             outer_splits=inner_splits, folds=int(config["selection"]["inner_cv_folds"]),
             method=str(config["selection"]["calibration_method"]),
             random_seed=int(config["random_seed"]),
+            minimum_precision=float(config["selection"]["minimum_precision"]),
+            calibration_bins=int(config["selection"]["calibration_bins"]),
         )
         inner_threshold = select_threshold(
             y_train, stability_probabilities,

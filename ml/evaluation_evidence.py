@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
 
@@ -17,7 +18,10 @@ def evidence_directory(package_dir: Path, evidence_dir: Path | None = None) -> P
         raise ValueError("evidence directory differs from the configured deployment evidence root")
     configured = evidence_dir or deployment_root
     if configured is None:
-        return package_dir  # Legacy releases keep their original evidence location.
+        frozen = json.loads((package_dir / "FROZEN.json").read_text(encoding="utf-8"))
+        if not frozen.get("evaluation_registry_id"):
+            return package_dir  # Only unbound legacy releases retain package-local evidence.
+        configured = package_dir.parent / ".model-evaluation-evidence"
     root = Path(configured).absolute()
     package = package_dir.resolve()
     if root == package or package in root.parents:

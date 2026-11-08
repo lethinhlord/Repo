@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import os
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -97,9 +98,13 @@ def verify_frozen_manifest(package_dir: Path) -> dict[str, object]:
 def freeze(package_dir: Path) -> dict[str, object]:
     if (package_dir / "FROZEN.json").exists() or (package_dir / "FROZEN.json").is_symlink():
         # Repeating freeze validates the original trust boundary, never signs new content.
-        return verify_frozen_manifest(package_dir)
+        result = verify_frozen_manifest(package_dir)
+        from ml.evaluation_registry import registry_status
+        registry_status(package_dir)
+        return result
     if any((package_dir / name).exists() or (package_dir / name).is_symlink() for name in (
         "LOCKED_TEST_RESERVED", "LOCKED_TEST_OPENED.json", "metrics_locked_test.json",
+        "CHALLENGE_RESERVED", "challenge_evaluation.json",
     )):
         raise ValueError("cannot freeze a package with pre-existing test opening evidence")
     missing = [name for name in PACKAGE_FILES if not (package_dir / name).is_file()]
@@ -111,6 +116,7 @@ def freeze(package_dir: Path) -> dict[str, object]:
     signing_key = _signing_key()
     result = {
         "format_version": "model-package-v3",
+        "evaluation_registry_id": uuid.uuid4().hex,
         "model_version": metadata["model_version"],
         "signing_key_id": hashlib.sha256(signing_key).hexdigest()[:16],
         "frozen_at_utc": datetime.now(UTC).isoformat(),
@@ -121,6 +127,8 @@ def freeze(package_dir: Path) -> dict[str, object]:
         stream.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
         stream.flush()
         os.fsync(stream.fileno())
+    from ml.evaluation_registry import initialize_registry
+    initialize_registry(package_dir)
     return result
 
 
@@ -132,9 +140,21 @@ def main() -> None:
         action="store_true",
         help="verify the signed immutable package without modifying it",
     )
+    parser.add_argument("--migrate-legacy-registry", type=Path, metavar="SIGNED_RECEIPT")
+    parser.add_argument("--receipt-archive", type=Path)
     args = parser.parse_args()
-    if args.verify_only:
+    if args.migrate_legacy_registry:
+        if args.receipt_archive is None or args.verify_only:
+            parser.error("migration requires --receipt-archive and cannot use --verify-only")
+        from ml.evaluation_registry import migrate_legacy_registry
+        migrate_legacy_registry(
+            args.package_dir, args.migrate_legacy_registry, args.receipt_archive,
+        )
+        print("Legacy evaluation registry initialized from verified migration provenance")
+    elif args.verify_only:
         result = verify_frozen_manifest(args.package_dir)
+        from ml.evaluation_registry import registry_status
+        registry_status(args.package_dir)
         print(f"Verified model package: {result['model_version']}")
     else:
         result = freeze(args.package_dir)

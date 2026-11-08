@@ -12,6 +12,7 @@ import numpy as np
 from api.app.contracts import IncidentRequest, ModelMetricsResponse, PredictionResponse
 from ml.behavior_features import FEATURE_SCHEMA_VERSION
 from ml.evaluation_evidence import evidence_directory
+from ml.evaluation_registry import check_output_evidence, registry_status
 from ml.freeze_model import PACKAGE_FILES, verify_evidence, verify_frozen_manifest
 from ml.model_monitoring import ModelMonitoringStore
 
@@ -134,19 +135,32 @@ class ModelRuntime:
                 raise ModelPackageError(f"{family} binary estimator capability is invalid")
 
         self.evidence_dir = evidence_directory(package_dir, evidence_dir)
+        try:
+            registry_status(package_dir)
+            check_output_evidence(package_dir, self.evidence_dir, "challenge")
+        except ValueError as exc:
+            raise ModelPackageError(str(exc)) from exc
         # Validate any pre-existing opening record at construction as well.
         _ = self._read_locked_test_status()
         self.monitoring = ModelMonitoringStore(monitoring_path)
 
     def _read_locked_test_status(self) -> str:
+        try:
+            registry_state = check_output_evidence(
+                self.package_dir, self.evidence_dir, "locked_test",
+            )
+        except ValueError:
+            registry_state = "EVIDENCE_INTEGRITY_ERROR"
         paths = [self.package_dir]
         if self.evidence_dir != self.package_dir:
             paths.append(self.evidence_dir)
         statuses = [self._read_evidence_status(path) for path in paths]
+        if registry_state == "EVIDENCE_INTEGRITY_ERROR":
+            return registry_state
         for status in ("EVIDENCE_INTEGRITY_ERROR", "OPENED_INCOMPLETE", "EVALUATED"):
             if status in statuses:
                 return status
-        return "UNOPENED"
+        return "OPENED_INCOMPLETE" if registry_state == "RESERVED" else "UNOPENED"
 
     def _read_evidence_status(self, evidence_dir: Path) -> str:
         if evidence_dir != self.package_dir:
