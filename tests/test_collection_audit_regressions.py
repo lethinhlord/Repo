@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 
 import pytest
 import test_collection_acceptance as fixture
@@ -6,6 +7,133 @@ import test_official_collection_acceptance as official
 
 from ml.collection_release import ReleaseError, create_backup
 from ml.scenario_collection import CollectionError
+
+
+@pytest.mark.parametrize("damage", [
+    "server", "port", "protocol", "missing_response", "nxdomain", "wrong_answer",
+    "missing_answer", "response_server", "response_port", "response_id", "response_query",
+    "contradictory_response", "response_duplicate", "request_type", "response_type",
+    "request_message_type", "response_message_type", "update_opcode", "missing_opcode",
+])
+def test_official_dns_proves_frozen_resolver_and_consistent_wire_response(
+    tmp_path, monkeypatch, damage,
+):
+    root = tmp_path / "lab"
+    root.mkdir()
+    archive, source, catalog, _ = official.prepare_official(root, monkeypatch)
+    original = fixture._c2_events
+
+    def altered(*args):
+        rows, end = original(*args)
+        result = []
+        for row in rows:
+            if "full_log" not in row:
+                result.append(row)
+                continue
+            payload = json.loads(row["full_log"])
+            response = payload.get("dns", {}).get("type") == "response"
+            if payload.get("event_type") == "dns":
+                if (damage == "request_message_type" and not response
+                        or damage == "response_message_type" and response):
+                    payload["dns"]["type"] = "bogus"
+                elif damage == "update_opcode":
+                    payload["dns"]["opcode"] = 5
+                elif damage == "missing_opcode":
+                    payload["dns"].pop("opcode", None)
+            if damage == "server":
+                payload["src_ip" if response else "dest_ip"] = "10.40.0.99"
+            elif damage == "port":
+                payload["src_port" if response else "dest_port"] = 5353
+            elif damage == "protocol":
+                payload["proto"] = "TCP"
+            elif (damage == "request_type" and payload.get("event_type") == "dns"
+                  and not response):
+                payload["dns"]["queries"][0]["rrtype"] = "AAAA"
+            if response:
+                dns = payload["dns"]
+                if damage == "missing_response":
+                    continue
+                if damage == "nxdomain":
+                    dns.update(rcode="NXDOMAIN", answers=[])
+                elif damage == "wrong_answer":
+                    dns["answers"][0]["rdata"] = "10.40.0.99"
+                elif damage == "missing_answer":
+                    dns.pop("answers")
+                elif damage == "response_server":
+                    payload["src_ip"] = "10.40.0.99"
+                elif damage == "response_port":
+                    payload["src_port"] = 5353
+                elif damage == "response_id":
+                    dns["id"] += 1
+                elif damage == "response_query":
+                    dns["queries"][0]["rrname"] = "other.www.datn.test"
+                elif damage == "response_type":
+                    dns["queries"][0]["rrtype"] = "AAAA"
+                elif damage in {"contradictory_response", "response_duplicate"}:
+                    copy = dict(row)
+                    conflicting = deepcopy(payload)
+                    if damage == "contradictory_response":
+                        conflicting["dns"].update(rcode="NXDOMAIN", answers=[])
+                    copy["full_log"] = json.dumps(conflicting)
+                    result.append(copy)
+            row["full_log"] = json.dumps(payload)
+            result.append(row)
+        return result, end
+
+    monkeypatch.setattr(fixture, "_c2_events", altered)
+    scenario = next(s for s in catalog.scenarios if s.scenario_id == "C2-BENIGN-DNS")
+    with pytest.raises(CollectionError):
+        fixture._collect_run(root, archive, source, scenario, sequence=0, repeat=0, purpose="pilot")
+
+
+@pytest.mark.parametrize("answer_format", [
+    "detailed", "grouped", "grouped_without_query", "legacy_v2", "legacy_nested",
+])
+def test_official_dns_accepts_valid_suricata8_responses_and_unrelated_background(
+    tmp_path, monkeypatch, answer_format,
+):
+    root = tmp_path / "lab"
+    root.mkdir()
+    archive, source, catalog, _ = official.prepare_official(root, monkeypatch)
+    original = fixture._c2_events
+
+    def altered(*args):
+        rows, end = original(*args)
+        for row in list(rows):
+            if "full_log" not in row:
+                continue
+            payload = json.loads(row["full_log"])
+            if payload.get("dns", {}).get("type") == "response":
+                background = deepcopy(payload)
+                background["flow_id"] = "UNRELATED-" + str(payload["flow_id"])
+                background["dns"].update(rcode="NXDOMAIN", answers=[], queries=[
+                    {"rrname": "background.www.datn.test", "rrtype": "A"},
+                ])
+                rows.append({**row, "full_log": json.dumps(background)})
+                if answer_format.startswith("legacy"):
+                    payload["src_ip"], payload["dest_ip"] = payload["dest_ip"], payload["src_ip"]
+                    payload["src_port"], payload["dest_port"] = (
+                        payload["dest_port"], payload["src_port"]
+                    )
+                    dns = payload["dns"]
+                    dns["version"] = 2
+                    dns["type"] = "answer"
+                    dns["rrname"] = dns.pop("queries")[0]["rrname"]
+                    dns["rrtype"] = "A"
+                    if answer_format == "legacy_nested":
+                        payload["dns"] = {"answer": dns}
+                    row["full_log"] = json.dumps(payload)
+                elif answer_format != "detailed":
+                    payload["dns"].pop("answers")
+                    payload["dns"]["grouped"] = {"A": ["10.40.0.10"]}
+                    if answer_format == "grouped_without_query":
+                        payload["dns"].pop("queries")
+                    row["full_log"] = json.dumps(payload)
+        return rows, end
+
+    monkeypatch.setattr(fixture, "_c2_events", altered)
+    scenario = next(s for s in catalog.scenarios if s.scenario_id == "C2-BENIGN-DNS")
+    fixture._collect_run(root, archive, source, scenario, sequence=0, repeat=0, purpose="pilot")
 
 
 @pytest.mark.parametrize(

@@ -55,6 +55,7 @@ from ml.intake_window import IntakeError, capture_window, verify_capture
 from ml.telemetry import (
     account_observation_eligible,
     account_observation_issues,
+    flow_connection_key,
     flow_counter_issues,
     linked_flow,
     linked_transaction,
@@ -1145,6 +1146,124 @@ def _validate_attributed_clock(event: dict[str, Any]) -> None:
         raise CollectionError("attributed raw clock evidence invalid: " + ", ".join(issues))
 
 
+def _validate_dns_profile_responses(
+    events: list[dict[str, Any]], references: list[tuple[dict[str, Any], datetime]],
+    draft: RunDraft, source: SourceConfig,
+) -> list[tuple[dict[str, Any], datetime]]:
+    """Prove the frozen UDP resolver and successful A response on each wire transaction.
+
+    Suricata 8 uses reverse endpoints, queries[] and answers[]/grouped in DNS v3:
+    https://docs.suricata.io/en/suricata-8.0.0/upgrade/8.0-dns-logging-changes.html
+    Keep raw rows unchanged; grouped responses without names inherit identity
+    only through the complete flow tuple and matching DNS transaction ID.
+    """
+    resolver = normalize_ip(draft.scenario_parameters.get("dns_server"))
+    if resolver != "10.40.0.10":
+        raise CollectionError("frozen DNS profile requires the lab resolver 10.40.0.10")
+    requests = [
+        (payload, at) for payload, at in references
+        if payload.get("event_type") == "dns"
+        and not _suricata_dns_is_response(payload.get("dns"))
+    ]
+    responses = []
+    for event in events:
+        if str((event.get("agent") or {}).get("name")) != source.suricata_agent_name:
+            continue
+        payload, at = _suricata_payload(event), _event_time(event)
+        if (payload is not None and at is not None and payload.get("event_type") == "dns"
+                and _suricata_dns_is_response(payload.get("dns"))):
+            responses.append((payload, at))
+    validated = []
+    used: set[int] = set()
+    for request, requested_at in requests:
+        if (normalize_ip(request.get("dest_ip")) != resolver or request.get("dest_port") != 53
+                or str(request.get("proto", "")).casefold() != "udp"):
+            raise CollectionError("DNS request violates the frozen resolver endpoint")
+        key = flow_connection_key(request)
+        names = set(_suricata_dns_names(request.get("dns")))
+        request_dns = request.get("dns") or {}
+        version = request_dns.get("version", 2)
+        if (
+            version not in {2, 3}
+            or request_dns.get("type") != ("request" if version == 3 else "query")
+            or type(request_dns.get("opcode")) is not int or request_dns["opcode"] != 0
+            or request_dns.get("qr", False) is not False
+        ):
+            raise CollectionError("DNS action requires a standard QUERY request message")
+        questions = request_dns.get("queries", [request_dns])
+        if (len(names) != 1 or not isinstance(questions, list) or len(questions) != 1
+                or not isinstance(questions[0], dict)
+                or str(questions[0].get("rrtype", "")).upper() != "A"):
+            raise CollectionError("frozen DNS action requires one A question")
+        identifier = request_dns.get("id")
+        if (isinstance(identifier, bool) or not isinstance(identifier, int)
+                or not 0 <= identifier <= 65535):
+            raise CollectionError("DNS request is missing its wire transaction ID")
+        candidates = []
+        for index, (response, at) in enumerate(responses):
+            dns = response.get("dns") or {}
+            answer = dns.get("answer")
+            if isinstance(answer, dict):
+                dns = answer
+            response_names = set(_suricata_dns_names(response.get("dns")))
+            if (flow_connection_key(response) == key
+                    and abs((at - requested_at).total_seconds())
+                    <= source.correlation_window_seconds
+                    and (names.intersection(response_names) or dns.get("id") == identifier)):
+                candidates.append((index, response, at, dns, response_names))
+        if len(candidates) != 1:
+            raise CollectionError("each DNS action requires one unambiguous EVE response")
+        index, response, at, dns, response_names = candidates[0]
+        version = dns.get("version", 2)
+        if (
+            version not in {2, 3}
+            or dns.get("type") != ("response" if version == 3 else "answer")
+            or type(dns.get("opcode")) is not int or dns["opcode"] != 0
+            or dns.get("qr", True) is not True
+        ):
+            raise CollectionError("DNS action requires a standard QUERY response message")
+        response_questions = dns.get("queries", [dns] if "rrname" in dns else [])
+        if (not isinstance(response_questions, list)
+                or any(not isinstance(row, dict) or str(row.get("rrtype", "")).upper() != "A"
+                       for row in response_questions)):
+            raise CollectionError("DNS response question type contradicts the frozen A request")
+        # Version 2 logs answer tuples in client-to-server direction; v3 uses
+        # the actual response direction. Both map to the same full flow key.
+        server, client = ("dest", "src") if dns.get("version") == 2 else ("src", "dest")
+        if (index in used or at < requested_at
+                or normalize_ip(response.get(f"{server}_ip")) != resolver
+                or response.get(f"{server}_port") != 53
+                or normalize_ip(response.get(f"{client}_ip")) != normalize_ip(request.get("src_ip"))
+                or response.get(f"{client}_port") != request.get("src_port")
+                or str(response.get("proto", "")).casefold() != "udp"
+                or isinstance(dns.get("id"), bool) or dns.get("id") != identifier
+                # Engine tx_id counters may differ; the DNS wire id above must match.
+                or (response_names and response_names != names)
+                or str(dns.get("rcode", "")).upper() != "NOERROR" or dns.get("tc") is True):
+            raise CollectionError(
+                "DNS response contradicts its frozen request or successful outcome"
+            )
+        answers = dns.get("answers")
+        detailed = {
+            normalize_ip(row.get("rdata")) for row in answers
+            if isinstance(row, dict) and str(row.get("rrtype", "")).upper() == "A"
+            and str(row.get("rrname", "")).casefold().rstrip(".") in names
+        } if isinstance(answers, list) else None
+        grouped = dns.get("grouped")
+        grouped_a = grouped.get("A") if isinstance(grouped, dict) else None
+        grouped_values = (
+            {normalize_ip(value) for value in grouped_a} if isinstance(grouped_a, list) else None
+        )
+        observed = [value for value in (detailed, grouped_values) if value is not None]
+        if not observed or any(value != {"10.40.0.10"} for value in observed):
+            raise CollectionError(
+                "DNS EVE response does not prove the expected A answer 10.40.0.10"
+            )
+        used.add(index)
+        validated.append((response, at))
+    return validated
+
+
 def _derive_c2(
     events: list[dict[str, Any]], draft: RunDraft, source: SourceConfig, taxonomy: dict[str, Any]
 ) -> tuple[dict[str, float], list[dict[str, Any]], list[dict[str, Any]], str | None]:
@@ -1276,6 +1395,19 @@ def _derive_c2(
         ):
             nonce_references.append((payload, timestamp))
 
+    validated_dns_responses: set[str] = set()
+    if (draft.scenario_parameters.get("execution_profile_version") == "lab-action-profile-v1"
+            and draft.scenario_parameters.get("transport") == "dns"):
+        responses = _validate_dns_profile_responses(events, nonce_references, draft, source)
+        validated_dns_responses = {
+            json.dumps(payload, sort_keys=True, separators=(",", ":")) for payload, _ in responses
+        }
+        # Some grouped EVE formats omit the question; retain independently proven
+        # responses for flow linkage without fabricating a question in raw input.
+        for response in responses:
+            if response not in nonce_references:
+                nonce_references.append(response)
+
     if isinstance(expected_action_count, int):
         transport = "dns" if draft.quality_gates.min_dns_events else "http"
         kinds = {"dns"} if transport == "dns" else {"http", "tls"}
@@ -1294,7 +1426,9 @@ def _derive_c2(
         ]
         if (len(transactions) != len(actions) or any(len(edge) != 1 for edge in edges)
                 or len({edge[0] for edge in edges if edge}) != len(transactions)):
-            raise CollectionError("C2 actions require unique, complete EVE transaction coverage")
+            raise CollectionError(
+                "C2 actions require unique, complete Suricata EVE transaction coverage"
+            )
     if draft.scenario_parameters.get("execution_profile_version") == "lab-action-profile-v1":
         transport = draft.scenario_parameters.get("transport")
         if not isinstance(expected_action_count, int) or transport not in {"http", "dns"}:
@@ -1338,14 +1472,19 @@ def _derive_c2(
             continue
         payload = _suricata_payload(event)
         timestamp = _event_time(event)
+        validated_response = bool(payload and json.dumps(
+            payload, sort_keys=True, separators=(",", ":"),
+        ) in validated_dns_responses)
         bound_flow = bool(payload and linked_flow(payload, nonce_references, maximum_delta))
         if (
             payload is None
             or timestamp is None
-            or not _matches_suricata(payload, draft.attribution, bound_flow=bound_flow)
+            or (not validated_response
+                and not _matches_suricata(payload, draft.attribution, bound_flow=bound_flow))
             or (payload.get("event_type") == "flow" and not bound_flow)
             or (
                 not bound_flow
+                and not validated_response
                 and not _suricata_correlates(
                     payload, timestamp, network_observations, maximum_delta
                 )

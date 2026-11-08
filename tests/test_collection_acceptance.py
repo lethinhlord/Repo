@@ -263,9 +263,19 @@ def _c2_events(
                 "dest_ip": "10.40.0.10",
                 "dest_port": 53,
                 "flow_id": f"{run_id}-{number}",
-                "dns": {"type": "query", "rrname": query},
+                "dns": {"version": 3, "type": "request", "id": 1000 + number,
+                        "opcode": 0, "qr": False,
+                        "tx_id": 0, "queries": [{"rrname": query, "rrtype": "A"}]},
             }
             events.append(_suricata_event(event_at, payload))
+            events.append(_suricata_event(event_at + timedelta(milliseconds=10), {
+                **payload, "src_ip": "10.40.0.10", "src_port": 53,
+                "dest_ip": "10.20.0.10", "dest_port": 50001 + number,
+                "dns": {**payload["dns"], "type": "response", "rcode": "NOERROR", "qr": True,
+                        "tx_id": 1,
+                        "answers": [{"rrname": query, "rrtype": "A", "ttl": 60,
+                                     "rdata": "10.40.0.10"}]},
+            }))
             signature = scenario.quality_gates.required_suricata_signature_ids[0]
             events.append(
                 _suricata_event(
