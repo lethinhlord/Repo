@@ -22,6 +22,7 @@ No safety feature is removed to obtain a passing test.
 | F14 | Private/special-use root and child TI filtering | test_threat_intelligence |
 | F15 | Actual model-free bootstrap plus source/dependency/image attestation | test_week1_bootstrap; test_runtime_artifact; separate real n8n smoke |
 | C01 | Scoped lifecycle across buckets, expiry/replay, termination forwarding/clock | test_process_lifetime; test_collection_configuration |
+| C02 | Selected running image must match the reviewed runtime and QA source/dependencies | test_runtime_artifact; actual image attestation and disposable deployment |
 | C03 | Post-freeze context-faithful challenge evaluator | test_challenge_evaluation; test_evaluation_registry |
 
 Cross-model reviews found additional edge cases inside these findings:
@@ -35,9 +36,14 @@ challenge observation; it was not changed to consume an evaluation unnecessarily
 
 ## Verification gate
 
-Implementation and focused red/green checks are complete. Final integrated
-Windows/Linux suites, source-artifact/container checks, document parsing and
-publication receipt are recorded in the verification document before release.
+Implementation, focused red/green checks and cross-model review are complete.
+Native Windows: 1099 passed, 1 unavailable-symlink skip. Linux: 1036 passed and
+57 native-PowerShell skips after the documented 15-case affected-module rerun;
+the original failed invocation is retained. Official synthetic 40/48-run cases,
+source/image/dependency attestation, real disposable n8n execution, read-only
+evaluation under both runtime identities, document parsing and Ruff passed.
+See the verification document for evidence and limits. Publication uses the
+annotated candidate tag; an external receipt records its full merged commit.
 
 ## Scope that remains actual lab work
 
@@ -48,3 +54,7 @@ publication receipt are recorded in the verification document before release.
 
 Those are explicit milestones, not silently waived checks. The exploratory
 five-cohort design does not establish AUTO readiness; preserve SHADOW/ASSISTED.
+C04 is retained as this statistical limitation. C05 is the pending real-lab/data
+and later project deliverables, not a claim that synthetic tests completed them.
+C06 is recorded by the user-approved four-VM inventory and role boundaries in the
+current collection runbook; the original thesis Word files remain unchanged.

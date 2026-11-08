@@ -2484,7 +2484,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Copy failed' }
 $CollectionTag='collection-v4.0.0-candidate.2'
 git --version
 if ($LASTEXITCODE -ne 0) { throw 'Install Git for Windows, reopen PowerShell, then retry verification' }
-$Tools="D:\DATN-TOOLS\$CollectionTag"
+$Tools="D:\DATN-TOOLS\$CollectionTag-$BackupId"
 if (Test-Path -LiteralPath $Tools) { throw 'Choose a fresh tools directory; do not reuse an unverified checkout' }
 New-Item -ItemType Directory -Force (Split-Path $Tools) | Out-Null
 git clone --depth 1 --branch $CollectionTag https://github.com/lethinhlord/Repo.git $Tools
