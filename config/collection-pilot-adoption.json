@@ -7,8 +7,12 @@
     "origin": "https://github.com/lethinhlord/Repo.git",
     "tracked_files_sha256": "1c3b1a21cdef642f958d8fb2ac822d0fa0502b0cde878ea891422cecc1b1e78d"
   },
-  "collection_patch_sha256": "01a2b8785bc6590c0913416bba82e28b4c7ec10a5ab97537ebe1f9ae65935405",
+  "collection_patch_sha256": "df08fec3307b5eca587aa79037a1445b7dd4f25eb7346dd6015b138a4e4eeb00",
   "reviewed_collection_changes": {
+    "README.md": {
+      "before": "f4a887e8ae9b9e144bb3177a14e81b2c94bf2d522a81f59a801ef3240505c389",
+      "after": "ec1f91cebf02be9bf1160958b595d1f3e78b41f985862b633e99720336f4f9b7"
+    },
     "config/collection-design.yaml": {
       "before": "e4f38cc1740ac8cb1bd304c8cf428aa31f0ca9aa7d4f2f7b2295c539912834dc",
       "after": "9e2309a410e0f9fca0e16037d9ca135d733a82654db0dcf72586fbe2bb6e5c14"
@@ -44,6 +48,10 @@
     "scripts/prepare_collection_source.py": {
       "before": null,
       "after": "14cd28cee00c345972e72fb64d4c33dc6e402ece75e1937f2cea510d3f156706"
+    },
+    "scripts/verify_collection_dataset.sh": {
+      "before": "d277755c1e5a288e69b03e646cfab3d3cd4e2d7c1556775ce29fa4431a838383",
+      "after": "89cb463408b7d9cebd22e3fa915cd2bf5a98f3107e8f4522fabe5f568a7437fc"
     }
   },
   "scope": "Reuse the four verified candidate.4 pilots for the reviewed G7/source binding and audit/build patch. All pilot evidence and runtime identity remain unchanged.",
