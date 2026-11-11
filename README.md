@@ -23,17 +23,21 @@ Real-lab collection uses the four-VM procedure in
 measured clock preflight, context enrollment and pilot gates in order. Run drafts
 require `--clock-preflight` from that measured preflight; an abbreviated command
 cannot replace it. The current candidate is
-[collection-v4.0.0-candidate.2](https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.2).
+[collection-v4.0.0-candidate.5](https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.5).
 It implements the paired cohort design, neutral actor runners and evidence-bound
 per-lab acceptance. Pilot → preflight replay → backup restore → acceptance must
 succeed on the actual four VMs before trainable collection opens. Repository tests
 do not certify the remote lab or a trained model.
 
 See [current status](docs/current-status.md) and the
-[collection design and limits](docs/collection-training-design.md). The new four-pilot
-handoff replayed VALID/PASS in the candidate.1 verification. That historical result
-does not certify candidate.2's stricter source/response contract. Collect fresh
-candidate.2 pilots; historical data, results and failures are not rewritten.
+[collection design and limits](docs/collection-training-design.md). The four
+candidate.4 pilots in the November 11 handoff replay VALID/PASS. Follow
+[G7 with existing pilots](docs/g7-existing-candidate4-pilots.md) to reuse their
+immutable evidence through the reviewed candidate.5 adoption policy. G7 v2 binds
+the exact active source for draft, START, audit and builder. Renew expired
+enrollment; do not rewrite or recollect pilots merely to change the candidate.
+The known fast-HTTP warmup limitation remains documented and explicitly accepted
+by the project owner; no profile or quality gate is removed.
 
 Use `main` as the maintained entry point and the exact approved source SHA for
 collection, dataset building and training. The Colab notebook accepts
@@ -44,7 +48,8 @@ they are not current operating instructions or proof of real-lab acceptance.
 
 For the complete test, lint and readiness gate, run
 `./scripts/verify_collection_dataset.sh`; set `REQUIRE_TARGET=1` to require all 12 runs
-per stratum.
+per stratum. It selects `operator-logs/collection-sources-active.yaml` when present;
+set `COLLECTION_SOURCE_CONFIG` explicitly to use another accepted source file.
 
 On the Ubuntu VM, deployment and verification are reproducible with:
 

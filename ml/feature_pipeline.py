@@ -296,6 +296,7 @@ def _derive_raw_group(
         )
 
     if family == "c2":
+        from ml.telemetry import linked_transaction
         network: list[NetworkObservation] = []
         suricata: list[SuricataObservation] = []
         suspicious = False
@@ -408,12 +409,23 @@ def _derive_raw_group(
                 or not (
                     linked_flow(payload, references, maximum_delta)
                     if payload.get("event_type") == "flow"
-                    else suricata_correlates(
-                        payload,
-                        alert_event_time(alert),
-                        network,
-                        maximum_delta,
-                        source_ips=sources,
+                    else (
+                        suricata_correlates(
+                            payload,
+                            alert_event_time(alert),
+                            network,
+                            maximum_delta,
+                            source_ips=sources,
+                        )
+                        or (
+                            payload.get("event_type") == "alert"
+                            and linked_transaction(
+                                payload,
+                                alert_event_time(alert),
+                                references,
+                                maximum_delta,
+                            )
+                        )
                     )
                 )
             ):

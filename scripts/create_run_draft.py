@@ -26,6 +26,7 @@ def main() -> int:
     parser.add_argument("--collection-seed", type=int)
     parser.add_argument("--purpose", choices=("trainable", "challenge", "pilot"))
     parser.add_argument("--clock-preflight", type=Path, required=True)
+    parser.add_argument("--source-config", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
@@ -41,6 +42,7 @@ def main() -> int:
             execution_log_path=args.execution_log,
             collection_seed=args.collection_seed,
             purpose=args.purpose,
+            source_config_path=args.source_config,
             clock_preflight=ClockPreflight.model_validate(
                 yaml.safe_load(args.clock_preflight.read_text(encoding="utf-8"))
             ),

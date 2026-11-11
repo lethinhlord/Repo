@@ -31,11 +31,15 @@ def _git_commit() -> str:
     return result.stdout.strip() if result.returncode == 0 else "unknown"
 
 
-def build_dataset(config_path: Path) -> dict[str, object]:
+def build_dataset(
+    config_path: Path, *, source_config_path: Path | None = None,
+) -> dict[str, object]:
     config = load_config(config_path)
     schema = load_feature_schema(Path(config["feature_schema"]))
     data_config = config["data"]
     audit_summary: dict[str, object] | None = None
+    if source_config_path is not None and not data_config.get("require_collection_audit", False):
+        raise ValueError("source config override requires collection audit")
     if bool(data_config.get("require_collection_audit", False)):
         report = audit_dataset(
             Path(data_config["raw_dir"]),
@@ -45,7 +49,7 @@ def build_dataset(config_path: Path) -> dict[str, object]:
             minimum_scenarios=int(data_config.get("minimum_scenarios", 5)),
             maximum_scenario_share=float(data_config.get("maximum_scenario_share", 0.30)),
             scenario_catalog_path=Path(data_config["scenario_catalog"]),
-            source_config_path=Path(
+            source_config_path=source_config_path or Path(
                 data_config.get("source_config", "config/collection-sources.yaml")
             ),
             taxonomy_path=Path(
@@ -189,6 +193,11 @@ def build_dataset(config_path: Path) -> dict[str, object]:
     }
     if audit_summary is not None:
         manifest["collection_audit"] = audit_summary
+    if source_config_path is not None:
+        manifest["provenance"]["source_config_override"] = {
+            "path": str(source_config_path.resolve()),
+            "sha256": _sha256(source_config_path),
+        }
     manifest["partition_counts"] = dict(manifest["partition_counts"])
     manifest["record_counts"] = dict(manifest["record_counts"])
     manifest["stratum_run_counts"] = dict(manifest["stratum_run_counts"])
@@ -199,8 +208,9 @@ def build_dataset(config_path: Path) -> dict[str, object]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build leakage-safe grouped ML partitions")
     parser.add_argument("--config", type=Path, default=Path("ml/training_config.yaml"))
+    parser.add_argument("--source-config", type=Path)
     args = parser.parse_args()
-    manifest = build_dataset(args.config)
+    manifest = build_dataset(args.config, source_config_path=args.source_config)
     print(f"Dataset ready: {manifest['dataset_hash_sha256']}")
     print("Locked test remains UNOPENED.")
 
