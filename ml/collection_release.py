@@ -136,7 +136,9 @@ def _source_value(source: Any, key: str) -> Any:
     return source.get(key) if isinstance(source, dict) else getattr(source, key, None)
 
 
-def assert_collection_authorized(source: Any, root: Path, purpose: str) -> dict[str, Any] | None:
+def assert_collection_authorized(
+    source: Any, root: Path, purpose: str, source_config_path: Path | None = None,
+) -> dict[str, Any] | None:
     if purpose != "trainable":
         return None
     path = _source_value(source, "collection_release_path")
@@ -147,7 +149,7 @@ def assert_collection_authorized(source: Any, root: Path, purpose: str) -> dict[
         path = Path(root) / path
     record = _read_json(path)
     if (
-        record.get("version") != "collection-acceptance-v1"
+        record.get("version") not in {"collection-acceptance-v1", "collection-acceptance-v2"}
         or record.get("record_sha256")
         != digest({k: v for k, v in record.items() if k != "record_sha256"})
         or not isinstance(record.get("candidate"), dict)
@@ -158,6 +160,24 @@ def assert_collection_authorized(source: Any, root: Path, purpose: str) -> dict[
     candidate = record["candidate"]
     if capture_candidate(root, candidate.get("tag", "")) != candidate:
         raise ReleaseError("source or runtime differs from the accepted candidate")
+    options = {}
+    if record["version"] == "collection-acceptance-v2":
+        from ml.scenario_collection import SourceConfig, _source_document
+
+        binding = record.get("source_config", {})
+        if not isinstance(binding, dict) or not isinstance(binding.get("path"), str):
+            raise ReleaseError("missing accepted source config binding")
+        selected = Path(binding["path"])
+        actual = SourceConfig.model_validate(source)
+        if (
+            not selected.is_file()
+            or _file_hash(selected) != binding.get("sha256")
+            or _source_document(actual) != binding.get("document")
+            or (source_config_path is not None
+                and _file_hash(source_config_path) != binding.get("sha256"))
+        ):
+            raise ReleaseError("collection source differs from the accepted source config")
+        options["source_config_path"] = selected
     try:
         with tempfile.TemporaryDirectory(prefix="datn-release-check-") as temp:
             verified = create_acceptance(
@@ -167,6 +187,7 @@ def assert_collection_authorized(source: Any, root: Path, purpose: str) -> dict[
                 Path(record["backup"]["directory"]),
                 Path(record["preflight_directory"]),
                 Path(temp) / "acceptance.json",
+                **options,
             )
     except (OSError, KeyError, TypeError, ValueError) as exc:
         raise ReleaseError(f"acceptance evidence cannot be revalidated: {exc}") from exc
@@ -179,13 +200,23 @@ def verify_frozen_acceptance(state: dict[str, Any]) -> None:
     snapshot = state.get("collection_release")
     if (
         not isinstance(snapshot, dict)
-        or snapshot.get("version") != "collection-acceptance-v1"
+        or snapshot.get("version") not in {"collection-acceptance-v1", "collection-acceptance-v2"}
         or snapshot.get("record_sha256")
         != digest({k: v for k, v in snapshot.items() if k != "record_sha256"})
         or state.get("collection_release_sha256") != digest(snapshot)
         or snapshot.get("candidate") != state.get("collection_candidate", snapshot.get("candidate"))
     ):
         raise ReleaseError("missing or altered frozen collection release")
+    if snapshot["version"] == "collection-acceptance-v2":
+        contract = snapshot.get("collection_contract", {})
+        keys = {"source_config_sha256", "taxonomy_sha256",
+                "scenario_catalog_sha256", "feature_schema_sha256"}
+        if (
+            not isinstance(contract, dict) or set(contract) != keys
+            or any(state.get(key) != value for key, value in contract.items())
+            or contract["source_config_sha256"] != snapshot.get("source_config", {}).get("sha256")
+        ):
+            raise ReleaseError("frozen collection source contract differs from acceptance")
 
 
 def summarize_candidates(evidence_dir: Path, run_ids: list[str], tag: str) -> dict | None:
@@ -458,7 +489,8 @@ def _check_design(root: Path) -> None:
 
 
 def create_acceptance(
-    root: Path, tag: str, pilot_ids: list[str], backup_dir: Path, preflight_dir: Path, output: Path
+    root: Path, tag: str, pilot_ids: list[str], backup_dir: Path, preflight_dir: Path, output: Path,
+    *, source_config_path: Path | None = None,
 ) -> dict[str, Any]:
     """Revalidate actual pilots, restore and preflight artifacts before writing once."""
     from ml.scenario_collection import CollectionError, validate_run
@@ -467,10 +499,32 @@ def create_acceptance(
     root = Path(root).resolve()
     candidate = capture_candidate(root, tag)
     _check_design(root)
+    selected_source = None
+    source_binding = None
+    if source_config_path is not None:
+        import yaml
+
+        from ml.scenario_collection import SourceConfig, _source_document
+
+        selected_source = Path(source_config_path)
+        if not selected_source.is_absolute():
+            selected_source = root / selected_source
+        selected_source = selected_source.resolve()
+        source_model = SourceConfig.model_validate(
+            yaml.safe_load(selected_source.read_text(encoding="utf-8"))
+        )
+        if not source_model.context_baseline_path or not source_model.collection_release_path:
+            raise ReleaseError("collection source requires baseline and acceptance paths")
+        source_binding = {
+            "path": str(selected_source), "sha256": _file_hash(selected_source),
+            "document": _source_document(source_model),
+        }
     if len(pilot_ids) != 4 or len(set(pilot_ids)) != 4:
         raise ReleaseError("exactly four distinct pilot IDs are required")
     current_contract = {
-        "source_config_sha256": _file_hash(root / "config/collection-sources.yaml"),
+        "source_config_sha256": _file_hash(
+            selected_source or root / "config/collection-sources.yaml"
+        ),
         "taxonomy_sha256": _file_hash(root / "config/suspicious-process-taxonomy.yaml"),
         "scenario_catalog_sha256": _file_hash(root / "config/scenario-catalog.yaml"),
         "feature_schema_sha256": _file_hash(root / "ml/feature_schema.json"),
@@ -478,6 +532,8 @@ def create_acceptance(
     pilots = []
     strata = set()
     transports = set()
+    pilot_candidate = None
+    adoption = None
     for run_id in pilot_ids:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{3,127}", run_id):
             raise ReleaseError("invalid pilot run ID")
@@ -489,12 +545,36 @@ def create_acceptance(
         state = _read_json(state_path)
         manifest_path = root / "data/raw" / run_id / "scenario_manifest.json"
         manifest = _read_json(manifest_path)
+        frozen_candidate = state.get("collection_candidate")
+        if pilot_candidate is None:
+            pilot_candidate = frozen_candidate
+            if source_binding is not None and pilot_candidate != candidate:
+                from ml.collection_adoption import verify_pilot_adoption
+
+                adoption = verify_pilot_adoption(root, pilot_candidate, candidate)
+        if source_binding is not None:
+            import yaml
+
+            from ml.scenario_collection import SourceConfig, _source_document
+
+            frozen_source = _source_document(SourceConfig.model_validate(yaml.safe_load(
+                (state_path.parent / "collection-sources.yaml").read_text(encoding="utf-8")
+            )))
+            # Enrollment can be renewed without changing observation semantics.
+            def semantic(doc):
+                return {k: v for k, v in doc.items() if k != "context_baseline_path"}
+            if semantic(frozen_source) != semantic(source_binding["document"]):
+                raise ReleaseError(f"pilot source observation contract differs: {run_id}")
+        expected_contract = {
+            key: value for key, value in current_contract.items()
+            if source_binding is None or key != "source_config_sha256"
+        }
         if (
             report.get("status") != "RUN_EVIDENCE_CHECK_PASS"
             or manifest.get("purpose") != "pilot"
-            or state.get("collection_candidate") != candidate
-            or state.get("collection_candidate_sha256") != digest(candidate)
-            or any(state.get(key) != value for key, value in current_contract.items())
+            or frozen_candidate != (pilot_candidate if source_binding is not None else candidate)
+            or state.get("collection_candidate_sha256") != digest(frozen_candidate)
+            or any(state.get(key) != value for key, value in expected_contract.items())
         ):
             raise ReleaseError(f"pilot lacks passing evidence and frozen candidate: {run_id}")
         stratum = (manifest.get("family"), manifest.get("label"))
@@ -568,11 +648,12 @@ def create_acceptance(
         raise ReleaseError("missing or invalid backup checksums") from exc
     if backup_checksums.get(archive.name) != _file_hash(archive):
         raise ReleaseError("backup archive checksum mismatch")
+    backup_candidate = pilot_candidate if source_binding is not None else candidate
     for name, expected in (
-        ("git-commit.txt", candidate["commit"]),
-        ("source-tag.txt", tag),
-        ("source-tag-object.txt", candidate["tag_object"]),
-        ("source-url.txt", candidate["origin"]),
+        ("git-commit.txt", backup_candidate["commit"]),
+        ("source-tag.txt", backup_candidate["tag"]),
+        ("source-tag-object.txt", backup_candidate["tag_object"]),
+        ("source-url.txt", backup_candidate["origin"]),
     ):
         if (
             backup_checksums.get(name) != _file_hash(backup_dir / name)
@@ -608,6 +689,12 @@ def create_acceptance(
             "restored_pilots": pilot_ids,
         },
     }
+    if source_binding is not None:
+        record.update(
+            version="collection-acceptance-v2", source_config=source_binding,
+            collection_contract=current_contract, pilot_candidate=pilot_candidate,
+            pilot_adoption=adoption,
+        )
     record["record_sha256"] = digest(record)
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)

@@ -347,7 +347,9 @@ def _normalized_source(source: SourceConfig, project_root: Path) -> dict[str, An
     return payload
 
 
-def _release_snapshots(source: SourceConfig, root: Path, purpose: str) -> dict[str, Any]:
+def _release_snapshots(
+    source: SourceConfig, root: Path, purpose: str, source_config_path: Path | None = None,
+) -> dict[str, Any]:
     from ml.collection_release import (
         ReleaseError,
         assert_collection_authorized,
@@ -368,7 +370,7 @@ def _release_snapshots(source: SourceConfig, root: Path, purpose: str) -> dict[s
         candidate = capture_candidate(root, design["candidate_tag"])
         result = {"collection_candidate": candidate,
                   "collection_candidate_sha256": digest(candidate)}
-        release = assert_collection_authorized(source, root, purpose)
+        release = assert_collection_authorized(source, root, purpose, source_config_path)
         if release is not None:
             result.update(collection_release=release, collection_release_sha256=digest(release))
         return result
@@ -450,6 +452,7 @@ def create_run_draft(
     collection_seed: int | None = None,
     clock_preflight: ClockPreflight,
     purpose: Literal["trainable", "challenge", "pilot"] | None = None,
+    source_config_path: Path | None = None,
 ) -> dict[str, str]:
     if output_path.exists():
         raise CollectionError(f"draft output already exists: {output_path}")
@@ -541,10 +544,9 @@ def create_run_draft(
         catalog_path.resolve().parent / "collection-design.yaml"
     ).exists():
         project_root = catalog_path.resolve().parent.parent
-        official_source = SourceConfig.model_validate(
-            _read_yaml(project_root / "config/collection-sources.yaml")
-        )
-        _release_snapshots(official_source, project_root, draft.purpose)
+        selected_source = source_config_path or project_root / "config/collection-sources.yaml"
+        official_source = SourceConfig.model_validate(_read_yaml(selected_source))
+        _release_snapshots(official_source, project_root, draft.purpose, selected_source)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     _atomic_text(
         output_path,
@@ -737,7 +739,7 @@ def start_run(
     if (draft.scenario_parameters.get("execution_profile_version")
             and not source.collection_release_path):
         raise CollectionError("official action profiles require collection_release_path")
-    release_snapshots = _release_snapshots(source, project_root, draft.purpose)
+    release_snapshots = _release_snapshots(source, project_root, draft.purpose, source_config_path)
     schema_path = project_root / "ml/feature_schema.json"
     if not schema_path.is_file():
         schema_path = Path(__file__).with_name("feature_schema.json")

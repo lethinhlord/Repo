@@ -195,7 +195,11 @@ def _audit_run(
         errors.append(
             "COLLECTION_CONTRACT_INVALID: run used a different feature schema"
         )
-    if manifest.source_config_sha256 != expected_source_config_sha256:
+    # Historical pilots/challenges retain their own immutable source contract.
+    # Only trainable runs must match the active collection source; every run's
+    # frozen snapshots, checksums and provenance are still verified below.
+    if (manifest.purpose == "trainable"
+            and manifest.source_config_sha256 != expected_source_config_sha256):
         errors.append(
             "COLLECTION_CONTRACT_INVALID: run used a different source configuration"
         )
@@ -632,12 +636,16 @@ def audit_dataset(
             candidates[run_id] = (manifest, incidents)
 
     collection_candidate = None
-    if design and candidates:
+    trainable_ids = sorted(
+        run_id for run_id, (manifest, _) in candidates.items()
+        if manifest.purpose == "trainable"
+    )
+    if design and trainable_ids:
         from ml.collection_release import ReleaseError, summarize_candidates
 
         try:
             collection_candidate = summarize_candidates(
-                evidence_dir, sorted(candidates), design["candidate_tag"]
+                evidence_dir, trainable_ids, design["candidate_tag"]
             )
         except ReleaseError as exc:
             _issue(issues, "COLLECTION_CANDIDATE_MISMATCH", str(exc))

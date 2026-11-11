@@ -78,7 +78,13 @@ expected; an incident feature `label` is forbidden.
 ## 4. Build immutable grouped partitions
 
 ```bash
+set -euo pipefail
+COLLECTION_SOURCE_CONFIG=config/collection-sources.yaml
+if [ -f operator-logs/collection-sources-active.yaml ]; then
+  COLLECTION_SOURCE_CONFIG=operator-logs/collection-sources-active.yaml
+fi
 .venv-ml/bin/python -m ml.build_dataset --config ml/training_config.yaml \
+  --source-config "$COLLECTION_SOURCE_CONFIG" \
   | tee evidence/week3-dataset-build.log
 cat data/processed/dataset_manifest.json
 printf '%s\n' 'TRAIN runs:' && cat ml/splits/train.txt

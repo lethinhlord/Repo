@@ -1,6 +1,11 @@
 # HƯỚNG DẪN THU DATASET SOC–AI–SOAR — 4 VM
-Bản vận hành 08/11/2026. Mọi code/resource lấy từ GitHub:
-https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.2
+Bản vận hành 12/11/2026. Mọi code/resource lấy từ GitHub:
+https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.5
+
+Lab đã có bốn pilot candidate.4 đạt: thực hiện đầy đủ hướng dẫn
+[G7 cho pilot đã có](g7-existing-candidate4-pilots.md), rồi tiếp tục mục11–14
+ở đây. Không chạy lại mục10.6 chỉ để đổi candidate. Giữ nguyên source active đã
+gắn acceptance; dùng cùng file cho draft, START, audit và build.
 
 ## 0. Phạm vi và trạng thái
 
@@ -44,7 +49,7 @@ AVAILABLE, observation_quality COMPLETE, đủ 24 feature, checksum và full-cap
 parity. Collector tự tạo scenario_manifest.json/incidents.jsonl sau finalize.
 Không tạo file mẫu rồi coi là dữ liệu train.
 
-Candidate.2 kiểm từng hành động Sysmon với transaction EVE và final flow, cùng
+Candidate.5 kiểm từng hành động Sysmon với transaction EVE và final flow, cùng
 HTTP endpoint/sequence/status và DNS query status/answer. Thiếu một transaction
 hoặc sai response không được xem là COMPLETE dù số event còn lại đủ min gate.
 Không bỏ dòng gây lỗi; giữ evidence, abort đúng quy trình và chạy mới theo retry plan.
@@ -535,7 +540,7 @@ cũ ngoài checkout. COLLECTION_BASELINE_COMMIT lấy từ tag này, không dùn
 set -euo pipefail
 test "$(id -u)" -ne 0
 PROJECT_ROOT="$HOME/datn-ai-soar-v4"
-COLLECTION_TAG=collection-v4.0.0-candidate.2
+COLLECTION_TAG=collection-v4.0.0-candidate.5
 test ! -e "$PROJECT_ROOT"
 git clone --branch "$COLLECTION_TAG" --single-branch https://github.com/lethinhlord/Repo.git "$PROJECT_ROOT"
 cd "$PROJECT_ROOT"
@@ -1610,7 +1615,7 @@ test "$AVAILABLE_KB" -ge 2097152
 test "$FREE_KB" -ge 10485760
 cd "$HOME/datn-ai-soar-v4"
 test -z "$(git status --porcelain)"
-COLLECTION_TAG=collection-v4.0.0-candidate.2
+COLLECTION_TAG=collection-v4.0.0-candidate.5
 .venv-ml/bin/python -m scripts.collection_release candidate --tag "$COLLECTION_TAG" > operator-logs/releases/candidate-current.json
 cmp operator-logs/releases/candidate.json operator-logs/releases/candidate-current.json
 mkdir -p evidence/scenario-runs
@@ -2084,7 +2089,7 @@ ordinal1..4. Mỗi pilot phải VALID/PASS; failed giữ nguyên, ID không tái
 
 ```bash
 set -euo pipefail
-COLLECTION_TAG=collection-v4.0.0-candidate.2
+COLLECTION_TAG=collection-v4.0.0-candidate.5
 BACKUP_ID="PILOT-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM"
 BACKUP_DIR="$HOME/datn-backups/$BACKUP_ID"
 .venv-ml/bin/python -m scripts.collection_release backup \
@@ -2219,10 +2224,18 @@ cat "$MEASUREMENTS"
   --measurements "$MEASUREMENTS" --maximum-skew-seconds 5 \
   --maximum-roundtrip-seconds 4 --output "$CLOCK_FILE"
 
+COLLECTION_SOURCE_CONFIG=config/collection-sources.yaml
+if [ -f operator-logs/collection-sources-active.yaml ]; then
+ COLLECTION_SOURCE_CONFIG=operator-logs/collection-sources-active.yaml
+fi
+test -f "$COLLECTION_SOURCE_CONFIG"
+
 .venv-ml/bin/python -m scripts.create_run_draft \
  --scenario "$SCENARIO" --run-id "$RUN_ID" --operator Kien --purpose "$RUN_PURPOSE" \
- --collection-seed "$COLLECTION_SEED" --clock-preflight "$CLOCK_FILE"
-.venv-ml/bin/python -m scripts.scenario_session start --draft "run-drafts/$RUN_ID.yaml"
+ --collection-seed "$COLLECTION_SEED" --clock-preflight "$CLOCK_FILE" \
+ --source-config "$COLLECTION_SOURCE_CONFIG"
+.venv-ml/bin/python -m scripts.scenario_session start --draft "run-drafts/$RUN_ID.yaml" \
+ --source-config "$COLLECTION_SOURCE_CONFIG"
 .venv-ml/bin/python -m scripts.scenario_session status --run-id "$RUN_ID"
 ```
 
@@ -2324,7 +2337,8 @@ set -euo pipefail
 jq '{run_id,scenario_id,purpose,cohort_id,label,family}' "data/raw/$RUN_ID/scenario_manifest.json"
 jq '{incident_id,context_status,observation_quality,features}' "data/raw/$RUN_ID/incidents.jsonl"
 mkdir -p operator-logs/progress
-.venv-ml/bin/python -m scripts.audit_dataset --mode progress --output "operator-logs/progress/$RUN_ID.json"
+.venv-ml/bin/python -m scripts.audit_dataset --mode progress \
+ --source-config "$COLLECTION_SOURCE_CONFIG" --output "operator-logs/progress/$RUN_ID.json"
 ```
 
 Progress thiếu quota có thể IN_PROGRESS nếu không integrity ERROR.
@@ -2406,9 +2420,17 @@ Không active run, xử lý ERROR bằng sửa nguồn và thu mới, không s�
 
 ```bash
 set -euo pipefail
-.venv-ml/bin/python -m scripts.audit_dataset --mode final --output evidence/dataset-audit.json
+COLLECTION_SOURCE_CONFIG=config/collection-sources.yaml
+if [ -f operator-logs/collection-sources-active.yaml ]; then
+ COLLECTION_SOURCE_CONFIG=operator-logs/collection-sources-active.yaml
+fi
+test -f "$COLLECTION_SOURCE_CONFIG"
+
+.venv-ml/bin/python -m scripts.audit_dataset --mode final \
+ --source-config "$COLLECTION_SOURCE_CONFIG" --output evidence/dataset-audit.json
 jq '{status,total_valid_runs,invalid_run_count,error_count,warning_count,group_key,strata}' evidence/dataset-audit.json
-.venv-ml/bin/python -m ml.build_dataset --config ml/training_config.yaml
+.venv-ml/bin/python -m ml.build_dataset --config ml/training_config.yaml \
+ --source-config "$COLLECTION_SOURCE_CONFIG"
 jq '{group_key,locked_test_status,stratum_run_counts,partition_counts,collection_audit,provenance}' data/processed/dataset_manifest.json
 ```
 
@@ -2452,7 +2474,7 @@ Không active run. Backup mới sau mỗi buổi, không ghi đè backup gắn a
 
 ```bash
 set -euo pipefail
-COLLECTION_TAG=collection-v4.0.0-candidate.2
+COLLECTION_TAG=collection-v4.0.0-candidate.5
 BACKUP_ID="DATASET-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM"
 BACKUP_DIR="$HOME/datn-backups/$BACKUP_ID"
 .venv-ml/bin/python -m scripts.collection_release backup --tag "$COLLECTION_TAG" \
@@ -2481,7 +2503,7 @@ if (Test-Path -LiteralPath $Destination) { throw 'Destination exists' }
 New-Item -ItemType Directory -Force (Split-Path $Destination) | Out-Null
 scp -r "${SocUser}@192.168.58.147:datn-backups/$BackupId" $Destination
 if ($LASTEXITCODE -ne 0) { throw 'Copy failed' }
-$CollectionTag='collection-v4.0.0-candidate.2'
+$CollectionTag='collection-v4.0.0-candidate.5'
 git --version
 if ($LASTEXITCODE -ne 0) { throw 'Install Git for Windows, reopen PowerShell, then retry verification' }
 $Tools="D:\DATN-TOOLS\$CollectionTag-$BackupId"

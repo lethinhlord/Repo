@@ -1,0 +1,53 @@
+{
+  "version": "reviewed-pilot-adoption-v1",
+  "from_candidate": {
+    "commit": "a7df9b623125ffd0d1403181005e05b136680bb5",
+    "tag": "collection-v4.0.0-candidate.4",
+    "tag_object": "a3c80a057cf2f545a1508a2a06b9f2c4a1d2bc5e",
+    "origin": "https://github.com/lethinhlord/Repo.git",
+    "tracked_files_sha256": "1c3b1a21cdef642f958d8fb2ac822d0fa0502b0cde878ea891422cecc1b1e78d"
+  },
+  "collection_patch_sha256": "01a2b8785bc6590c0913416bba82e28b4c7ec10a5ab97537ebe1f9ae65935405",
+  "reviewed_collection_changes": {
+    "config/collection-design.yaml": {
+      "before": "e4f38cc1740ac8cb1bd304c8cf428aa31f0ca9aa7d4f2f7b2295c539912834dc",
+      "after": "9e2309a410e0f9fca0e16037d9ca135d733a82654db0dcf72586fbe2bb6e5c14"
+    },
+    "ml/build_dataset.py": {
+      "before": "258aa6cb9fb28f3fcf7e3b9aa0dfdd5a855e665306302887032a2bd06d76c9c8",
+      "after": "a89e3b7c8e1b9e2adf5269cfed0d3b067f2f66bb04fefe08b0640b52cebf6541"
+    },
+    "ml/collection_adoption.py": {
+      "before": null,
+      "after": "7a5920c89ac6aa8517832a728c21e75547c8e52200a4497601fa50d6de7eaa59"
+    },
+    "ml/collection_release.py": {
+      "before": "37e00c890e81e3330a72bfd4fb082323647d2e9e0e9ea977de1433360f5b2b93",
+      "after": "59c353decd803de1afbddbd38a782d3141f6bcd3c95d521317f5f7584e8f766f"
+    },
+    "ml/dataset_audit.py": {
+      "before": "f10943304eb3cc7527cfe7907734b6eeca73b7e78aeb9c59fc8ed1e02189c306",
+      "after": "5a2d91cd0d45a6d24defe0e177920066a0b379407d94f30c8728af6af950d81c"
+    },
+    "ml/scenario_collection.py": {
+      "before": "993549c31fbc46fe7e50bfb3ce92a6e46767072df2673be05d1361397cc14642",
+      "after": "e9bd3366dc4c749d33e301a8ebc396d125dc0b7f98403ef3d82b016f9008f01d"
+    },
+    "scripts/collection_release.py": {
+      "before": "6be5b26121245d21e54ad10c6288aba93b7b75af2f82a845f3575378dfc50025",
+      "after": "ff4ea86a4f6512a6e3b93d2434c2f1ae0555b8ed8193d45ac0da3e18ef368b78"
+    },
+    "scripts/create_run_draft.py": {
+      "before": "18d9420526417781d0e21959045819df8bec0a2b97046b1a498b0d13cc6c008f",
+      "after": "8558793bff2a154667ff8db87c2b28893cc597b621fec60ae31e7c7f6a07d813"
+    },
+    "scripts/prepare_collection_source.py": {
+      "before": null,
+      "after": "14cd28cee00c345972e72fb64d4c33dc6e402ece75e1937f2cea510d3f156706"
+    }
+  },
+  "scope": "Reuse the four verified candidate.4 pilots for the reviewed G7/source binding and audit/build patch. All pilot evidence and runtime identity remain unchanged.",
+  "known_limitations": [
+    "The existing HTTP4-second warmup can fail fast cadence profiles; explicitly accepted by the project owner. No HTTP feature/profile/quality gate is removed or weakened."
+  ]
+}

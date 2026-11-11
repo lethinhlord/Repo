@@ -1,5 +1,5 @@
 version: "collection-design-v1"
-candidate_tag: "collection-v4.0.0-candidate.4"
+candidate_tag: "collection-v4.0.0-candidate.5"
 scope: "Exploratory classification of predeclared lab activity profiles; not real-world malicious intent or general C2 detection."
 feature_schema: "features-v3"
 feature_count: 24
