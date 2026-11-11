@@ -255,6 +255,7 @@ class SourceConfig(BaseModel):
     require_clean_bucket: bool = False
     require_flow_counters: bool = False
     require_online_parity: bool = False
+    feature_scope: Literal["scenario", "full-window"] = "scenario"
     late_arrival_grace_seconds: int = Field(default=60, ge=0, le=600, strict=True)
 
 
@@ -323,6 +324,10 @@ def _source_document(source: SourceConfig) -> dict[str, Any]:
     # normalized document when it was not configured; never retrofit provenance.
     if source.collection_release_path is None:
         payload.pop("collection_release_path", None)
+    # Preserve the exact historical source document for existing runs.
+    # New full-window contracts explicitly retain their feature scope.
+    if source.feature_scope == "scenario":
+        payload.pop("feature_scope", None)
     return payload
 
 
@@ -1609,7 +1614,9 @@ def _verify_full_capture_parity(
     incident: IncidentRequest,
     source: SourceConfig,
     evidence_dir: Path,
-) -> None:
+    *,
+    compare: bool = True,
+) -> IncidentRequest:
     """Replay the full asset bucket without label, scenario or nonce filtering."""
     start, end = _aggregation_window(incident.start_time)
     alerts = []
@@ -1663,7 +1670,7 @@ def _verify_full_capture_parity(
     if len(candidates) != 1:
         raise CollectionError("full-capture parity requires exactly one attributable online group")
     online = candidates[0]
-    if (
+    if compare and (
         online.features != incident.features
         or online.context_status != incident.context_status
         or online.context_revision != incident.context_revision
@@ -1676,6 +1683,7 @@ def _verify_full_capture_parity(
         )
         raise CollectionError(f"full-capture parity failed; feature differences={changed}")
 
+    return online
 
 def verify_feature_provenance(
     evidence_dir: Path,
@@ -1726,6 +1734,10 @@ def verify_feature_provenance(
     )
     if not isinstance(metadata, dict):
         raise CollectionError("collection metadata must be a mapping")
+    if metadata.get("feature_scope", "scenario") != source.feature_scope:
+        raise CollectionError("feature scope differs from frozen source")
+    if source.feature_scope == "full-window" and not source.require_online_parity:
+        raise CollectionError("full-window requires online parity")
     if metadata.get("context_time_policy") != "last-relevant-source-v1":
         raise CollectionError(
             "feature provenance requires the last-relevant-source-v1 context policy"
@@ -1748,7 +1760,10 @@ def verify_feature_provenance(
         asset_id=manifest.host,
     )
     features.update(context.features)
-    if contract.get("version") == "collection-start-contract-v2" and (
+    if (
+        source.feature_scope == "scenario"
+        and contract.get("version") == "collection-start-contract-v2"
+    ) and (
         incident.context_status != context.status
         or incident.context_revision != context.revision
         or incident.review_reasons != context.review_reasons
@@ -1780,7 +1795,7 @@ def verify_feature_provenance(
             _verify_full_capture_parity(captured, incident, source, evidence_dir)
     elif source.require_online_parity:
         raise CollectionError("full-capture parity evidence is missing")
-    if features != incident.features:
+    if source.feature_scope == "scenario" and features != incident.features:
         changed = sorted(
             name
             for name in features.keys() | incident.features.keys()
@@ -2443,8 +2458,29 @@ def finalize_run(
         raw_refs=[f"run:{run_id}", "evidence:wazuh_archives.jsonl"],
         indicator=indicator,
     )
+    if source.feature_scope == "full-window" and not source.require_online_parity:
+        raise CollectionError("full-window requires online parity")
+
     if source.require_online_parity:
+        if source.feature_scope == "full-window":
+            online = _verify_full_capture_parity(
+                events, incident, source, evidence_dir, compare=False
+            )
+            if online.observation_quality != "COMPLETE" or online.review_reasons:
+                raise CollectionError(
+                    "full-window incident is incomplete or requires review"
+                )
+            incident = incident.model_copy(update={
+                "features": dict(online.features),
+                "context_status": online.context_status,
+                "context_revision": online.context_revision,
+                "review_reasons": list(online.review_reasons),
+                "observation_quality": online.observation_quality,
+            })
+            features = dict(incident.features)
+
         _verify_full_capture_parity(events, incident, source, evidence_dir)
+
     manifest = ScenarioManifest(
         scenario_id=draft.scenario_id,
         run_id=draft.run_id,
@@ -2535,6 +2571,7 @@ def finalize_run(
         "finalized_at": _iso(finalized_at),
         "context_time_policy": "last-relevant-source-v1",
         "context_observation_as_of": _iso(context_at),
+        "feature_scope": source.feature_scope,
         "archive_events": len(scoped_archive_events),
         "attributed_windows_events": len(windows_events),
         "attributed_suricata_events": len(suricata_events),

@@ -6,7 +6,7 @@ import ipaddress
 import json
 import re
 from contextlib import suppress
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -135,9 +135,48 @@ def sysmon_clock_issues(event: dict[str, Any], *, maximum_skew_seconds: float = 
 
 
 def event_time(event: dict[str, Any]) -> datetime | None:
-    _, system, _ = windows_fields(event)
+    event_id, system, fields = windows_fields(event)
+
     if system:
-        return parse_time(system.get("systemTime"))
+        system_at = parse_time(system.get("systemTime"))
+
+        provider = str(
+            system.get("providerName", "")
+        ).strip().casefold()
+
+        # Sysmon Event 3: native UtcTime describes network activity,
+        # while SystemTime can reflect delayed event publication.
+        if (
+            event_id == "3"
+            and provider == "microsoft-windows-sysmon"
+            and system_at is not None
+            and not sysmon_clock_issues(event)
+        ):
+            native = fields.get("utcTime")
+
+            if isinstance(native, str):
+                try:
+                    normalized = native.strip().replace(" ", "T")
+                    normalized = normalized.replace("Z", "+00:00")
+
+                    native_at = datetime.fromisoformat(normalized)
+
+                    if native_at.tzinfo is None:
+                        native_at = native_at.replace(tzinfo=UTC)
+
+                    if (
+                        native_at.utcoffset() == timedelta(0)
+                        and abs(
+                            (system_at - native_at).total_seconds()
+                        ) <= 5
+                    ):
+                        return native_at.astimezone(UTC)
+
+                except (ValueError, OverflowError):
+                    pass
+
+        return system_at
+
     payload = suricata_payload(event)
     if payload is not None:
         if payload.get("event_type") == "flow" and isinstance(payload.get("flow"), dict):
