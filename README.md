@@ -23,7 +23,7 @@ Real-lab collection uses the four-VM procedure in
 measured clock preflight, context enrollment and pilot gates in order. Run drafts
 require `--clock-preflight` from that measured preflight; an abbreviated command
 cannot replace it. The current candidate is
-[collection-v4.0.0-candidate.5](https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.5).
+[collection-v4.0.0-candidate.6](https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.6).
 It implements the paired cohort design, neutral actor runners and evidence-bound
 per-lab acceptance. Pilot → preflight replay → backup restore → acceptance must
 succeed on the actual four VMs before trainable collection opens. Repository tests
@@ -33,11 +33,15 @@ See [current status](docs/current-status.md) and the
 [collection design and limits](docs/collection-training-design.md). The four
 candidate.4 pilots in the November 11 handoff replay VALID/PASS. Follow
 [G7 with existing pilots](docs/g7-existing-candidate4-pilots.md) to reuse their
-immutable evidence through the reviewed candidate.5 adoption policy. G7 v2 binds
+immutable evidence through the reviewed candidate.6 adoption policy. G7 v2 binds
 the exact active source for draft, START, audit and builder. Renew expired
 enrollment; do not rewrite or recollect pilots merely to change the candidate.
-The known fast-HTTP warmup limitation remains documented and explicitly accepted
-by the project owner; no profile or quality gate is removed.
+The November 13 Sysmon retest exposed native post-exit network timestamps.
+Follow [the chronology fix and lab retest](docs/sysmon-jitter-retest-20261113.md)
+before resuming collection. Native lifecycle clocks now agree across Events 1/3/5;
+HTTP keeps curl alive after its request. Existing feature-state caches are retained
+under their old path, not silently reinterpreted. Fast HTTP cadence limitations
+remain documented; no profile or quality gate is removed.
 
 Use `main` as the maintained entry point and the exact approved source SHA for
 collection, dataset building and training. The Colab notebook accepts

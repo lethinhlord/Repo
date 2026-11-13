@@ -13,7 +13,7 @@ services:
       MODEL_EVALUATION_REGISTRY_DIR: "/app/model-evaluation-registry"
       MODEL_PACKAGE_SIGNING_KEY: "${MODEL_PACKAGE_SIGNING_KEY:?Set MODEL_PACKAGE_SIGNING_KEY in .env}"
       MODEL_PACKAGE_VERIFICATION_KEYS: "${MODEL_PACKAGE_VERIFICATION_KEYS:-[]}"
-      FEATURE_STATE_DB: "/app/state/feature-state.sqlite3"
+      FEATURE_STATE_DB: "${FEATURE_STATE_DB:-/app/state/feature-state-native-lifecycle-v1.sqlite3}"
       FEATURE_STATE_RETENTION_SECONDS: "${FEATURE_STATE_RETENTION_SECONDS:-86400}"
       CONTEXT_BASELINE_PATH: "/app/context-baseline.json"
       INCIDENT_DB: "/app/state/incidents.sqlite3"

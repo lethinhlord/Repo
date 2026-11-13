@@ -13,11 +13,11 @@ from api.app.contracts import FeatureStateResponse, WazuhAlert
 from ml.behavior_features import FEATURE_SCHEMA_VERSION
 from ml.feature_pipeline import aggregate_wazuh_alerts, alert_event_time, window_start
 from ml.intake_window import receipt_timely
-from ml.telemetry import process_guid, windows_fields
+from ml.telemetry import EVENT_TIME_POLICY_VERSION, process_guid, windows_fields
 
 
 class FeatureStateConflictError(ValueError):
-    """An alert ID was replayed with a different payload."""
+    """Stored evidence or derived state cannot safely satisfy this request."""
 
 
 class FeatureStateStore:
@@ -54,6 +54,15 @@ class FeatureStateStore:
             connection.close()
 
     def _initialize(self) -> None:
+        # Inspect before enabling WAL or running any schema upgrade. Old caches
+        # contain derived timestamps and responses that cannot be reinterpreted
+        # just because their raw payload hashes still match.
+        if self.path.exists():
+            connection = sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True)
+            try:
+                self._check_time_policy(connection)
+            finally:
+                connection.close()
         with self._connection() as connection:
             connection.execute(
                 """
@@ -132,6 +141,52 @@ class FeatureStateStore:
                     row["event_timestamp"], row["received_at"],
                     migration=True,
                 )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS feature_time_policy ("
+                "singleton INTEGER PRIMARY KEY CHECK(singleton=1), version TEXT NOT NULL)"
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO feature_time_policy VALUES (1,?)",
+                (EVENT_TIME_POLICY_VERSION,),
+            )
+
+    @staticmethod
+    def _check_time_policy(connection: sqlite3.Connection) -> None:
+        tables = {row[0] for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'",
+        )}
+        error = (
+            "feature-state chronology policy is missing or incompatible; preserve this "
+            "database and select a fresh database path for new collection or explicit raw replay"
+        )
+        if "feature_time_policy" in tables:
+            versions = connection.execute("SELECT version FROM feature_time_policy").fetchall()
+            if versions != [(EVENT_TIME_POLICY_VERSION,)]:
+                raise FeatureStateConflictError(error)
+            return
+        # Prior schema generations never participate in current windows. Keep
+        # their existing audit-only migration, provided no current derived state
+        # or retained process identity accompanies them.
+        if "wazuh_alerts" in tables:
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(wazuh_alerts)")}
+            legacy_columns = {"alert_id", "payload_hash", "payload_json",
+                              "event_timestamp", "received_at"}
+            if "feature_schema_version" in columns:
+                current = connection.execute(
+                    "SELECT 1 FROM wazuh_alerts WHERE feature_schema_version IS NULL "
+                    "OR feature_schema_version NOT IN ('features-v1','features-v2') LIMIT 1",
+                ).fetchone()
+            elif legacy_columns <= columns:
+                current = None
+            else:
+                current = connection.execute("SELECT 1 FROM wazuh_alerts LIMIT 1").fetchone()
+            if current:
+                raise FeatureStateConflictError(error)
+        for table in (
+            "process_identity_events", "closed_feature_windows", "evicted_feature_windows",
+        ):
+            if table in tables and connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone():
+                raise FeatureStateConflictError(error)
 
     def _retain_process_identity(
         self, connection: sqlite3.Connection, alert: WazuhAlert, payload: str,

@@ -7,11 +7,23 @@
     "origin": "https://github.com/lethinhlord/Repo.git",
     "tracked_files_sha256": "1c3b1a21cdef642f958d8fb2ac822d0fa0502b0cde878ea891422cecc1b1e78d"
   },
-  "collection_patch_sha256": "df08fec3307b5eca587aa79037a1445b7dd4f25eb7346dd6015b138a4e4eeb00",
+  "collection_patch_sha256": "92f08cc3f01f9dd38321f95be613ae57924414daa378613003bec99c84c87f84",
   "reviewed_collection_changes": {
     "README.md": {
       "before": "f4a887e8ae9b9e144bb3177a14e81b2c94bf2d522a81f59a801ef3240505c389",
-      "after": "ec1f91cebf02be9bf1160958b595d1f3e78b41f985862b633e99720336f4f9b7"
+      "after": "9afbd56770587e2772f7ec062835d72afd998e93e42b229583d4567a59f901ea"
+    },
+    "api/app/feature_state.py": {
+      "before": "9604a2f1d7177e0bada33e41562ae9a5a301010a019ff0a3d15e3452476d96ee",
+      "after": "b7e78f9182dd860da7640922e214fce4b12d9f9a6683185ca276381a6d19cc8d"
+    },
+    "api/app/main.py": {
+      "before": "be83fd1f0cd1c760b78b72abdaafe5253cda11b9d476d388760fc567c3f1d67e",
+      "after": "3ef1f1cd0b47c773feb231d0e825e28d9106cffeb9c237ea1ffdead84c6dca21"
+    },
+    "compose.yaml": {
+      "before": "ffd628d5f6e3439d06b06a8a9e57de8ce3503d11746228903776a3db65cf10f6",
+      "after": "434022e89b52dd5988a88bf9ecf3b5f4e4dd0956585a842888b0e19f12d01180"
     },
     "config/collection-design.yaml": {
       "before": "e4f38cc1740ac8cb1bd304c8cf428aa31f0ca9aa7d4f2f7b2295c539912834dc",
@@ -37,6 +49,10 @@
       "before": "993549c31fbc46fe7e50bfb3ce92a6e46767072df2673be05d1361397cc14642",
       "after": "e9bd3366dc4c749d33e301a8ebc396d125dc0b7f98403ef3d82b016f9008f01d"
     },
+    "ml/telemetry.py": {
+      "before": "3f783bd7f84d3b4020345e9835da461a7341661c6c78fefb776f3a61684d4e1c",
+      "after": "1019dfbb16429eb2bb61ff62a66037972383255607531e7586817f6e42808899"
+    },
     "scripts/collection_release.py": {
       "before": "6be5b26121245d21e54ad10c6288aba93b7b75af2f82a845f3575378dfc50025",
       "after": "ff4ea86a4f6512a6e3b93d2434c2f1ae0555b8ed8193d45ac0da3e18ef368b78"
@@ -49,13 +65,19 @@
       "before": null,
       "after": "14cd28cee00c345972e72fb64d4c33dc6e402ece75e1937f2cea510d3f156706"
     },
+    "scripts/run_training_http.ps1": {
+      "before": "ed831ad7a45df4f99bda37ef540599cb811477c8710425c1b2082f8b76f9d9b7",
+      "after": "39222cab4861a7a13ecbba2d6447df961f011e841e2a683c1844860842512be5"
+    },
     "scripts/verify_collection_dataset.sh": {
       "before": "d277755c1e5a288e69b03e646cfab3d3cd4e2d7c1556775ce29fa4431a838383",
       "after": "89cb463408b7d9cebd22e3fa915cd2bf5a98f3107e8f4522fabe5f568a7437fc"
     }
   },
-  "scope": "Reuse the four verified candidate.4 pilots for the reviewed G7/source binding and audit/build patch. All pilot evidence and runtime identity remain unchanged.",
+  "scope": "Reuse immutable candidate.4 pilot evidence for candidate.6 after raw replay verification. Reviewed G7/source binding plus verified native Sysmon 1/3/5 chronology, explicit feature-state clock policy and a post-request local HTTP process hold. Remote jitter retest remains required before resuming affected collection; no timestamp, identity, quota or quality guard is relaxed.",
   "known_limitations": [
-    "The existing HTTP4-second warmup can fail fast cadence profiles; explicitly accepted by the project owner. No HTTP feature/profile/quality gate is removed or weakened."
+    "HTTP cadence faster than the local curl hold can still miss its frozen schedule. No profile, feature or quality gate is removed or weakened.",
+    "The two-second minimum post-response curl lifetime covers the observed 1.586-1.591 second native Event3 delay, but an unbounded future Sysmon delay cannot be guaranteed. The full-window gate must continue to reject inconsistent chronology.",
+    "Existing G7 receipts and prepolicy feature-state caches are not rewritten or silently upgraded. Renew source-bound G7 and use a fresh policy-bound state DB for new windows."
   ]
 }

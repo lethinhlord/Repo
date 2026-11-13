@@ -214,7 +214,9 @@ def test_compose_limits_api_host_exposure_and_drops_capabilities() -> None:
     assert api["ports"] == ["127.0.0.1:8000:8000"]
     assert api["cap_drop"] == ["ALL"]
     assert "no-new-privileges:true" in api["security_opt"]
-    assert api["environment"]["FEATURE_STATE_DB"] == "/app/state/feature-state.sqlite3"
+    assert api["environment"]["FEATURE_STATE_DB"] == (
+        "${FEATURE_STATE_DB:-/app/state/feature-state-native-lifecycle-v1.sqlite3}"
+    )
     assert "feature_state:/app/state" in api["volumes"]
     assert compose["services"]["n8n"]["ports"] == [
         "${N8N_BIND_ADDRESS:-127.0.0.1}:5678:5678"

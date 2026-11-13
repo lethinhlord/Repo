@@ -1,7 +1,9 @@
 # Trạng thái phần mềm và bàn giao
-Ngày 12/11/2026. Điểm vào: [runbook 4 VM](scenario-collection-runbook.md).
-Candidate: [collection-v4.0.0-candidate.5](https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.5).
+Ngày 13/11/2026. Điểm vào: [runbook 4 VM](scenario-collection-runbook.md).
+Candidate: [collection-v4.0.0-candidate.6](https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.6).
 Lab đã có bốn pilot candidate.4: dùng [hướng dẫn G7 kế thừa](g7-existing-candidate4-pilots.md).
+Lab gặp lỗi jitter ngày13/11: làm [cập nhật và retest](sysmon-jitter-retest-20261113.md)
+trước khi resume trainable. Run lỗi giữ nguyên, chưa được chứng nhận COMPLETE.
 
 - Thiết kế20trainable+8challenge đã triển khai:10pairedcohort, neutralusers,
   cùng HTTP/DNS endpoint/tool, schedule frozen theo seed và kiểm observed account.
@@ -24,9 +26,11 @@ Lab đã có bốn pilot candidate.4: dùng [hướng dẫn G7 kế thừa](g7-e
   candidate thu mới; source được kiểm xuyên suốt draft/START/audit/build.
 - Enrollment pilot đã hết hạn phải được giữ trong evidence; thu enrollment thật
   mới cho baseline active. Không sửa timestamp/TTL hoặc dùng log gán nhãn làm lịch sử.
-- Giới hạn HTTP warmup ở các profile nhịp nhanh vẫn tồn tại và đã được chủ đồ án
-  chấp nhận. Không bỏ profile, nới quality gate hay tính run lỗi để đủ quota.
-- G7 của lab Kiên còn CHƯA NGHIỆM THU bằng candidate này. Phần mềm candidate đã
+- Native1/3/5 dùng cùng UTC đã kiểm; cache policy mới từ chối dữ liệu dẫn xuất
+  features-v3 cũ. HTTP giữ cùng curl sống sau request bằng hai transfer local.
+  Nhịp quá nhanh vẫn có thể missed schedule; không đổi gap, profile hoặc quality gate.
+- G7 candidate.5 đã có gói handoff kiểm đạt; G7 candidate.6 vẫn phải tạo thật
+  theo source mới sau retest jitter trên lab. Phần mềm candidate đã
   sẵn sàng chạy quy trình; chỉ acceptance từ artifact thật trên lab mới mở trainable.
   Không có4VMremote ở máy Thịnh để xác nhận thay Kiên.
 - Chưa train hoặc mở lockedtest thật; không deploy/chứng nhận strong response.
