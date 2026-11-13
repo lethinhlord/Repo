@@ -1,6 +1,10 @@
 # HƯỚNG DẪN THU DATASET SOC–AI–SOAR — 4 VM
-Bản vận hành 12/11/2026. Mọi code/resource lấy từ GitHub:
-https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.5
+Bản vận hành 13/11/2026. Mọi code/resource lấy từ GitHub:
+https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.6
+
+Lab gặp lỗi jitter Event3 sau process exit ngày13/11: làm
+[quy trình cập nhật và retest](sysmon-jitter-retest-20261113.md) trước khi thu tiếp.
+Không dùng receipt candidate.5 hoặc cache features-v3 cũ để phê duyệt run mới.
 
 Lab đã có bốn pilot candidate.4 đạt: thực hiện đầy đủ hướng dẫn
 [G7 cho pilot đã có](g7-existing-candidate4-pilots.md), rồi tiếp tục mục11–14
@@ -540,7 +544,7 @@ cũ ngoài checkout. COLLECTION_BASELINE_COMMIT lấy từ tag này, không dùn
 set -euo pipefail
 test "$(id -u)" -ne 0
 PROJECT_ROOT="$HOME/datn-ai-soar-v4"
-COLLECTION_TAG=collection-v4.0.0-candidate.5
+COLLECTION_TAG=collection-v4.0.0-candidate.6
 test ! -e "$PROJECT_ROOT"
 git clone --branch "$COLLECTION_TAG" --single-branch https://github.com/lethinhlord/Repo.git "$PROJECT_ROOT"
 cd "$PROJECT_ROOT"
@@ -1615,7 +1619,7 @@ test "$AVAILABLE_KB" -ge 2097152
 test "$FREE_KB" -ge 10485760
 cd "$HOME/datn-ai-soar-v4"
 test -z "$(git status --porcelain)"
-COLLECTION_TAG=collection-v4.0.0-candidate.5
+COLLECTION_TAG=collection-v4.0.0-candidate.6
 .venv-ml/bin/python -m scripts.collection_release candidate --tag "$COLLECTION_TAG" > operator-logs/releases/candidate-current.json
 cmp operator-logs/releases/candidate.json operator-logs/releases/candidate-current.json
 mkdir -p evidence/scenario-runs
@@ -2089,7 +2093,7 @@ ordinal1..4. Mỗi pilot phải VALID/PASS; failed giữ nguyên, ID không tái
 
 ```bash
 set -euo pipefail
-COLLECTION_TAG=collection-v4.0.0-candidate.5
+COLLECTION_TAG=collection-v4.0.0-candidate.6
 BACKUP_ID="PILOT-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM"
 BACKUP_DIR="$HOME/datn-backups/$BACKUP_ID"
 .venv-ml/bin/python -m scripts.collection_release backup \
@@ -2474,7 +2478,7 @@ Không active run. Backup mới sau mỗi buổi, không ghi đè backup gắn a
 
 ```bash
 set -euo pipefail
-COLLECTION_TAG=collection-v4.0.0-candidate.5
+COLLECTION_TAG=collection-v4.0.0-candidate.6
 BACKUP_ID="DATASET-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM"
 BACKUP_DIR="$HOME/datn-backups/$BACKUP_ID"
 .venv-ml/bin/python -m scripts.collection_release backup --tag "$COLLECTION_TAG" \
@@ -2503,7 +2507,7 @@ if (Test-Path -LiteralPath $Destination) { throw 'Destination exists' }
 New-Item -ItemType Directory -Force (Split-Path $Destination) | Out-Null
 scp -r "${SocUser}@192.168.58.147:datn-backups/$BackupId" $Destination
 if ($LASTEXITCODE -ne 0) { throw 'Copy failed' }
-$CollectionTag='collection-v4.0.0-candidate.5'
+$CollectionTag='collection-v4.0.0-candidate.6'
 git --version
 if ($LASTEXITCODE -ne 0) { throw 'Install Git for Windows, reopen PowerShell, then retry verification' }
 $Tools="D:\DATN-TOOLS\$CollectionTag-$BackupId"

@@ -6,11 +6,13 @@ import ipaddress
 import json
 import re
 from contextlib import suppress
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
 from ml.behavior_features import NetworkObservation, SuricataObservation
+
+EVENT_TIME_POLICY_VERSION = "sysmon-native-lifecycle-v1"
 
 
 def parse_time(value: Any) -> datetime | None:
@@ -122,60 +124,49 @@ def sysmon_clock_issues(event: dict[str, Any], *, maximum_skew_seconds: float = 
     if not native_values:
         issues.append("clock:missing_sysmon_utc_time")
     parsed_values = []
-    for value in native_values + message_values:
+    parsed_native_values = []
+    for index, value in enumerate(native_values + message_values):
         parsed = seconds(value)
         if parsed is None:
             issues.append("clock:invalid_sysmon_utc_time")
         else:
             parsed_values.append(parsed)
+            if index < len(native_values):
+                parsed_native_values.append(parsed)
+    if event_id in {"1", "3", "5"} and len(set(parsed_native_values)) > 1:
+        issues.append("clock:conflicting_sysmon_utc_time")
     clocks = ([system_at] if system_at is not None else []) + parsed_values
     if clocks and max(clocks) - min(clocks) > Decimal(str(maximum_skew_seconds)):
         issues.append("clock:sysmon_timestamp_mismatch")
     return sorted(set(issues))
 
 
-def event_time(event: dict[str, Any]) -> datetime | None:
+def _verified_sysmon_lifecycle_time(event: dict[str, Any]) -> datetime | None:
+    """Use one validated native clock for creation, connection, and termination."""
     event_id, system, fields = windows_fields(event)
+    if (
+        event_id not in {"1", "3", "5"}
+        or str(system.get("providerName", "")).strip().casefold() != "microsoft-windows-sysmon"
+        or sysmon_clock_issues(event)
+    ):
+        return None
+    # Validation accepts key casing from different Windows/Wazuh adapters and
+    # rejects contradictory aliases before any one of them is selected.
+    native = next(value for key, value in fields.items() if key.casefold() == "utctime")
+    parsed = datetime.fromisoformat(native.strip().replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def event_time(event: dict[str, Any]) -> datetime | None:
+    _, system, _ = windows_fields(event)
 
     if system:
-        system_at = parse_time(system.get("systemTime"))
-
-        provider = str(
-            system.get("providerName", "")
-        ).strip().casefold()
-
-        # Sysmon Event 3: native UtcTime describes network activity,
-        # while SystemTime can reflect delayed event publication.
-        if (
-            event_id == "3"
-            and provider == "microsoft-windows-sysmon"
-            and system_at is not None
-            and not sysmon_clock_issues(event)
-        ):
-            native = fields.get("utcTime")
-
-            if isinstance(native, str):
-                try:
-                    normalized = native.strip().replace(" ", "T")
-                    normalized = normalized.replace("Z", "+00:00")
-
-                    native_at = datetime.fromisoformat(normalized)
-
-                    if native_at.tzinfo is None:
-                        native_at = native_at.replace(tzinfo=UTC)
-
-                    if (
-                        native_at.utcoffset() == timedelta(0)
-                        and abs(
-                            (system_at - native_at).total_seconds()
-                        ) <= 5
-                    ):
-                        return native_at.astimezone(UTC)
-
-                except (ValueError, OverflowError):
-                    pass
-
-        return system_at
+        # Publication clocks must not extend or shrink a native process lifetime.
+        # DNS, account events, and historical provider-less adapters keep their
+        # existing clock semantics; invalid native evidence remains reviewable.
+        return _verified_sysmon_lifecycle_time(event) or parse_time(system.get("systemTime"))
 
     payload = suricata_payload(event)
     if payload is not None:

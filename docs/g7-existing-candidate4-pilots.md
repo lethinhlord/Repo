@@ -1,9 +1,12 @@
-# G7 cho bốn pilot candidate.4 đã đạt — 12/11/2026
+# G7 cho bốn pilot candidate.4 đã đạt — 13/11/2026
 
 Bản này dành cho lab của Kiên đã thu đủ bốn pilot dưới đây. Mã candidate.4 được
-kế thừa trong `collection-v4.0.0-candidate.5`, bổ sung sửa G7 và các đường truyền
-cấu hình draft/START/audit/build. Không chạy lại bốn pilot chỉ để đổi phiên bản.
+kế thừa trong `collection-v4.0.0-candidate.6`, gồm sửa G7/source, native lifecycle
+và HTTP post-request hold đã review. Không chạy lại bốn pilot chỉ để đổi phiên bản.
 Không sửa raw, state, manifest, start contract, nhãn hoặc checksum của pilot.
+Lab đã gặp lỗi jitter ngày13/11 cần hoàn thành
+[cập nhật và một retest lỗi mới](sysmon-jitter-retest-20261113.md) trước khi thu tiếp.
+Receipt candidate.5 được lưu lại làm hồ sơ; tạo acceptance mới cho candidate.6.
 
 G7 v2 ghi riêng candidate tạo pilot và candidate dùng cho các run mới. Cơ chế
 kế thừa kiểm chính xác commit/tree pilot, cùng Python/Node/package inventory,
@@ -11,8 +14,8 @@ patch thu thập đã được review, bốn strata/transports, raw preflight v�
 backup. Hash của cấu hình active được kiểm lại tại draft/START và frozen state.
 Các gate khác vẫn hoạt động. Receipt là kiểm tính toàn vẹn, không phải chữ ký.
 
-Lỗi HTTP warmup ở một số profile nhịp nhanh chưa nằm trong bản sửa này; chủ đồ án
-đã chấp nhận giới hạn đó. Không đổi frozen gap, bỏ profile, hạ quality gate hoặc
+HTTP dùng hold cục bộ sau request; một số profile nhịp quá nhanh vẫn có thể lỗi
+schedule. Không đổi frozen gap, bỏ profile, hạ quality gate hoặc
 đếm run ABORTED để đủ quota. G7 cho phép thu chính thức; dataset vẫn phải đạt
 audit sau khi thu. Không cam kết mọi profile HTTP nhanh sẽ thành công.
 
@@ -27,16 +30,29 @@ set -euo pipefail
 cd "$HOME/datn-ai-soar-v4"
 test -z "$(git status --porcelain --untracked-files=all)"
 test ! -e evidence/scenario-runs/.active-run.json
-git fetch origin tag collection-v4.0.0-candidate.5
-git switch --detach collection-v4.0.0-candidate.5
-test "$(git cat-file -t refs/tags/collection-v4.0.0-candidate.5)" = tag
-test "$(git rev-parse HEAD)" = "$(git rev-parse collection-v4.0.0-candidate.5^{commit})"
+git fetch origin tag collection-v4.0.0-candidate.6
+git switch --detach collection-v4.0.0-candidate.6
+test "$(git cat-file -t refs/tags/collection-v4.0.0-candidate.6)" = tag
+test "$(git rev-parse HEAD)" = "$(git rev-parse collection-v4.0.0-candidate.6^{commit})"
 test -z "$(git status --porcelain --untracked-files=all)"
 mkdir -p operator-logs
 .venv-ml/bin/python -m scripts.collection_release candidate \
- --tag collection-v4.0.0-candidate.5 --check-remote \
- > operator-logs/candidate5-current.json
-cat operator-logs/candidate5-current.json
+ --tag collection-v4.0.0-candidate.6 --check-remote \
+ > operator-logs/candidate6-current.json
+cat operator-logs/candidate6-current.json
+mkdir -p operator-logs/releases
+REF_STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+for NAME in candidate.json source-tag.txt source-commit.txt; do
+ REF="operator-logs/releases/$NAME"
+ if [ -e "$REF" ]; then
+  test -f "$REF"
+  test ! -e "$REF.before-native6-$REF_STAMP"
+  mv -- "$REF" "$REF.before-native6-$REF_STAMP"
+ fi
+done
+cp -- operator-logs/candidate6-current.json operator-logs/releases/candidate.json
+printf '%s\n' collection-v4.0.0-candidate.6 > operator-logs/releases/source-tag.txt
+git rev-parse HEAD > operator-logs/releases/source-commit.txt
 ```
 
 Giữ nguyên `.venv-ml`, Python, Node và các package đã dùng thu candidate.4;
@@ -84,16 +100,19 @@ Chuẩn bị file active mới từ source đã được xác minh của pilot:
 set -euo pipefail
 cd "$HOME/datn-ai-soar-v4"
 COLLECTION_SOURCE_CONFIG=operator-logs/collection-sources-active.yaml
-test ! -e "$COLLECTION_SOURCE_CONFIG"
-.venv-ml/bin/python -m scripts.prepare_collection_source \
- --pilot PILOT-ACCOUNT-BENIGN-TWO-TYPOS-THEN-SUCCESS-20261111T102846Z-V4 \
- --baseline evidence/context-baseline.json --output "$COLLECTION_SOURCE_CONFIG"
+if [ ! -e "$COLLECTION_SOURCE_CONFIG" ]; then
+ .venv-ml/bin/python -m scripts.prepare_collection_source \
+  --pilot PILOT-ACCOUNT-BENIGN-TWO-TYPOS-THEN-SUCCESS-20261111T102846Z-V4 \
+  --baseline evidence/context-baseline.json --output "$COLLECTION_SOURCE_CONFIG"
+fi
+test -f "$COLLECTION_SOURCE_CONFIG"
 cat "$COLLECTION_SOURCE_CONFIG"
 sha256sum "$COLLECTION_SOURCE_CONFIG"
 ```
 
-Phải báo ACTIVE_SOURCE_PREPARED. Script kiểm hash/rebuild/enrollment và thời hạn
-baseline thật trước khi ghi. Source giữ `feature_scope=full-window` cùng mọi gate;
+File mới phải báo ACTIVE_SOURCE_PREPARED; file đã có được kiểm lại ở accept và
+authorize. Script kiểm hash/rebuild/enrollment và thời hạn baseline thật trước khi
+ghi. Source giữ `feature_scope=full-window` cùng mọi gate;
 chỉ đổi đường dẫn baseline active. Không sửa file tracked trong `config/` để mở
 gate. Nếu file active đã tồn tại, đối chiếu bản đó; không ghi đè hoặc xóa tùy tiện.
 Sau khi đã nghiệm thu, giữ nguyên bytes file active. Có thể enrollment mới vào
@@ -119,9 +138,9 @@ test -f "$PREFLIGHT_DIR/capture.sha256"
 (cd "$PREFLIGHT_DIR" && sha256sum --check capture.sha256)
 ```
 
-Không thay backup cũ bằng backup tạo trên candidate.5 rồi vẫn khai nó là backup
+Không thay backup cũ bằng backup tạo trên candidate.6 rồi vẫn khai nó là backup
 candidate.4. Acceptance này kiểm source metadata của backup theo candidate tạo
-pilot, đồng thời kiểm candidate đang chạy theo candidate.5. Mỗi START trainable
+pilot, đồng thời kiểm candidate đang chạy theo candidate.6. Mỗi START trainable
 sẽ kiểm lại hai bộ thông tin này và toàn bộ evidence liên quan.
 
 ## 5. Tạo acceptance G7 v2 thật
@@ -136,16 +155,23 @@ cd "$HOME/datn-ai-soar-v4"
 : "${PREFLIGHT_DIR:?Thuc hien buoc 4 trong phien shell nay}"
 COLLECTION_SOURCE_CONFIG=operator-logs/collection-sources-active.yaml
 test -f "$COLLECTION_SOURCE_CONFIG"
-test ! -e evidence/collection-acceptance.json
+if [ -e evidence/collection-acceptance.json ]; then
+ test -f evidence/collection-acceptance.json
+ LEGACY_RECEIPT="evidence/collection-acceptance-before-native6-$(date -u +%Y%m%dT%H%M%SZ).json"
+ test ! -e "$LEGACY_RECEIPT"
+ sha256sum evidence/collection-acceptance.json
+ mv -- evidence/collection-acceptance.json "$LEGACY_RECEIPT"
+ sha256sum "$LEGACY_RECEIPT"
+fi
 .venv-ml/bin/python -m scripts.collection_release accept \
- --tag collection-v4.0.0-candidate.5 --source-config "$COLLECTION_SOURCE_CONFIG" \
+ --tag collection-v4.0.0-candidate.6 --source-config "$COLLECTION_SOURCE_CONFIG" \
  --pilot PILOT-ACCOUNT-BENIGN-TWO-TYPOS-THEN-SUCCESS-20261111T102846Z-V4 \
  --pilot PILOT-ACCOUNT-MALICIOUS-REPEATED-FAILURES-6-20261111T101754Z-RETRY-V4 \
  --pilot PILOT-C2-BENIGN-DNS-20261111T094840Z-V4 \
  --pilot PILOT-C2-MALICIOUS-HTTP-BEACON-20261111T093029Z-R2 \
  --backup-dir "$BACKUP_DIR" --preflight-dir "$PREFLIGHT_DIR" \
  --output evidence/collection-acceptance.json \
- > operator-logs/g7-candidate5-acceptance.json
+ > operator-logs/g7-candidate6-acceptance.json
 .venv-ml/bin/python -m scripts.collection_release authorize \
  --source-config "$COLLECTION_SOURCE_CONFIG"
 sha256sum evidence/collection-acceptance.json
@@ -154,7 +180,7 @@ jq '{version,candidate,pilot_candidate,source_config,collection_contract,pilot_a
 ```
 
 Chỉ bắt đầu thu chính thức khi `authorize` báo COLLECTION_AUTHORIZED. Receipt phải
-là collection-acceptance-v2; candidate là candidate.5, pilot_candidate giữ nguyên
+là collection-acceptance-v2; candidate là candidate.6, pilot_candidate giữ nguyên
 candidate.4; source_config đúng file active. Nếu ERROR, dừng ở bước đó và gửi
 output lỗi cùng evidence; không ghi PASS bằng tay hoặc hạ điều kiện kiểm.
 Không xóa/di chuyển backup, preflight hoặc evidence đã gắn với acceptance.

@@ -4,12 +4,13 @@ ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "scripts/run_training_http.ps1"
 
 
-def test_local_file_warmup_preserves_one_http_action_per_iteration():
+def test_local_file_hold_preserves_one_http_action_per_iteration():
     text = RUNNER.read_text(encoding="utf-8")
 
     assert "file:///C:/Windows/win.ini" in text
-    assert "--rate '1/4s'" in text
-    assert "--next" in text
+    assert "--rate '1/2s'" in text
+    assert text.count("'file:///C:/Windows/win.ini'") == 2
+    assert text.index("--write-out '%{http_code}' $url") < text.index("'file:///C:/Windows/win.ini'")
 
     # One frozen /beacon URL is constructed per loop iteration.
     assert text.count('/beacon?run=$RunNonce') == 1

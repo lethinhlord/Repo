@@ -23,7 +23,7 @@ if ($gaps.Count -ne $Count-1 -or ($gaps | Measure-Object -Sum).Sum -gt 240) {
 }
 $curl=@(Get-Command curl.exe -CommandType Application -ErrorAction Stop)[0].Source
 if (-not (Test-Path -LiteralPath 'C:\Windows\win.ini' -PathType Leaf)) {
-    throw 'Required local curl warmup file is missing'
+    throw 'Required local curl hold file is missing'
 }
 $clock=[Diagnostics.Stopwatch]::StartNew()
 $previousStart=0.0
@@ -36,15 +36,18 @@ for ($index=1; $index -le $Count; $index++) {
     $previousStart=$clock.Elapsed.TotalSeconds
     $url="http://10.40.0.10:8081/beacon?run=$RunNonce&v=$VariantIndex&n=$index"
     $LASTEXITCODE=0
-    # Local-file warmup delays the HTTP connection within the same
-    # curl.exe process. It creates no additional network action.
-    $status=& $curl --rate '1/4s' --fail-early --noproxy '*' `
-        --http1.0 --silent --show-error --output NUL `
-        'file:///C:/Windows/win.ini' `
-        --next `
-        --http1.0 --noproxy '*' --connect-timeout 4 --max-time 8 `
+    # Send HTTP first. Two local transfers keep this same curl.exe alive
+    # for at least one full 2-second interval AFTER HTTP completes, even
+    # for a slow response. No additional network request is generated.
+    # A sleep in this parent shell cannot keep an already-exited curl alive.
+    $status=& $curl --rate '1/2s' --fail-early --noproxy '*' `
+        --http1.0 --connect-timeout 4 --max-time 8 `
         --fail --silent --show-error --header 'Connection: close' `
-        --output NUL --write-out '%{http_code}' $url
+        --output NUL --write-out '%{http_code}' $url `
+        --next --noproxy '*' --silent --show-error --output NUL `
+        'file:///C:/Windows/win.ini' `
+        --next --noproxy '*' --silent --show-error --output NUL `
+        'file:///C:/Windows/win.ini'
     if ($LASTEXITCODE -ne 0 -or "$status".Trim() -ne '200') { throw "HTTP request $index failed" }
     Write-Output "HTTP_REQUEST_OK seq=$index status=200"
 }
