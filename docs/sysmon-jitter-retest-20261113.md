@@ -73,7 +73,8 @@ test ! -e evidence/scenario-runs/.active-run.json
 ```
 
 Lệnh abort chính thức ghi trạng thái ABORTED và log, không sửa raw hay tạo vector
-train giả. Bản tar trước abort giữ nguyên16 file ban đầu. Không xóa lock bằng tay;
+train giả. Gói retest đã nhận có15 file gốc; bản tar trên lab giữ toàn bộ thư mục
+run tại thời điểm sao lưu. Không xóa lock bằng tay;
 nếu status là FINALIZING/FINALIZED, dừng và xử lý recovery/quarantine đúng runbook.
 
 ## 4. Cập nhật từ GitHub và kiểm phần mềm

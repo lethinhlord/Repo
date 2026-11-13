@@ -1,7 +1,7 @@
 # Native lifecycle / jitter retest remediation
 
 Input: `D:/PILOT-C2-MALICIOUS-JITTER-BEACON-20261113T114033Z-SYSMON-RETEST`,
-nested same-name run directory; 16 original files, preserved read-only.
+nested same-name run directory; 15 original files, preserved read-only.
 Archive SHA256: `ba571e0cd2d10afa68848b13b2148ef8cfc5468b577eb456afd62dc072f711dd`.
 Frozen source: candidate.5 / `a0d3f71a137e9331e306a98e411da2065b491ccd`.
 
@@ -38,7 +38,15 @@ Frozen source: candidate.5 / `a0d3f71a137e9331e306a98e411da2065b491ccd`.
 - Root:78 chronology/state/Compose focused tests passed;8 native HTTP tests passed,
   including real loopback curl with immediate/slow200 and500 failure.
 - All7 sealed historical pilots replay VALID/RUN_EVIDENCE_CHECK_PASS unchanged.
-- Full regression suite running with per-batch JUnit in external audit output.
+- Full regression:1158 cases,1157 passed,1 platform-dependent skip,0 failures/errors.
+  Per-batch JUnit retained in external audit output. After the final release-tag
+  pin,31 release/adoption/source-binding tests passed again. All83 Bash blocks
+  in the operator guides pass static syntax checking.
+- Cross-review also caught stale candidate reference files during upgrade;
+  guides now preserve and refresh all three references after remote verification.
+- G7 module replay verified real four-pilot/preflight/backup evidence in isolation;
+  local runtime correctly rejected, unchanged-SOC-runtime simulation passed.
+  This simulation is not production authorization or a fresh-context CLI test.
 - Actual remote jitter retest and new G7 authorization require Kiên's four VMs.
   No remote-lab PASS or model-training readiness is asserted from localhost tests.
 
