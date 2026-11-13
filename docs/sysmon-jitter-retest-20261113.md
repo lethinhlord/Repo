@@ -84,8 +84,24 @@ git fetch origin tag collection-v4.0.0-candidate.6
 git switch --detach collection-v4.0.0-candidate.6
 test "$(git cat-file -t refs/tags/collection-v4.0.0-candidate.6)" = tag
 test "$(git rev-parse HEAD)" = "$(git rev-parse collection-v4.0.0-candidate.6^{commit})"
+mkdir -p operator-logs/releases
+REF_STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+VERIFIED_REF="operator-logs/releases/candidate-native6-$REF_STAMP.json"
+test ! -e "$VERIFIED_REF"
 .venv-ml/bin/python -m scripts.collection_release candidate \
- --tag collection-v4.0.0-candidate.6 --check-remote
+ --tag collection-v4.0.0-candidate.6 --check-remote > "$VERIFIED_REF"
+cat "$VERIFIED_REF"
+for NAME in candidate.json source-tag.txt source-commit.txt; do
+ REF="operator-logs/releases/$NAME"
+ if [ -e "$REF" ]; then
+  test -f "$REF"
+  test ! -e "$REF.before-native6-$REF_STAMP"
+  mv -- "$REF" "$REF.before-native6-$REF_STAMP"
+ fi
+done
+cp -- "$VERIFIED_REF" operator-logs/releases/candidate.json
+printf '%s\n' collection-v4.0.0-candidate.6 > operator-logs/releases/source-tag.txt
+git rev-parse HEAD > operator-logs/releases/source-commit.txt
 .venv-ml/bin/python -m pytest -q tests/test_process_timing_regressions.py \
  tests/test_process_lifetime.py tests/test_pilot4_native_network_time.py \
  tests/test_feature_state.py tests/test_feature_window_closure.py
@@ -95,6 +111,8 @@ sha256sum scripts/run_training_http.ps1 scripts/run_frozen_windows.ps1
 Giữ Python/Node/package inventory đã thu pilot. Không pip upgrade để làm hash
 runtime khớp bằng tay. Kiểm thử native PowerShell/curl trên Windows máy Thịnh
 không chạy được trên Ubuntu; kiểm thử chronology ở trên vẫn phải đạt tại SOC.
+Ba file reference trong releases được lưu bản cũ rồi cập nhật đúng checkout mới;
+nếu giữ candidate.json cũ, bước10.2 sẽ dừng đúng do source/runtime không khớp.
 
 Nếu đã chạy API container: dừng nhận alert ở ranh giới giữa các run, rebuild
 image bằng quy trình triển khai hiện có rồi recreate API. Kiểm config trước:

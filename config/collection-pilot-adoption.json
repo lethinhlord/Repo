@@ -7,7 +7,7 @@
     "origin": "https://github.com/lethinhlord/Repo.git",
     "tracked_files_sha256": "1c3b1a21cdef642f958d8fb2ac822d0fa0502b0cde878ea891422cecc1b1e78d"
   },
-  "collection_patch_sha256": "92f08cc3f01f9dd38321f95be613ae57924414daa378613003bec99c84c87f84",
+  "collection_patch_sha256": "e5269335b9fccb920e60e5fb5fc65ab2c617084b27783df98400107fe5dc6c2c",
   "reviewed_collection_changes": {
     "README.md": {
       "before": "f4a887e8ae9b9e144bb3177a14e81b2c94bf2d522a81f59a801ef3240505c389",
@@ -27,7 +27,7 @@
     },
     "config/collection-design.yaml": {
       "before": "e4f38cc1740ac8cb1bd304c8cf428aa31f0ca9aa7d4f2f7b2295c539912834dc",
-      "after": "9e2309a410e0f9fca0e16037d9ca135d733a82654db0dcf72586fbe2bb6e5c14"
+      "after": "0e10a33b66d12376f054a723a9ec051d8e43a1c0a67cbd8348dabb224d06bf53"
     },
     "ml/build_dataset.py": {
       "before": "258aa6cb9fb28f3fcf7e3b9aa0dfdd5a855e665306302887032a2bd06d76c9c8",

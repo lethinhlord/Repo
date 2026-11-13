@@ -40,6 +40,19 @@ mkdir -p operator-logs
  --tag collection-v4.0.0-candidate.6 --check-remote \
  > operator-logs/candidate6-current.json
 cat operator-logs/candidate6-current.json
+mkdir -p operator-logs/releases
+REF_STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+for NAME in candidate.json source-tag.txt source-commit.txt; do
+ REF="operator-logs/releases/$NAME"
+ if [ -e "$REF" ]; then
+  test -f "$REF"
+  test ! -e "$REF.before-native6-$REF_STAMP"
+  mv -- "$REF" "$REF.before-native6-$REF_STAMP"
+ fi
+done
+cp -- operator-logs/candidate6-current.json operator-logs/releases/candidate.json
+printf '%s\n' collection-v4.0.0-candidate.6 > operator-logs/releases/source-tag.txt
+git rev-parse HEAD > operator-logs/releases/source-commit.txt
 ```
 
 Giữ nguyên `.venv-ml`, Python, Node và các package đã dùng thu candidate.4;
