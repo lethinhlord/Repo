@@ -1,12 +1,14 @@
-# G7 cho bốn pilot candidate.4 đã đạt — 13/11/2026
+# G7 cho bốn pilot candidate.4 đã đạt — 14/11/2026
 
 Bản này dành cho lab của Kiên đã thu đủ bốn pilot dưới đây. Mã candidate.4 được
-kế thừa trong `collection-v4.0.0-candidate.6`, gồm sửa G7/source, native lifecycle
-và HTTP post-request hold đã review. Không chạy lại bốn pilot chỉ để đổi phiên bản.
+kế thừa trong `collection-v4.0.0-candidate.7`, gồm sửa G7/source, native lifecycle,
+asset grouping và HTTP hold đã review. Không chạy lại bốn pilot chỉ để đổi phiên bản.
 Không sửa raw, state, manifest, start contract, nhãn hoặc checksum của pilot.
-Lab đã gặp lỗi jitter ngày13/11 cần hoàn thành
-[cập nhật và một retest lỗi mới](sysmon-jitter-retest-20261113.md) trước khi thu tiếp.
-Receipt candidate.5 được lưu lại làm hồ sơ; tạo acceptance mới cho candidate.6.
+Trước bước1, hoàn thành bước1–3 của [nâng cấp candidate.7](collector-upgrade-candidate7.md)
+để tạo checkout riêng và sao chép đúng bốn pilot. Bước4 của hướng dẫn nâng cấp
+quay lại G7 bước1–5 tại đây; chưa tạo plan cho đến khi authorize thành công.
+Giữ nguyên receipt candidate.6
+cùng các trainable source6; tạo acceptance riêng cho candidate.7.
 
 G7 v2 ghi riêng candidate tạo pilot và candidate dùng cho các run mới. Cơ chế
 kế thừa kiểm chính xác commit/tree pilot, cùng Python/Node/package inventory,
@@ -27,31 +29,31 @@ máy của Thịnh nên acceptance thật phải được tạo tại đây, đ�
 
 ```bash
 set -euo pipefail
-cd "$HOME/datn-ai-soar-v4"
+cd "$HOME/datn-ai-soar-v4-candidate7"
 test -z "$(git status --porcelain --untracked-files=all)"
 test ! -e evidence/scenario-runs/.active-run.json
-git fetch origin tag collection-v4.0.0-candidate.6
-git switch --detach collection-v4.0.0-candidate.6
-test "$(git cat-file -t refs/tags/collection-v4.0.0-candidate.6)" = tag
-test "$(git rev-parse HEAD)" = "$(git rev-parse collection-v4.0.0-candidate.6^{commit})"
+git fetch origin tag collection-v4.0.0-candidate.7
+git switch --detach collection-v4.0.0-candidate.7
+test "$(git cat-file -t refs/tags/collection-v4.0.0-candidate.7)" = tag
+test "$(git rev-parse HEAD)" = "$(git rev-parse collection-v4.0.0-candidate.7^{commit})"
 test -z "$(git status --porcelain --untracked-files=all)"
 mkdir -p operator-logs
 .venv-ml/bin/python -m scripts.collection_release candidate \
- --tag collection-v4.0.0-candidate.6 --check-remote \
- > operator-logs/candidate6-current.json
-cat operator-logs/candidate6-current.json
+ --tag collection-v4.0.0-candidate.7 --check-remote \
+ > operator-logs/candidate7-current.json
+cat operator-logs/candidate7-current.json
 mkdir -p operator-logs/releases
 REF_STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 for NAME in candidate.json source-tag.txt source-commit.txt; do
  REF="operator-logs/releases/$NAME"
  if [ -e "$REF" ]; then
   test -f "$REF"
-  test ! -e "$REF.before-native6-$REF_STAMP"
-  mv -- "$REF" "$REF.before-native6-$REF_STAMP"
+  test ! -e "$REF.before-asset7-$REF_STAMP"
+  mv -- "$REF" "$REF.before-asset7-$REF_STAMP"
  fi
 done
-cp -- operator-logs/candidate6-current.json operator-logs/releases/candidate.json
-printf '%s\n' collection-v4.0.0-candidate.6 > operator-logs/releases/source-tag.txt
+cp -- operator-logs/candidate7-current.json operator-logs/releases/candidate.json
+printf '%s\n' collection-v4.0.0-candidate.7 > operator-logs/releases/source-tag.txt
 git rev-parse HEAD > operator-logs/releases/source-commit.txt
 ```
 
@@ -66,7 +68,7 @@ vẫn được giữ đúng trong hồ sơ. Không tạo lại tag cũ bằng ob
 
 ```bash
 set -euo pipefail
-cd "$HOME/datn-ai-soar-v4"
+cd "$HOME/datn-ai-soar-v4-candidate7"
 PILOTS=(
  PILOT-ACCOUNT-BENIGN-TWO-TYPOS-THEN-SUCCESS-20261111T102846Z-V4
  PILOT-ACCOUNT-MALICIOUS-REPEATED-FAILURES-6-20261111T101754Z-RETRY-V4
@@ -81,8 +83,9 @@ done
 
 Cả hai lệnh của mỗi run phải lần lượt báo VALID và RUN_EVIDENCE_CHECK_PASS. Nếu
 thiếu file trên máy SOC, khôi phục từ backup gốc đúng quy trình; không tự tạo
-manifest/incident hoặc lấy file khác run. Ba pilot cũ và run aborted vẫn giữ
-trong evidence; không đưa chúng vào bốn ID nghiệm thu này hoặc quota trainable.
+manifest/incident hoặc lấy file khác run. Các pilot khác, trainable source6 và run
+aborted vẫn giữ trong checkout cũ; không cần sao chép chúng sang checkout7.
+Không đưa chúng vào bốn ID nghiệm thu này hoặc quota trainable candidate.7.
 
 ## 3. Kiểm enrollment active; làm mới nếu hết hạn
 
@@ -98,7 +101,7 @@ Chuẩn bị file active mới từ source đã được xác minh của pilot:
 
 ```bash
 set -euo pipefail
-cd "$HOME/datn-ai-soar-v4"
+cd "$HOME/datn-ai-soar-v4-candidate7"
 COLLECTION_SOURCE_CONFIG=operator-logs/collection-sources-active.yaml
 if [ ! -e "$COLLECTION_SOURCE_CONFIG" ]; then
  .venv-ml/bin/python -m scripts.prepare_collection_source \
@@ -127,9 +130,9 @@ trong backup. G7 kiểm lại các file và tự restore vào thư mục tạm.
 
 ```bash
 set -euo pipefail
-cd "$HOME/datn-ai-soar-v4"
+cd "$HOME/datn-ai-soar-v4-candidate7"
 BACKUP_DIR="$HOME/datn-backups/PILOT-V4-HANDOFF-20261111T105802Z"
-PREFLIGHT_DIR="$PWD/operator-logs/preflight/pf179430094631096"
+PREFLIGHT_DIR="$HOME/datn-ai-soar-v4/operator-logs/preflight/pf179430094631096"
 test -d "$BACKUP_DIR"
 test -f "$PREFLIGHT_DIR/archives-fresh.jsonl"
 test -f "$PREFLIGHT_DIR/channel-check.txt"
@@ -138,9 +141,9 @@ test -f "$PREFLIGHT_DIR/capture.sha256"
 (cd "$PREFLIGHT_DIR" && sha256sum --check capture.sha256)
 ```
 
-Không thay backup cũ bằng backup tạo trên candidate.6 rồi vẫn khai nó là backup
+Không thay backup cũ bằng backup tạo trên candidate.7 rồi vẫn khai nó là backup
 candidate.4. Acceptance này kiểm source metadata của backup theo candidate tạo
-pilot, đồng thời kiểm candidate đang chạy theo candidate.6. Mỗi START trainable
+pilot, đồng thời kiểm candidate đang chạy theo candidate.7. Mỗi START trainable
 sẽ kiểm lại hai bộ thông tin này và toàn bộ evidence liên quan.
 
 ## 5. Tạo acceptance G7 v2 thật
@@ -150,28 +153,28 @@ Chạy cùng phiên shell đã đặt BACKUP_DIR/PREFLIGHT_DIR ở bước4. N�
 
 ```bash
 set -euo pipefail
-cd "$HOME/datn-ai-soar-v4"
+cd "$HOME/datn-ai-soar-v4-candidate7"
 : "${BACKUP_DIR:?Thuc hien buoc 4 trong phien shell nay}"
 : "${PREFLIGHT_DIR:?Thuc hien buoc 4 trong phien shell nay}"
 COLLECTION_SOURCE_CONFIG=operator-logs/collection-sources-active.yaml
 test -f "$COLLECTION_SOURCE_CONFIG"
 if [ -e evidence/collection-acceptance.json ]; then
  test -f evidence/collection-acceptance.json
- LEGACY_RECEIPT="evidence/collection-acceptance-before-native6-$(date -u +%Y%m%dT%H%M%SZ).json"
+ LEGACY_RECEIPT="evidence/collection-acceptance-before-asset7-$(date -u +%Y%m%dT%H%M%SZ).json"
  test ! -e "$LEGACY_RECEIPT"
  sha256sum evidence/collection-acceptance.json
  mv -- evidence/collection-acceptance.json "$LEGACY_RECEIPT"
  sha256sum "$LEGACY_RECEIPT"
 fi
 .venv-ml/bin/python -m scripts.collection_release accept \
- --tag collection-v4.0.0-candidate.6 --source-config "$COLLECTION_SOURCE_CONFIG" \
+ --tag collection-v4.0.0-candidate.7 --source-config "$COLLECTION_SOURCE_CONFIG" \
  --pilot PILOT-ACCOUNT-BENIGN-TWO-TYPOS-THEN-SUCCESS-20261111T102846Z-V4 \
  --pilot PILOT-ACCOUNT-MALICIOUS-REPEATED-FAILURES-6-20261111T101754Z-RETRY-V4 \
  --pilot PILOT-C2-BENIGN-DNS-20261111T094840Z-V4 \
  --pilot PILOT-C2-MALICIOUS-HTTP-BEACON-20261111T093029Z-R2 \
  --backup-dir "$BACKUP_DIR" --preflight-dir "$PREFLIGHT_DIR" \
  --output evidence/collection-acceptance.json \
- > operator-logs/g7-candidate6-acceptance.json
+ > operator-logs/g7-candidate7-acceptance.json
 .venv-ml/bin/python -m scripts.collection_release authorize \
  --source-config "$COLLECTION_SOURCE_CONFIG"
 sha256sum evidence/collection-acceptance.json
@@ -180,16 +183,20 @@ jq '{version,candidate,pilot_candidate,source_config,collection_contract,pilot_a
 ```
 
 Chỉ bắt đầu thu chính thức khi `authorize` báo COLLECTION_AUTHORIZED. Receipt phải
-là collection-acceptance-v2; candidate là candidate.6, pilot_candidate giữ nguyên
+là collection-acceptance-v2; candidate là candidate.7, pilot_candidate giữ nguyên
 candidate.4; source_config đúng file active. Nếu ERROR, dừng ở bước đó và gửi
 output lỗi cùng evidence; không ghi PASS bằng tay hoặc hạ điều kiện kiểm.
 Không xóa/di chuyển backup, preflight hoặc evidence đã gắn với acceptance.
 
 ## 6. Tạo plan chính thức và thu từng run
 
+Nếu đến đây từ hướng dẫn nâng cấp candidate.7, quay lại bước5 của hướng dẫn đó
+để tạo plan tại một nơi. Nếu đã có plan của đợt candidate.7, giữ nguyên file và
+SHA đó; không tạo thêm plan hoặc trộn các dòng của hai plan.
+
 ```bash
 set -euo pipefail
-cd "$HOME/datn-ai-soar-v4"
+cd "$HOME/datn-ai-soar-v4-candidate7"
 PLAN="run-drafts/preferred-$(date -u +%Y%m%dT%H%M%SZ).json"
 .venv-ml/bin/python -m scripts.make_collection_plan --kind preferred --output "$PLAN"
 jq '.kind, (.runs|length)' "$PLAN"
@@ -224,7 +231,7 @@ Receipt chấp thuận không làm baseline/clock hết hạn trở thành hợp
 
 ```bash
 set -euo pipefail
-cd "$HOME/datn-ai-soar-v4"
+cd "$HOME/datn-ai-soar-v4-candidate7"
 .venv-ml/bin/python -m scripts.audit_dataset --mode final \
  --source-config operator-logs/collection-sources-active.yaml \
  --output evidence/dataset-audit.json

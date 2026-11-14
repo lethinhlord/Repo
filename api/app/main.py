@@ -283,7 +283,7 @@ def features_from_wazuh_batch(batch: WazuhAlertBatch) -> FeatureBatchResponse:
 @app.post("/features/wazuh/stateful", response_model=FeatureStateResponse)
 def features_from_wazuh_stateful(alert: WazuhAlert) -> FeatureStateResponse:
     path = os.getenv(
-        "FEATURE_STATE_DB", "/tmp/datn-feature-state-native-lifecycle-v1.sqlite3"
+        "FEATURE_STATE_DB", "/tmp/datn-feature-state-sensor-asset-origin-v1.sqlite3"
     ).strip()
     try:
         retention_seconds = int(os.getenv("FEATURE_STATE_RETENTION_SECONDS", "86400"))
@@ -297,7 +297,7 @@ def features_from_wazuh_stateful(alert: WazuhAlert) -> FeatureStateResponse:
 @app.post("/features/wazuh/finalize-window", response_model=FeatureStateResponse)
 def finalize_feature_window(request: FeatureWindowFinalizeRequest) -> FeatureStateResponse:
     path = os.getenv(
-        "FEATURE_STATE_DB", "/tmp/datn-feature-state-native-lifecycle-v1.sqlite3"
+        "FEATURE_STATE_DB", "/tmp/datn-feature-state-sensor-asset-origin-v1.sqlite3"
     ).strip()
     try:
         retention_seconds = int(os.getenv("FEATURE_STATE_RETENTION_SECONDS", "86400"))
