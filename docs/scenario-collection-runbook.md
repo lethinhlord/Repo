@@ -2381,6 +2381,11 @@ Không tái sử dụng raw hoặc ID, không sửa plan để che failed.
 
 ## 12. Thu chính thức và challenge
 
+Nếu đã tạo plan candidate.7 trong hướng dẫn nâng cấp hoặc G7, dùng nguyên đường
+dẫn PLAN và SHA đã ghi, bỏ qua khối tạo plan dưới đây. Chỉ tạo một plan trainable
+cho đợt thu; không trộn plan hoặc đổi seed/cohort theo kết quả. Plan pilot/challenge
+không thay thế plan trainable.
+
 Chỉ sau acceptance, chọn MỘT plan:
 
 ```bash

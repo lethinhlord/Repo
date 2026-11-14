@@ -129,8 +129,9 @@ Các run trước hạn vẫn hợp lệ; không sửa snapshot của chúng. L�
 ở NEW_ROOT theo runbook10.5 (cùng4VM,3user,console/SMB/HTTP/DNS, capture có hash).
 Đừng lấy log đã gán nhãn trong các run trainable để dựng lịch sử baseline.
 
-Sau ENROLLMENT_REBUILD_AND_INVENTORY=PASS, làm đủ
-[G7 bốn pilot đã có](g7-existing-candidate4-pilots.md), ngay trong checkout7.
+Sau ENROLLMENT_REBUILD_AND_INVENTORY=PASS, làm đủ bước1–5 của
+[G7 bốn pilot đã có](g7-existing-candidate4-pilots.md), ngay trong checkout7,
+rồi quay lại bước5 dưới đây để tạo duy nhất một plan. Chưa làm bước6 của guide G7.
 Guide này kiểm source active full-window, runtime, policy patch, backup restore,
 raw preflight và4pilot. Chỉ chuyển bước5 khi authorize báo COLLECTION_AUTHORIZED.
 Receipt mới ghi candidate.7 và pilot_candidate.4; receipt6 giữ nguyên ở OLD_ROOT.

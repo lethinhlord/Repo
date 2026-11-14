@@ -81,8 +81,9 @@ done
 
 Cả hai lệnh của mỗi run phải lần lượt báo VALID và RUN_EVIDENCE_CHECK_PASS. Nếu
 thiếu file trên máy SOC, khôi phục từ backup gốc đúng quy trình; không tự tạo
-manifest/incident hoặc lấy file khác run. Ba pilot cũ và run aborted vẫn giữ
-trong evidence; không đưa chúng vào bốn ID nghiệm thu này hoặc quota trainable.
+manifest/incident hoặc lấy file khác run. Các pilot khác, trainable source6 và run
+aborted vẫn giữ trong checkout cũ; không cần sao chép chúng sang checkout7.
+Không đưa chúng vào bốn ID nghiệm thu này hoặc quota trainable candidate.7.
 
 ## 3. Kiểm enrollment active; làm mới nếu hết hạn
 
@@ -186,6 +187,10 @@ output lỗi cùng evidence; không ghi PASS bằng tay hoặc hạ điều ki�
 Không xóa/di chuyển backup, preflight hoặc evidence đã gắn với acceptance.
 
 ## 6. Tạo plan chính thức và thu từng run
+
+Nếu đến đây từ hướng dẫn nâng cấp candidate.7, quay lại bước5 của hướng dẫn đó
+để tạo plan tại một nơi. Nếu đã có plan của đợt candidate.7, giữ nguyên file và
+SHA đó; không tạo thêm plan hoặc trộn các dòng của hai plan.
 
 ```bash
 set -euo pipefail
