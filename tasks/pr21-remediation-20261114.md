@@ -35,8 +35,14 @@ Original PR21 head:d6e2c50; base/current candidate.6:42dab78.
 - 84 Bash blocks and 26 Windows PowerShell 5.1 blocks parse; local doc links resolve.
 - Final independent GPT-6 Astra review finds no additional blocker. Duplicate plan
   ambiguity fixed; upgrade and G7 steps now lead to one plan, without4pilot reruns.
-- 13 core integration/release tests and Ruff pass. Full regression running at this
-  savepoint; final counts and published release identity must be recorded before handoff.
+- 13 core integration/release tests and Ruff pass. Full regression completed:
+  1167 unique cases in102 files;1166PASS,0failures/errors,1Windows symlink skip.
+  All8 native HTTP/Windows actor cases pass. All test input hashes unchanged.
+- Production tree unchanged since4b20b4c; subsequent commits clarify docs and
+  verification only. Release target:immutable collection-v4.0.0-candidate.7.
+- Local full JUnit, core RED/GREEN, immutable evidence replay, command syntax,
+  G7 simulation and final release/guide hashes retained under
+  D:/DataCodex/2026-10-05/c/outputs/pr21-fix-20261114/.
 
 No original dataset/state or old tag is rewritten.
 New G7 acceptance must be issued on Kiên's actual SOC runtime with fresh context;

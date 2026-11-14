@@ -45,8 +45,12 @@ Runtime, pilot commit/tree, raw preflight, backup restore và active source vẫ
 - Kiểm tra chéo độc lập bằng GPT-6 Astra không tìm thêm lỗi chặn. Góp ý tạo plan
   trùng đã được xử lý: upgrade → G7 bước 1–5 → quay lại tạo một plan, runbook dùng lại.
 
-Toàn bộ hồi quy đang chạy tại savepoint này; số lượng cuối được ghi vào ledger
-`tasks/pr21-remediation-20261114.md` trước bàn giao release.
+Toàn bộ hồi quy trên 102 file: **1.167 ca riêng biệt, 1.166 đạt, 0 failure/error,
+1 skip** vì Windows không cho tạo symlink trong test recovery. Cả 8 ca tích hợp
+actor HTTP/Windows trong nhóm chạy riêng đều đạt. Test inputs giữ nguyên trong
+suốt đợt chạy; source production không đổi từ commit khắc phục `4b20b4c`.
+Ruff và `git diff --check` đạt. JUnit tổng hợp và bằng chứng kiểm tra được lưu tại
+`D:/DataCodex/2026-10-05/c/outputs/pr21-fix-20261114/` trên máy Thịnh.
 
 ## Ranh giới vận hành
 
