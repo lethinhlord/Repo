@@ -1,9 +1,9 @@
 # Trạng thái phần mềm và bàn giao
-Ngày 13/11/2026. Điểm vào: [runbook 4 VM](scenario-collection-runbook.md).
-Candidate: [collection-v4.0.0-candidate.6](https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.6).
+Ngày 14/11/2026. Điểm vào: [runbook 4 VM](scenario-collection-runbook.md).
+Candidate: [collection-v4.0.0-candidate.7](https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.7).
 Lab đã có bốn pilot candidate.4: dùng [hướng dẫn G7 kế thừa](g7-existing-candidate4-pilots.md).
-Lab gặp lỗi jitter ngày13/11: làm [cập nhật và retest](sysmon-jitter-retest-20261113.md)
-trước khi resume trainable. Run lỗi giữ nguyên, chưa được chứng nhận COMPLETE.
+Lab đã thu source6: làm [nâng cấp candidate.7](collector-upgrade-candidate7.md)
+trước khi resume trainable. Giữ source6 riêng, không sửa frozen identity để ghép nguồn.
 
 - Thiết kế20trainable+8challenge đã triển khai:10pairedcohort, neutralusers,
   cùng HTTP/DNS endpoint/tool, schedule frozen theo seed và kiểm observed account.
@@ -29,8 +29,13 @@ trước khi resume trainable. Run lỗi giữ nguyên, chưa được chứng n
 - Native1/3/5 dùng cùng UTC đã kiểm; cache policy mới từ chối dữ liệu dẫn xuất
   features-v3 cũ. HTTP giữ cùng curl sống sau request bằng hai transfer local.
   Nhịp quá nhanh vẫn có thể missed schedule; không đổi gap, profile hoặc quality gate.
-- G7 candidate.5 đã có gói handoff kiểm đạt; G7 candidate.6 vẫn phải tạo thật
-  theo source mới sau retest jitter trên lab. Phần mềm candidate đã
+- Handoff001–003 có61 checksum khớp.001/002 là trainable source6 VALID;
+  003 còn STARTED, raw đủ9/3 nhưng log sshd NET-SENSOR tạo nhầm Windows group.
+  Asset fix của PR21 làm replay003 COMPLETE; chưa biến nó thành finalized data.
+- Grouping policy riêng từ chối cache source6 trước khi thay đổi DB; chỉ EVE
+  được quy thuộc target, OS log sensor giữ đúng asset. Native clock policy không đổi.
+- G7 candidate.6 đã được nhúng đúng trong handoff. Candidate.7 vẫn phải tạo thật
+  theo source mới. Phần mềm candidate đã
   sẵn sàng chạy quy trình; chỉ acceptance từ artifact thật trên lab mới mở trainable.
   Không có4VMremote ở máy Thịnh để xác nhận thay Kiên.
 - Chưa train hoặc mở lockedtest thật; không deploy/chứng nhận strong response.

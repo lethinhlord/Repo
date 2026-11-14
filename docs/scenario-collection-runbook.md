@@ -1,10 +1,10 @@
 # HƯỚNG DẪN THU DATASET SOC–AI–SOAR — 4 VM
-Bản vận hành 13/11/2026. Mọi code/resource lấy từ GitHub:
-https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.6
+Bản vận hành 14/11/2026. Mọi code/resource lấy từ GitHub:
+https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.7
 
-Lab gặp lỗi jitter Event3 sau process exit ngày13/11: làm
-[quy trình cập nhật và retest](sysmon-jitter-retest-20261113.md) trước khi thu tiếp.
-Không dùng receipt candidate.5 hoặc cache features-v3 cũ để phê duyệt run mới.
+Lab đã thu source6 hoặc gặp lỗi run003 ngày14/11: làm
+[quy trình nâng cấp candidate.7](collector-upgrade-candidate7.md) trước khi thu tiếp.
+Không dùng receipt candidate.6 hoặc cache theo grouping cũ để phê duyệt run mới.
 
 Lab đã có bốn pilot candidate.4 đạt: thực hiện đầy đủ hướng dẫn
 [G7 cho pilot đã có](g7-existing-candidate4-pilots.md), rồi tiếp tục mục11–14
@@ -543,8 +543,8 @@ cũ ngoài checkout. COLLECTION_BASELINE_COMMIT lấy từ tag này, không dùn
 ```bash
 set -euo pipefail
 test "$(id -u)" -ne 0
-PROJECT_ROOT="$HOME/datn-ai-soar-v4"
-COLLECTION_TAG=collection-v4.0.0-candidate.6
+PROJECT_ROOT="$HOME/datn-ai-soar-v4-candidate7"
+COLLECTION_TAG=collection-v4.0.0-candidate.7
 test ! -e "$PROJECT_ROOT"
 git clone --branch "$COLLECTION_TAG" --single-branch https://github.com/lethinhlord/Repo.git "$PROJECT_ROOT"
 cd "$PROJECT_ROOT"
@@ -581,7 +581,7 @@ Phiên mới, sau khi agent đã gửi event:
 
 ```bash
 set -euo pipefail
-cd "$HOME/datn-ai-soar-v4"
+cd "$HOME/datn-ai-soar-v4-candidate7"
 id
 test -r /var/ossec/logs/archives/archives.json
 stat -c '%U %G %a %n' /var/ossec/logs/archives/archives.json
@@ -619,7 +619,7 @@ Mở phiên mới để group Docker có hiệu lực rồi chạy:
 
 ```bash
 set -euo pipefail
-cd "$HOME/datn-ai-soar-v4"
+cd "$HOME/datn-ai-soar-v4-candidate7"
 docker version
 docker compose version
 test -s evidence/context-baseline.json
@@ -655,7 +655,7 @@ if ($client.State -ne 'Installed') {
 }
 New-Item -ItemType Directory -Force C:\DATN | Out-Null
 $SocUser = Read-Host 'SOC-AI SSH username'
-scp "${SocUser}@192.168.58.147:datn-ai-soar-v4/scripts/Test-DatnWindowsPreflight.ps1" C:\DATN\
+scp "${SocUser}@192.168.58.147:datn-ai-soar-v4-candidate7/scripts/Test-DatnWindowsPreflight.ps1" C:\DATN\
 if ($LASTEXITCODE -ne 0) { throw 'Cannot copy the Windows preflight helper' }
 Get-FileHash C:\DATN\Test-DatnWindowsPreflight.ps1 -Algorithm SHA256
 ```
@@ -772,7 +772,7 @@ ssh -V
 $SocUser = Read-Host "SOC-AI SSH username"
 $SocHome = ssh "${SocUser}@192.168.58.147" 'printf %s "$HOME"'
 if ($LASTEXITCODE -ne 0 -or -not $SocHome) { throw "Cannot resolve SOC-AI HOME" }
-$SocRepo = "$SocHome/datn-ai-soar-v4"
+$SocRepo = "$SocHome/datn-ai-soar-v4-candidate7"
 New-Item -ItemType Directory -Force C:\DATN | Out-Null
 scp "${SocUser}@192.168.58.147:${SocRepo}/config/sysmon-datn.xml" C:\DATN\
 if ($LASTEXITCODE -ne 0) { throw "Cannot copy pinned resource: config/sysmon-datn.xml" }
@@ -1095,7 +1095,7 @@ Chuyển rule từ SOC-AI:
 ```bash
 read -rp 'SOC-AI SSH username: ' SOC_USER
 SOC_HOME=$(ssh "${SOC_USER}@192.168.58.147" 'printf %s "$HOME"') || exit 1
-SOC_REPO="$SOC_HOME/datn-ai-soar-v4"
+SOC_REPO="$SOC_HOME/datn-ai-soar-v4-candidate7"
 scp "${SOC_USER}@192.168.58.147:${SOC_REPO}/config/suricata-datn.rules" /tmp/
 REMOTE_RULE_HASH=$(ssh "${SOC_USER}@192.168.58.147" "sha256sum '${SOC_REPO}/config/suricata-datn.rules'" | awk '{print $1}')
 test "$(sha256sum /tmp/suricata-datn.rules | awk '{print $1}')" = "$REMOTE_RULE_HASH"
@@ -1210,7 +1210,7 @@ bằng đúng 1. Cho Wazuh đọc được EVE hiện tại và file tạo sau r
 ```bash
 read -rp 'SOC-AI SSH username: ' SOC_USER
 SOC_HOME=$(ssh "${SOC_USER}@192.168.58.147" 'printf %s "$HOME"') || exit 1
-SOC_REPO="$SOC_HOME/datn-ai-soar-v4"
+SOC_REPO="$SOC_HOME/datn-ai-soar-v4-candidate7"
 scp "${SOC_USER}@192.168.58.147:${SOC_REPO}/config/wazuh-suricata-localfile.xml" /tmp/
 sudo cp -a /var/ossec/etc/ossec.conf \
   "/var/ossec/etc/ossec.conf.bak.$(date -u +%Y%m%dT%H%M%SZ)"
@@ -1413,8 +1413,8 @@ sudo apt install -y python3-impacket openssh-client
 mkdir -p "$HOME/datn-tools"
 read -rp 'SOC-AI SSH username: ' SOC_USER
 [[ "$SOC_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
-scp "${SOC_USER}@192.168.58.147:datn-ai-soar-v4/scripts/run_training_account_remote.py" "$HOME/datn-tools/"
-REMOTE_HASH=$(ssh "${SOC_USER}@192.168.58.147" 'sha256sum "$HOME/datn-ai-soar-v4/scripts/run_training_account_remote.py"' | awk '{print $1}')
+scp "${SOC_USER}@192.168.58.147:datn-ai-soar-v4-candidate7/scripts/run_training_account_remote.py" "$HOME/datn-tools/"
+REMOTE_HASH=$(ssh "${SOC_USER}@192.168.58.147" 'sha256sum "$HOME/datn-ai-soar-v4-candidate7/scripts/run_training_account_remote.py"' | awk '{print $1}')
 test "$(sha256sum "$HOME/datn-tools/run_training_account_remote.py" | awk '{print $1}')" = "$REMOTE_HASH"
 dpkg-query -W python3-impacket | tee "$HOME/datn-tools/impacket-version.txt"
 ```
@@ -1617,9 +1617,9 @@ AVAILABLE_KB=$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)
 FREE_KB=$(df -Pk /var/ossec | awk 'NR==2 {print $4}')
 test "$AVAILABLE_KB" -ge 2097152
 test "$FREE_KB" -ge 10485760
-cd "$HOME/datn-ai-soar-v4"
+cd "$HOME/datn-ai-soar-v4-candidate7"
 test -z "$(git status --porcelain)"
-COLLECTION_TAG=collection-v4.0.0-candidate.6
+COLLECTION_TAG=collection-v4.0.0-candidate.7
 .venv-ml/bin/python -m scripts.collection_release candidate --tag "$COLLECTION_TAG" > operator-logs/releases/candidate-current.json
 cmp operator-logs/releases/candidate.json operator-logs/releases/candidate-current.json
 mkdir -p evidence/scenario-runs
@@ -1766,7 +1766,7 @@ Trên SOC-AI, ghi byte cursor tại đúng ranh giới dòng:
 
 ```bash
 set -euo pipefail
-cd "$HOME/datn-ai-soar-v4"
+cd "$HOME/datn-ai-soar-v4-candidate7"
 test ! -e evidence/scenario-runs/.active-run.json
 CANARY_ID="pf$(date -u +%s)${RANDOM}"
 printf '%s\n' "$CANARY_ID" | tee /tmp/datn-preflight.id
@@ -1878,7 +1878,7 @@ $SocHome = (ssh "$SocUser@192.168.58.147" 'printf %s "$HOME"').Trim()
 if ($LASTEXITCODE -ne 0 -or $SocHome -notmatch '^(/home/[a-z_][a-z0-9_-]*|/root)$') {
   throw 'Cannot determine SOC home'
 }
-$SocEvidence = "$SocHome/datn-ai-soar-v4/operator-logs/preflight/$CanaryId"
+$SocEvidence = "$SocHome/datn-ai-soar-v4-candidate7/operator-logs/preflight/$CanaryId"
 ssh "$SocUser@192.168.58.147" "mkdir -p '$SocEvidence'"
 if ($LASTEXITCODE -ne 0) { throw 'Cannot prepare SOC evidence directory' }
 scp $clockCsv $clockXml "${SocUser}@192.168.58.147:${SocEvidence}/"
@@ -1910,7 +1910,7 @@ Trở lại SOC-AI; vòng lặp chỉ PASS khi **event mới sau cursor** có c�
 
 ```bash
 set -euo pipefail
-cd "$HOME/datn-ai-soar-v4"
+cd "$HOME/datn-ai-soar-v4-candidate7"
 ARCHIVE=/var/ossec/logs/archives/archives.json
 CURSOR=$(cat /tmp/datn-preflight.cursor)
 CANARY_ID=$(cat /tmp/datn-preflight.id)
@@ -1959,7 +1959,7 @@ và endpoint. Không lấy raw đã gán nhãn để tạo “quá khứ”. SOC
 
 ```bash
 set -euo pipefail
-cd "$HOME/datn-ai-soar-v4"
+cd "$HOME/datn-ai-soar-v4-candidate7"
 test ! -e evidence/scenario-runs/.active-run.json
 ENROLL_ID="ENROLL-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM"
 ENROLL_DIR="$PWD/operator-logs/enrollment/$ENROLL_ID"
@@ -2093,7 +2093,7 @@ ordinal1..4. Mỗi pilot phải VALID/PASS; failed giữ nguyên, ID không tái
 
 ```bash
 set -euo pipefail
-COLLECTION_TAG=collection-v4.0.0-candidate.6
+COLLECTION_TAG=collection-v4.0.0-candidate.7
 BACKUP_ID="PILOT-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM"
 BACKUP_DIR="$HOME/datn-backups/$BACKUP_ID"
 .venv-ml/bin/python -m scripts.collection_release backup \
@@ -2129,7 +2129,7 @@ theo outcome. Mỗi lần chọn ordinal kế tiếp:
 
 ```bash
 set -euo pipefail
-cd "$HOME/datn-ai-soar-v4"
+cd "$HOME/datn-ai-soar-v4-candidate7"
 read -rp 'Ordinal: ' ORDINAL
 [[ "$ORDINAL" =~ ^[1-9][0-9]*$ ]]
 RUN_ID=$(jq -er --argjson n "$ORDINAL" '.runs[]|select(.ordinal==$n)|.run_id' "$PLAN")
@@ -2275,7 +2275,7 @@ $SocUser=Read-Host 'SOC SSH username'
 if ($SocUser -notmatch '^[a-z_][a-z0-9_-]*$') { throw 'Invalid username' }
 $ParametersFile="C:\DATN\$RunId.json"
 if (Test-Path -LiteralPath $ParametersFile) { throw 'Destination exists' }
-scp "${SocUser}@192.168.58.147:datn-ai-soar-v4/evidence/operator-parameter-exports/$RunId.json" $ParametersFile
+scp "${SocUser}@192.168.58.147:datn-ai-soar-v4-candidate7/evidence/operator-parameter-exports/$RunId.json" $ParametersFile
 if ($LASTEXITCODE -ne 0) { throw 'Copy failed' }
 if ((Get-FileHash -LiteralPath $ParametersFile -Algorithm SHA256).Hash.ToLowerInvariant() -ne $ExpectedHash) { throw 'Hash mismatch' }
 & C:\DATN\run_frozen_windows.ps1 -ParametersFile $ParametersFile -ExpectedFileSha256 $ExpectedHash
@@ -2298,7 +2298,7 @@ read -rp 'SHA256 export JSON from SOC: ' EXPORT_SHA
 [[ "$EXPORT_SHA" =~ ^[0-9a-f]{64}$ ]]
 JSON_FILE="$HOME/datn-tools/$RUN_ID.json"
 test ! -e "$JSON_FILE"
-scp "${SOC_USER}@192.168.58.147:datn-ai-soar-v4/evidence/operator-parameter-exports/$RUN_ID.json" "$JSON_FILE"
+scp "${SOC_USER}@192.168.58.147:datn-ai-soar-v4-candidate7/evidence/operator-parameter-exports/$RUN_ID.json" "$JSON_FILE"
 test "$(sha256sum "$JSON_FILE" | awk '{print $1}')" = "$EXPORT_SHA"
 /usr/bin/python3 "$HOME/datn-tools/run_training_account_remote.py" --frozen-file "$JSON_FILE" "$EXPORT_SHA"
 ```
@@ -2478,7 +2478,7 @@ Không active run. Backup mới sau mỗi buổi, không ghi đè backup gắn a
 
 ```bash
 set -euo pipefail
-COLLECTION_TAG=collection-v4.0.0-candidate.6
+COLLECTION_TAG=collection-v4.0.0-candidate.7
 BACKUP_ID="DATASET-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM"
 BACKUP_DIR="$HOME/datn-backups/$BACKUP_ID"
 .venv-ml/bin/python -m scripts.collection_release backup --tag "$COLLECTION_TAG" \
@@ -2507,7 +2507,7 @@ if (Test-Path -LiteralPath $Destination) { throw 'Destination exists' }
 New-Item -ItemType Directory -Force (Split-Path $Destination) | Out-Null
 scp -r "${SocUser}@192.168.58.147:datn-backups/$BackupId" $Destination
 if ($LASTEXITCODE -ne 0) { throw 'Copy failed' }
-$CollectionTag='collection-v4.0.0-candidate.6'
+$CollectionTag='collection-v4.0.0-candidate.7'
 git --version
 if ($LASTEXITCODE -ne 0) { throw 'Install Git for Windows, reopen PowerShell, then retry verification' }
 $Tools="D:\DATN-TOOLS\$CollectionTag-$BackupId"

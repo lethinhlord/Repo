@@ -11,7 +11,12 @@ from pathlib import Path
 
 from api.app.contracts import FeatureStateResponse, WazuhAlert
 from ml.behavior_features import FEATURE_SCHEMA_VERSION
-from ml.feature_pipeline import aggregate_wazuh_alerts, alert_event_time, window_start
+from ml.feature_pipeline import (
+    FEATURE_GROUPING_POLICY_VERSION,
+    aggregate_wazuh_alerts,
+    alert_event_time,
+    window_start,
+)
 from ml.intake_window import receipt_timely
 from ml.telemetry import EVENT_TIME_POLICY_VERSION, process_guid, windows_fields
 
@@ -60,7 +65,7 @@ class FeatureStateStore:
         if self.path.exists():
             connection = sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True)
             try:
-                self._check_time_policy(connection)
+                self._check_state_policy(connection)
             finally:
                 connection.close()
         with self._connection() as connection:
@@ -149,9 +154,17 @@ class FeatureStateStore:
                 "INSERT OR IGNORE INTO feature_time_policy VALUES (1,?)",
                 (EVENT_TIME_POLICY_VERSION,),
             )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS feature_grouping_policy ("
+                "singleton INTEGER PRIMARY KEY CHECK(singleton=1), version TEXT NOT NULL)"
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO feature_grouping_policy VALUES (1,?)",
+                (FEATURE_GROUPING_POLICY_VERSION,),
+            )
 
     @staticmethod
-    def _check_time_policy(connection: sqlite3.Connection) -> None:
+    def _check_state_policy(connection: sqlite3.Connection) -> None:
         tables = {row[0] for row in connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table'",
         )}
@@ -159,11 +172,26 @@ class FeatureStateStore:
             "feature-state chronology policy is missing or incompatible; preserve this "
             "database and select a fresh database path for new collection or explicit raw replay"
         )
-        if "feature_time_policy" in tables:
+        clock_verified = "feature_time_policy" in tables
+        if clock_verified:
             versions = connection.execute("SELECT version FROM feature_time_policy").fetchall()
             if versions != [(EVENT_TIME_POLICY_VERSION,)]:
                 raise FeatureStateConflictError(error)
+        grouping_error = (
+            "feature-state grouping policy is missing or incompatible; preserve this "
+            "database and select a fresh database path for new collection or explicit raw replay"
+        )
+        grouping_verified = "feature_grouping_policy" in tables
+        if grouping_verified:
+            versions = connection.execute("SELECT version FROM feature_grouping_policy").fetchall()
+            if versions != [(FEATURE_GROUPING_POLICY_VERSION,)]:
+                raise FeatureStateConflictError(grouping_error)
+        if clock_verified and grouping_verified:
             return
+        # Source6 already recorded a native-clock policy. Its cached asset IDs
+        # still came from the old grouping code and cannot be reused by source7.
+        if clock_verified:
+            error = grouping_error
         # Prior schema generations never participate in current windows. Keep
         # their existing audit-only migration, provided no current derived state
         # or retained process identity accompanies them.

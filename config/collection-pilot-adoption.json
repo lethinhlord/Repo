@@ -7,27 +7,27 @@
     "origin": "https://github.com/lethinhlord/Repo.git",
     "tracked_files_sha256": "1c3b1a21cdef642f958d8fb2ac822d0fa0502b0cde878ea891422cecc1b1e78d"
   },
-  "collection_patch_sha256": "e5269335b9fccb920e60e5fb5fc65ab2c617084b27783df98400107fe5dc6c2c",
+  "collection_patch_sha256": "3a3d9db10fc6d0c544b492744f761fc1ed5a58c2e955b759b211827795af5fdb",
   "reviewed_collection_changes": {
     "README.md": {
       "before": "f4a887e8ae9b9e144bb3177a14e81b2c94bf2d522a81f59a801ef3240505c389",
-      "after": "9afbd56770587e2772f7ec062835d72afd998e93e42b229583d4567a59f901ea"
+      "after": "3b83bc0be9a7d72d6c96cc815485ac25d776e487512d446cc2ad0b1c450dd8e6"
     },
     "api/app/feature_state.py": {
       "before": "9604a2f1d7177e0bada33e41562ae9a5a301010a019ff0a3d15e3452476d96ee",
-      "after": "b7e78f9182dd860da7640922e214fce4b12d9f9a6683185ca276381a6d19cc8d"
+      "after": "5b459e74a500a49ba818745693fe732b0669a543b50e330356fc3c74ed6103a2"
     },
     "api/app/main.py": {
       "before": "be83fd1f0cd1c760b78b72abdaafe5253cda11b9d476d388760fc567c3f1d67e",
-      "after": "3ef1f1cd0b47c773feb231d0e825e28d9106cffeb9c237ea1ffdead84c6dca21"
+      "after": "915ce7c5b0a480e8458334d00c58065b1c3a617ac60fe2fb5b5d614f1d2491f9"
     },
     "compose.yaml": {
       "before": "ffd628d5f6e3439d06b06a8a9e57de8ce3503d11746228903776a3db65cf10f6",
-      "after": "434022e89b52dd5988a88bf9ecf3b5f4e4dd0956585a842888b0e19f12d01180"
+      "after": "57f36f8e6ed5d177d14a0927a5565f72940168e4fb6deb3ed8b1e7ffa2f017c0"
     },
     "config/collection-design.yaml": {
       "before": "e4f38cc1740ac8cb1bd304c8cf428aa31f0ca9aa7d4f2f7b2295c539912834dc",
-      "after": "0e10a33b66d12376f054a723a9ec051d8e43a1c0a67cbd8348dabb224d06bf53"
+      "after": "06d665a80db09a1888ddd33b968ac404c9d81eeaefe76110778cd848d1c9839c"
     },
     "ml/build_dataset.py": {
       "before": "258aa6cb9fb28f3fcf7e3b9aa0dfdd5a855e665306302887032a2bd06d76c9c8",
@@ -45,9 +45,13 @@
       "before": "f10943304eb3cc7527cfe7907734b6eeca73b7e78aeb9c59fc8ed1e02189c306",
       "after": "5a2d91cd0d45a6d24defe0e177920066a0b379407d94f30c8728af6af950d81c"
     },
+    "ml/feature_pipeline.py": {
+      "before": "b5b5a3593aa9be0546983d9185f651818c26fa135c69d84b022b64ea4c080176",
+      "after": "4719b30be447a05ba59a784117fd2fc408611a2b95bec1a6a45549c58f86f412"
+    },
     "ml/scenario_collection.py": {
       "before": "993549c31fbc46fe7e50bfb3ce92a6e46767072df2673be05d1361397cc14642",
-      "after": "e9bd3366dc4c749d33e301a8ebc396d125dc0b7f98403ef3d82b016f9008f01d"
+      "after": "f58de8e2f65915d4738e38b8a81827ff0e77a186e1f5d9c681caa6654032d8a2"
     },
     "ml/telemetry.py": {
       "before": "3f783bd7f84d3b4020345e9835da461a7341661c6c78fefb776f3a61684d4e1c",
@@ -74,10 +78,11 @@
       "after": "89cb463408b7d9cebd22e3fa915cd2bf5a98f3107e8f4522fabe5f568a7437fc"
     }
   },
-  "scope": "Reuse immutable candidate.4 pilot evidence for candidate.6 after raw replay verification. Reviewed G7/source binding plus verified native Sysmon 1/3/5 chronology, explicit feature-state clock policy and a post-request local HTTP process hold. Remote jitter retest remains required before resuming affected collection; no timestamp, identity, quota or quality guard is relaxed.",
+  "scope": "Reuse immutable candidate.4 pilot evidence for candidate.7 after raw replay verification. Reviewed cumulative source/G7 binding, native Sysmon lifecycle, post-request HTTP hold, sensor-native asset grouping and policy-bound feature caches. Source6 trainable data remains separate; actual source7 authorization requires unchanged SOC runtime, raw preflight, backup restore, four original pilots and fresh active context. No identity, quota or quality guard is relaxed.",
   "known_limitations": [
-    "HTTP cadence faster than the local curl hold can still miss its frozen schedule. No profile, feature or quality gate is removed or weakened.",
-    "The two-second minimum post-response curl lifetime covers the observed 1.586-1.591 second native Event3 delay, but an unbounded future Sysmon delay cannot be guaranteed. The full-window gate must continue to reject inconsistent chronology.",
-    "Existing G7 receipts and prepolicy feature-state caches are not rewritten or silently upgraded. Renew source-bound G7 and use a fresh policy-bound state DB for new windows."
+    "Fast HTTP cadence can still miss its frozen schedule; no profile or quality gate is removed.",
+    "The two-second minimum post-response curl lifetime covers the observed native reporting delay but cannot guarantee arbitrary future Sysmon latency. Inconsistent process chronology remains rejected.",
+    "Source6 feature caches and acceptance receipts are preserved rather than silently relabeled. Source7 uses fresh grouping-bound feature state and actual G7 renewal.",
+    "Trainable source6 and source7 data are not automatically mixed. Keep accepted old runs intact and use a separate source7 plan under the existing single-candidate audit/build contract."
   ]
 }

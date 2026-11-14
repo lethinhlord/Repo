@@ -1,5 +1,9 @@
 # Sysmon native chronology và chạy lại jitter HTTP — 13/11/2026
 
+Hồ sơ lịch sử cho candidate.6. Thu mới hoặc nâng cấp sau PR21 dùng
+[hướng dẫn candidate.7](collector-upgrade-candidate7.md).
+Không chạy lại quy trình candidate.6 để thu dataset candidate.7.
+
 Nguồn vận hành mới: `collection-v4.0.0-candidate.6` trên GitHub. Không đổi tag
 candidate.5, bốn pilot đã nghiệm thu hoặc dữ liệu đã đóng băng.
 
