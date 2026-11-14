@@ -4,8 +4,10 @@ Bản này dành cho lab của Kiên đã thu đủ bốn pilot dưới đây. M
 kế thừa trong `collection-v4.0.0-candidate.7`, gồm sửa G7/source, native lifecycle,
 asset grouping và HTTP hold đã review. Không chạy lại bốn pilot chỉ để đổi phiên bản.
 Không sửa raw, state, manifest, start contract, nhãn hoặc checksum của pilot.
-Trước bước1, hoàn thành [nâng cấp candidate.7](collector-upgrade-candidate7.md)
-để tạo checkout riêng và sao chép đúng bốn pilot. Giữ nguyên receipt candidate.6
+Trước bước1, hoàn thành bước1–3 của [nâng cấp candidate.7](collector-upgrade-candidate7.md)
+để tạo checkout riêng và sao chép đúng bốn pilot. Bước4 của hướng dẫn nâng cấp
+quay lại G7 bước1–5 tại đây; chưa tạo plan cho đến khi authorize thành công.
+Giữ nguyên receipt candidate.6
 cùng các trainable source6; tạo acceptance riêng cho candidate.7.
 
 G7 v2 ghi riêng candidate tạo pilot và candidate dùng cho các run mới. Cơ chế

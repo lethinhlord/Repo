@@ -36,7 +36,8 @@ Runtime, pilot commit/tree, raw preflight, backup restore và active source vẫ
 - 13 test cache/lifecycle/real-source-binding/adoption đạt sau commit khắc phục.
   Negative controls của mô hình độc lập chứng minh grouping cũ làm test lifecycle
   thất bại; receipt helper cũ làm case session anchor thất bại.
-- 84 khối Bash của 3 guide đúng cú pháp; link tài liệu local tồn tại. Đây là kiểm
+- 84 khối Bash của 3 guide và 26 khối PowerShell được parse đúng cú pháp; PowerShell
+  dùng parser Windows PowerShell 5.1. Link tài liệu local tồn tại. Đây là kiểm
   cú pháp, không giả định các lệnh đã được thực thi trên VM Kiên.
 - Replay G7 dùng 4 pilot/preflight/backup thật trong checkout cách ly: runtime laptop
   khác bị REJECTED; mô phỏng chỉ 3 field inventory bằng runtime SOC gốc thì PASS.

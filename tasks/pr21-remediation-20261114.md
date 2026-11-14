@@ -28,7 +28,16 @@ Original PR21 head:d6e2c50; base/current candidate.6:42dab78.
 
 ## Verification and release work
 
-Full regression, real evidence replay and independent upgrade-guide review are
-pending at this savepoint. No original dataset/state or old tag is rewritten.
+- Real evidence001/002 remains VALID/PASS;003 component replay is COMPLETE9/3.
+- All7 historical pilots validate with current code. Original62 handoff files unchanged.
+- Actual4pilot/preflight/backup replay rejects different laptop runtime and passes
+  an explicitly labeled simulation of the unchanged SOC runtime. No lab receipt issued.
+- 84 Bash blocks and 26 Windows PowerShell 5.1 blocks parse; local doc links resolve.
+- Final independent GPT-6 Astra review finds no additional blocker. Duplicate plan
+  ambiguity fixed; upgrade and G7 steps now lead to one plan, without4pilot reruns.
+- 13 core integration/release tests and Ruff pass. Full regression running at this
+  savepoint; final counts and published release identity must be recorded before handoff.
+
+No original dataset/state or old tag is rewritten.
 New G7 acceptance must be issued on Kiên's actual SOC runtime with fresh context;
 offline tests and runtime-field simulations are never production authorization.

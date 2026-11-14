@@ -4,6 +4,8 @@ Candidate: [collection-v4.0.0-candidate.7](https://github.com/lethinhlord/Repo/t
 Lab đã có bốn pilot candidate.4: dùng [hướng dẫn G7 kế thừa](g7-existing-candidate4-pilots.md).
 Lab đã thu source6: làm [nâng cấp candidate.7](collector-upgrade-candidate7.md)
 trước khi resume trainable. Giữ source6 riêng, không sửa frozen identity để ghép nguồn.
+Đối chiếu nguyên nhân, bằng chứng và giới hạn ở
+[biên bản khắc phục PR21](pr21-verification-20261114.md).
 
 - Thiết kế20trainable+8challenge đã triển khai:10pairedcohort, neutralusers,
   cùng HTTP/DNS endpoint/tool, schedule frozen theo seed và kiểm observed account.
