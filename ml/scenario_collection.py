@@ -1620,7 +1620,31 @@ def _verify_full_capture_parity(
     compare: bool = True,
 ) -> IncidentRequest:
     """Replay the full asset bucket without label, scenario or nonce filtering."""
-    start, end = _aggregation_window(incident.start_time)
+    # Anchor parity to the actual action bucket, not session START.
+    # The receipt is sealed evidence created by the collector.
+    receipt_path = evidence_dir / "execution_receipt.json"
+    if receipt_path.is_file():
+        try:
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise CollectionError("invalid parity execution receipt") from exc
+
+        action_started = _parse_time(receipt.get("action_started_at"))
+        receipt_window_start = _parse_time(receipt.get("aggregation_window_start"))
+        receipt_window_end = _parse_time(receipt.get("aggregation_window_end"))
+
+        if action_started is None:
+            raise CollectionError("parity receipt has no valid action start")
+
+        start, end = _aggregation_window(action_started)
+
+        if receipt_window_start != start or receipt_window_end != end:
+            raise CollectionError(
+                "parity action window disagrees with sealed execution receipt"
+            )
+    else:
+        # Compatibility with historical evidence without execution receipts.
+        start, end = _aggregation_window(incident.start_time)
     alerts = []
     for ordinal, row in enumerate(captured):
         at = _event_time(row)

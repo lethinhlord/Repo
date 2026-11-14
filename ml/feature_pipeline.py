@@ -202,7 +202,13 @@ def _family(alert: WazuhAlert) -> str:
 
 def _asset_id(alert: WazuhAlert, config: dict[str, Any] | None = None) -> str:
     windows_agent, suricata_agent = _collection_sources(config)
-    return windows_agent if alert.agent.name == suricata_agent else alert.agent.name.strip()
+    # Suricata EVE describes traffic monitored for the Windows target.
+    # Native sensor OS events (e.g. sshd/journald) belong to NET-SENSOR.
+    if alert.agent.name == suricata_agent:
+        if _suricata_payload(alert) is not None:
+            return windows_agent
+        return alert.agent.name.strip()
+    return alert.agent.name.strip()
 
 
 def _account_name(alert: WazuhAlert) -> str:
