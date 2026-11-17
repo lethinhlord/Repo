@@ -1693,6 +1693,21 @@ def _verify_full_capture_parity(
         if item.incident.asset_id.casefold() == incident.asset_id.casefold()
         and item.incident.family_hint == incident.family_hint
     ]
+    if incident.family_hint == "account" and len(candidates) > 1:
+        keys = (
+            "failed_login_count",
+            "successful_login_count",
+            "success_after_fail",
+        )
+        candidates = [
+            item for item in candidates
+            if item.observation_quality == "COMPLETE"
+            and not item.review_reasons
+            and all(
+                item.features.get(key) == incident.features.get(key)
+                for key in keys
+            )
+        ]
     if len(candidates) != 1:
         raise CollectionError("full-capture parity requires exactly one attributable online group")
     online = candidates[0]

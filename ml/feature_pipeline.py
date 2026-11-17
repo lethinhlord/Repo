@@ -677,7 +677,18 @@ def aggregate_wazuh_alerts(
         if group_key[1] == "account" and group_key[2] != "unknown-source":
             # Source-less authentication could belong to any source in this
             # asset bucket. Carry its uncertainty, never assign its counts.
-            group.extend(unknown_sources.get((group_key[0], bucket), []))
+            known_users = {
+                _account_name(item)
+                for item in group
+                if _windows_fields(item)[0] in {"4624", "4625"}
+                and _account_name(item) != "unknown-user"
+            }
+            group.extend(
+                item
+                for item in unknown_sources.get((group_key[0], bucket), [])
+                if _account_name(item) in known_users
+                or _account_name(item) == "unknown-user"
+            )
     return FeatureBatchResponse(
         input_alert_count=len(alerts),
         unique_alert_count=len(unique_by_id),
