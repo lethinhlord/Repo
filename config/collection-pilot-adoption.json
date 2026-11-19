@@ -8,9 +8,14 @@
     "tracked_files_sha256": "9990834ce38627d98f7293b590be3f626810df3ca810dd210a0ccb922c52607a"
   },
   "reviewed_scope": [
+    "ml/collection_adoption.py",
     "ml/feature_pipeline.py"
   ],
   "reviewed_collection_changes": {
+    "ml/collection_adoption.py": {
+      "before": "7a5920c89ac6aa8517832a728c21e75547c8e52200a4497601fa50d6de7eaa59",
+      "after": "67bc2fa8d19ff91896cf246cf72c9fce077e2594b4b8b28513fb785700b27149"
+    },
     "ml/feature_pipeline.py": {
       "before": "33bcbb1f2e1edcebf7924b4b76a4a741f7a371cc4a8fb8b90216bfb19c8be5b0",
       "after": "10ad93b32ace1d52fb9d193d44438ec4fa5cf8b6495da501916c474cd05171ee"
@@ -21,5 +26,5 @@
     "Clock inversion allowance is limited to Event3 <=100ms with full identity; complete online/offline end-to-end parity remains to be demonstrated.",
     "New acceptance must not replace or mutate legacy acceptance; migration of active source config needs separate safe authorization."
   ],
-  "collection_patch_sha256": "a997887050ebb17f1f196699ded1788920a644b2862ca9934699f28166e9102d"
+  "collection_patch_sha256": "7a9f892952d78cf26706e1e56d7eb63d6f9ce0bf394844296336de22452290ba"
 }
