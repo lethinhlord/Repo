@@ -15,7 +15,7 @@
   "reviewed_collection_changes": {
     "config/collection-design.yaml": {
       "before": "8d259fce297e4ce776149fdc0f7e4a7ae711081921fa8a96840d6c9b10dc2d2b",
-      "after": "14dc5c8bb9b195288e07e3926d436b6a8c4e6c431aeb49426061d0a83eb76a88"
+      "after": "983f59555cac7895b583ac04d5d98798b55c56789143254f55914869bca2188a"
     },
     "ml/collection_adoption.py": {
       "before": "7a5920c89ac6aa8517832a728c21e75547c8e52200a4497601fa50d6de7eaa59",
@@ -23,7 +23,7 @@
     },
     "ml/feature_pipeline.py": {
       "before": "33bcbb1f2e1edcebf7924b4b76a4a741f7a371cc4a8fb8b90216bfb19c8be5b0",
-      "after": "10ad93b32ace1d52fb9d193d44438ec4fa5cf8b6495da501916c474cd05171ee"
+      "after": "e9366eb245ced553e0d9b4d58701a21cb1d3b0b03e518088de33b099d5bad26d"
     }
   },
   "scope": "Proposed supplemental review for bounded 100ms Sysmon Event3 inversion only. Prior pilot raw evidence may be reverified without replay ONLY after acceptance passes unchanged pilot checks, source, runtime, backup restore and preflight. Historical G7 v1 acceptance stays immutable.",
@@ -31,5 +31,5 @@
     "Clock inversion allowance is limited to Event3 <=100ms with full identity; complete online/offline end-to-end parity remains to be demonstrated.",
     "New acceptance must not replace or mutate legacy acceptance; migration of active source config needs separate safe authorization."
   ],
-  "collection_patch_sha256": "da02ed0a096b99019b5fb138a34344624e7dc06206e0f579988dc1e57a0b0bdf"
+  "collection_patch_sha256": "becb3dc2d735ff3a53eb666d605b9bfbecb6688ec12712eb74e3d921331a0e19"
 }
