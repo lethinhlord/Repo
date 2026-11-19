@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path, PurePath
 from typing import Any
@@ -57,10 +57,15 @@ from ml.telemetry import (
 ROOT = Path(__file__).resolve().parents[1]
 FEATURE_GROUPING_POLICY_VERSION = "sensor-asset-origin-v1"
 _UNKNOWN_PROCESS_IMAGES = {"<unknown process>", "&lt;unknown process&gt;"}
+# Event 3 may precede Event 1 slightly in Sysmon native UTC timestamps.
+# This remains a scoped exception, never a blanket reordering of process lifetime.
+_SYSMON_EVENT3_CREATION_TOLERANCE = timedelta(milliseconds=100)
 
 
 def _process_creation_index(
-    events: list[dict[str, Any]], windows_agent: str, *, as_of: datetime | None = None,
+    events: list[dict[str, Any]], windows_agent: str, *,
+    as_of: datetime | None = None,
+    creation_tolerance: timedelta = timedelta(0),
 ) -> dict[str, dict[str, Any]]:
     """Index known Event 1 identities, excluding conflicting reuse of a GUID."""
     creations: dict[str, dict[str, Any]] = {}
@@ -70,9 +75,16 @@ def _process_creation_index(
         if str((event.get("agent") or {}).get("name")) != windows_agent:
             continue
         timestamp = event_time(event)
-        if timestamp is None or (as_of is not None and timestamp > as_of):
+        if timestamp is None:
             continue
         event_id, _, fields = windows_fields(event)
+        if as_of is not None and timestamp > as_of:
+            if (
+                event_id != "1"
+                or creation_tolerance < timedelta(0)
+                or timestamp - as_of > creation_tolerance
+            ):
+                continue
         guid = process_guid(fields)
         if as_of is not None and guid and sysmon_clock_issues(event):
             conflicting.add(guid)
@@ -103,8 +115,17 @@ def _process_observation_matches(
     """Allow Event 3's literal sentinel only after independent process proof."""
     process = windows_fields(creation)[2]
     created_at = event_time(creation)
-    if created_at is None or timestamp < created_at:
+    if created_at is None:
         return False
+    if timestamp < created_at:
+        if event_id != "3" or created_at - timestamp > _SYSMON_EVENT3_CREATION_TOLERANCE:
+            return False
+        # Early Event 3 needs independently matching, complete process identity.
+        if not process_guid(fields) or process_guid(fields) != process_guid(process):
+            return False
+        for key in ("processId", "user", "image"):
+            if not str(fields.get(key, "")).strip() or not str(process.get(key, "")).strip():
+                return False
     image = str(fields.get("image", "")).strip().casefold()
     if basename(image) != basename(process.get("image")) and not (
         event_id == "3" and image in _UNKNOWN_PROCESS_IMAGES
@@ -335,7 +356,13 @@ def _derive_raw_group(
             guid = process_guid(eventdata)
             timestamp = alert_event_time(alert)
             processes = _process_creation_index(
-                identities_by_guid.get(guid, []), windows_agent, as_of=timestamp,
+                identities_by_guid.get(guid, []),
+                windows_agent,
+                as_of=timestamp,
+                creation_tolerance=(
+                    _SYSMON_EVENT3_CREATION_TOLERANCE
+                    if event_id == "3" else timedelta(0)
+                ),
             )
             if guid not in processes:
                 continue
