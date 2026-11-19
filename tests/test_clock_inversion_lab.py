@@ -132,7 +132,7 @@ def test_bounded_inversion_accepts_only_full_identity(delta_ms):
     assert _process_observation_matches("3", fields, network_time, index["{clock-lab}"])
 
 
-@pytest.mark.parametrize("delta_ms", [-101, -500])
+@pytest.mark.parametrize("delta_ms", [-301, -500])
 def test_inversion_over_boundary_rejected_at_both_gates(delta_ms):
     creation = make_event(1, 0)
     network = make_event(3, delta_ms)

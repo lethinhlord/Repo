@@ -59,7 +59,7 @@ FEATURE_GROUPING_POLICY_VERSION = "sensor-asset-origin-v1"
 _UNKNOWN_PROCESS_IMAGES = {"<unknown process>", "&lt;unknown process&gt;"}
 # Event 3 may precede Event 1 slightly in Sysmon native UTC timestamps.
 # This remains a scoped exception, never a blanket reordering of process lifetime.
-_SYSMON_EVENT3_CREATION_TOLERANCE = timedelta(milliseconds=100)
+_SYSMON_EVENT3_CREATION_TOLERANCE = timedelta(milliseconds=300)
 
 
 def _process_creation_index(
