@@ -63,6 +63,7 @@ def test_notebook_gate_rejects_unapproved_or_mismatched_source(tmp_path, monkeyp
     (stage / names[2]).write_text(
         json.dumps(
             {
+                "manifest_version": "dataset-manifest-v2",
                 "locked_test_status": "UNOPENED",
                 "provenance": {"builder_git_commit": "a" * 40},
             }
@@ -99,6 +100,8 @@ def test_notebook_checks_real_detached_checkout_before_install(tmp_path, monkeyp
     source.mkdir()
     (source / "ml").mkdir()
     (source / "config").mkdir()
+    (source / "ml/__init__.py").write_text("", encoding="utf-8")
+    (source / "ml/training_sources.py").write_bytes((ROOT / "ml/training_sources.py").read_bytes())
     (source / ".gitattributes").write_bytes((ROOT / ".gitattributes").read_bytes())
     config = b"synthetic-config: true\n"
     (source / "ml/training_config.yaml").write_bytes(config)
@@ -128,6 +131,7 @@ def test_notebook_checks_real_detached_checkout_before_install(tmp_path, monkeyp
     (staging / names[0]).write_text("SYNTHETIC-NOT-LAB\n")
     (staging / names[1]).write_text("SYNTHETIC-NOT-LAB\n")
     manifest = {
+        "manifest_version": "dataset-manifest-v2",
         "locked_test_status": "UNOPENED",
         "group_key": "scenario_id" if fault == "cohort" else "cohort_id",
         "collection_audit": {
@@ -155,6 +159,7 @@ def test_notebook_checks_real_detached_checkout_before_install(tmp_path, monkeyp
     colab.drive = types.SimpleNamespace(mount=lambda _: None)
     monkeypatch.setitem(sys.modules, "google", google)
     monkeypatch.setitem(sys.modules, "google.colab", colab)
+    monkeypatch.setattr(sys, "path", list(sys.path))
     monkeypatch.chdir(tmp_path)
     namespace = {
         "DRIVE_DATA_DIR": staging,

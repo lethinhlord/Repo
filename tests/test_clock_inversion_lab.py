@@ -3,13 +3,15 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from fastapi.testclient import TestClient
 
+from api.app.main import app
 from ml.feature_pipeline import (
+    _SYSMON_EVENT3_CREATION_TOLERANCE,
     _process_creation_index,
     _process_observation_matches,
 )
 from ml.telemetry import event_time, windows_fields
-
 
 BASE = datetime(2026, 11, 19, 5, 15, 7, tzinfo=UTC)
 
@@ -109,7 +111,7 @@ def test_small_inversion_should_support_verified_process(delta_ms):
         [creation, exit_event],
         "WIN11-TARGET",
         as_of=network_time,
-        creation_tolerance=timedelta(milliseconds=100),
+        creation_tolerance=_SYSMON_EVENT3_CREATION_TOLERANCE,
     )
 
     assert "{clock-lab}" in indexed
@@ -118,7 +120,7 @@ def test_small_inversion_should_support_verified_process(delta_ms):
     )
 
 
-@pytest.mark.parametrize("delta_ms", [-1, -15, -57, -100])
+@pytest.mark.parametrize("delta_ms", [-1, -15, -57, -100, -250, -299, -300])
 def test_bounded_inversion_accepts_only_full_identity(delta_ms):
     creation = make_event(1, 0)
     network = make_event(3, delta_ms)
@@ -126,7 +128,7 @@ def test_bounded_inversion_accepts_only_full_identity(delta_ms):
     _, _, fields = windows_fields(network)
     index = _process_creation_index(
         [creation], "WIN11-TARGET", as_of=network_time,
-        creation_tolerance=timedelta(milliseconds=100),
+        creation_tolerance=_SYSMON_EVENT3_CREATION_TOLERANCE,
     )
     assert "{clock-lab}" in index
     assert _process_observation_matches("3", fields, network_time, index["{clock-lab}"])
@@ -140,7 +142,7 @@ def test_inversion_over_boundary_rejected_at_both_gates(delta_ms):
     _, _, fields = windows_fields(network)
     index = _process_creation_index(
         [creation], "WIN11-TARGET", as_of=time,
-        creation_tolerance=timedelta(milliseconds=100),
+        creation_tolerance=_SYSMON_EVENT3_CREATION_TOLERANCE,
     )
     assert index == {}
     assert not _process_observation_matches("3", fields, time, creation)
@@ -179,7 +181,7 @@ def test_termination_event_not_lost_when_tolerating_future_creation():
     exit_event = make_event(5, -100)
     indexed = _process_creation_index(
         [creation, exit_event], "WIN11-TARGET", as_of=event_time(network),
-        creation_tolerance=timedelta(milliseconds=100),
+        creation_tolerance=_SYSMON_EVENT3_CREATION_TOLERANCE,
     )
     assert indexed == {}
 
@@ -190,3 +192,37 @@ def test_default_lookup_remains_strict():
     assert _process_creation_index(
         [creation], "WIN11-TARGET", as_of=event_time(network),
     ) == {}
+
+
+@pytest.mark.parametrize("delta_ms,outbound", [(-250, 1), (-299, 1), (-300, 1), (-301, 0)])
+def test_stateful_endpoint_uses_300ms_bound_before_and_after_close(
+    tmp_path, monkeypatch, delta_ms, outbound,
+):
+    monkeypatch.setenv("FEATURE_STATE_DB", str(tmp_path / "state.sqlite3"))
+    bucket = BASE.replace(second=0).timestamp()
+    monkeypatch.setattr("api.app.feature_state.time.time", lambda: bucket + 30)
+    client = TestClient(app)
+    network_id = ""
+    for event_id, native_ms in [(1, 0), (3, delta_ms), (5, 4000)]:
+        event = make_event(event_id, native_ms)
+        event["id"] = f"boundary-{event_id}"
+        event["timestamp"] = event["data"]["win"]["system"]["systemTime"]
+        event["rule"] = {"id": "clock-boundary", "level": 0}
+        if event_id == 3:
+            network_id = event["id"]
+            event["data"]["win"]["eventdata"].update({
+                "initiated": "true", "sourceIp": "10.20.0.10", "sourcePort": "50001",
+                "destinationIp": "10.40.0.10", "destinationPort": "8081", "protocol": "tcp",
+            })
+        response = client.post("/features/wazuh/stateful", json=event)
+        assert response.status_code == 200, response.text
+        if event_id == 3:
+            assert response.json()["feature"]["incident"]["features"][
+                "outbound_connection_count"
+            ] == outbound
+    monkeypatch.setattr("api.app.feature_state.time.time", lambda: bucket + 361)
+    closed = client.post("/features/wazuh/finalize-window", json={"alert_id": network_id})
+    assert closed.status_code == 200, closed.text
+    assert closed.json()["feature"]["incident"]["features"][
+        "outbound_connection_count"
+    ] == outbound

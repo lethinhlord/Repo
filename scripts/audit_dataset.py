@@ -35,6 +35,8 @@ def main() -> int:
     )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--require-target", action="store_true")
+    parser.add_argument("--compatibility-policy", type=Path,
+                        help="Explicit Git-reviewed training origins; no arbitrary source mixing")
     args = parser.parse_args()
 
     report = audit_dataset(
@@ -48,6 +50,7 @@ def main() -> int:
         source_config_path=args.source_config,
         taxonomy_path=args.taxonomy,
         mode=args.mode,
+        compatibility_policy_path=args.compatibility_policy,
     )
     print(format_audit_report(report), end="")
     if args.output:

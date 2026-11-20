@@ -83,12 +83,18 @@ def verify_pilot_adoption(root: Path, pilot: dict, current: dict) -> dict:
             scope = policy.get("reviewed_scope")
             if (
                 not isinstance(reviewed, dict)
-                or scope not in (["ml/feature_pipeline.py"], ["config/collection-design.yaml", "ml/collection_adoption.py", "ml/feature_pipeline.py"])
+                or scope not in (
+                    ["ml/feature_pipeline.py"],
+                    ["config/collection-design.yaml", "ml/collection_adoption.py",
+                     "ml/feature_pipeline.py"],
+                )
                 or set(reviewed) != set(scope)
                 or changes != reviewed
                 or patch_hash != policy.get("collection_patch_sha256")
             ):
-                raise ReleaseError("unreviewed production change in bounded Sysmon clock transition")
+                raise ReleaseError(
+                    "unreviewed production change in bounded Sysmon clock transition",
+                )
         elif patch_hash != policy.get("collection_patch_sha256"):
             raise ReleaseError("collection code or contract changed outside the reviewed G7 patch")
         return {

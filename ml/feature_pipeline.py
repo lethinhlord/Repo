@@ -55,7 +55,7 @@ from ml.telemetry import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-FEATURE_GROUPING_POLICY_VERSION = "sensor-asset-origin-v1"
+FEATURE_GROUPING_POLICY_VERSION = "sensor-origin-clock300-v2"
 _UNKNOWN_PROCESS_IMAGES = {"<unknown process>", "&lt;unknown process&gt;"}
 # Event 3 may precede Event 1 slightly in Sysmon native UTC timestamps.
 # This remains a scoped exception, never a blanket reordering of process lifetime.
@@ -78,13 +78,12 @@ def _process_creation_index(
         if timestamp is None:
             continue
         event_id, _, fields = windows_fields(event)
-        if as_of is not None and timestamp > as_of:
-            if (
-                event_id != "1"
-                or creation_tolerance < timedelta(0)
-                or timestamp - as_of > creation_tolerance
-            ):
-                continue
+        if as_of is not None and timestamp > as_of and (
+            event_id != "1"
+            or creation_tolerance < timedelta(0)
+            or timestamp - as_of > creation_tolerance
+        ):
+            continue
         guid = process_guid(fields)
         if as_of is not None and guid and sysmon_clock_issues(event):
             conflicting.add(guid)

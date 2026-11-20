@@ -10,8 +10,12 @@ Week 3 adds a leakage-safe, per-family training pipeline that benchmarks Logisti
 Regression, Random Forest and XGBoost, selects thresholds on validation data, and
 packages trained inference artifacts without opening the locked test.
 
-Start ML work with `docs/week3-model-training-runbook.md` and
-`docs/week3-data-contract.md`. Production monitoring, feedback, retraining and
+For the reviewed existing 40-run handoff, start with the Vietnamese guide
+[training from the existing 40 runs](docs/training-existing-40-runs.md).
+It preserves all inputs and describes the explicit, reviewed two-origin mode;
+no recollection is required for offline processing. General ML procedures remain in
+[the training runbook](docs/week3-model-training-runbook.md) and
+[the data contract](docs/week3-data-contract.md). Production monitoring, feedback, retraining and
 rollback are defined in `docs/model-operations-runbook.md`. The Colab entry point is
 `notebooks/week3_train_colab.ipynb`; it intentionally accepts only TRAIN,
 VALIDATION, the dataset manifest and its upload checksum. The frozen Week 1 request/response rules are
@@ -22,31 +26,37 @@ Real-lab collection uses the four-VM procedure in
 [the collection runbook](docs/scenario-collection-runbook.md). Follow its setup,
 measured clock preflight, context enrollment and pilot gates in order. Run drafts
 require `--clock-preflight` from that measured preflight; an abbreviated command
-cannot replace it. The current candidate is
-[collection-v4.0.0-candidate.7](https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.7).
-It implements the paired cohort design, neutral actor runners and evidence-bound
-per-lab acceptance. Pilot → preflight replay → backup restore → acceptance must
-succeed on the actual four VMs before trainable collection opens. Repository tests
-do not certify the remote lab or a trained model.
+cannot replace it. The candidate prepared for the reviewed training pipeline is
+`collection-v4.0.0-candidate.8`; use
+[its release source](https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.8)
+only after the tag is published and its exact SHA is owner-approved. This entry
+does not assert publication or a new G7 acceptance. It retains the paired cohort
+design, neutral actor runners and evidence-bound per-lab acceptance. Any future
+collection on the new candidate requires actual four-VM G7 approval before runs
+open. Offline processing of the existing frozen 40-run handoff does not require
+new enrollment, pilots or G7. Repository tests do not certify the remote lab or a
+trained model.
 
 See [current status](docs/current-status.md) and the
-[collection design and limits](docs/collection-training-design.md). The four
-candidate.4 pilots in the November 11 handoff replay VALID/PASS. Follow
-[G7 with existing pilots](docs/g7-existing-candidate4-pilots.md) to reuse their
-immutable evidence through the reviewed candidate.7 adoption policy. G7 v2 binds
-the exact active source for draft, START, audit and builder. Renew expired
-enrollment; do not rewrite or recollect pilots merely to change the candidate.
-The November 14 handoff confirms that native NET-SENSOR OS logs must keep their
-sensor asset; only recognized Suricata EVE maps to the monitored Windows target.
-Follow [the candidate.7 upgrade](docs/collector-upgrade-candidate7.md) before
-resuming collection. Clock and grouping policies both protect persisted feature
-state; previous caches remain intact. Native lifecycle timing and the HTTP process
-hold from candidate.6 remain unchanged. Fast cadence limitations remain documented.
-Accepted source6 runs are retained separately: the training audit still requires
-one source/runtime identity and does not silently relabel older evidence.
+[collection design and limits](docs/collection-training-design.md). Historical
+operating records include [G7 with candidate.4 pilots](docs/g7-existing-candidate4-pilots.md)
+and [the candidate.7 upgrade](docs/collector-upgrade-candidate7.md). Their commands
+and approvals describe those releases; they are not current candidate.8 G7
+approval or instructions to recollect the existing 40 runs.
 
-Use `main` as the maintained entry point and the exact approved source SHA for
-collection, dataset building and training. The Colab notebook accepts
+The default audit/build path remains strict for a single collection source.
+The explicit `--compatibility-policy config/training-source-compatibility.json`
+path authorizes only the reviewed 23-run and 17-run origins and exact immutable
+inputs, records and split commitments. It produces `dataset-manifest-v3` and retains
+the original collection identities separately from the processing commit. It does
+not authorize arbitrary source mixing or metadata relabeling. Legacy single-source
+and smoke datasets retain the v2 path. Clock, grouping and lifecycle guards remain
+active; fast-cadence limits remain documented.
+
+Use the exact approved source SHA for each activity. For the existing 40 runs,
+use the candidate.8 processing/training SHA and unchanged source-active file as
+described in the dedicated guide; keep the two original collection SHAs intact.
+The Colab notebook accepts
 `train.jsonl`, `validation.jsonl`, `dataset_manifest.json` and `colab-upload.sha256`,
 and checks the approved SHA against the manifest before installing or running code.
 Historical validation records are under [docs/history](docs/history/README.md);

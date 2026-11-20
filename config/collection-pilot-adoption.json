@@ -1,35 +1,71 @@
 {
-  "version": "reviewed-pilot-adoption-v2",
+  "collection_patch_sha256": "c9f86e20a7a08b4c611423aecb210f870dd75ce2836c201a34790163ee60de77",
   "from_candidate": {
     "commit": "db166d814857ef061982839a74a17af6e500625f",
+    "origin": "https://github.com/lethinhlord/Repo.git",
     "tag": "collection-v4.0.0-http-async-dev.2",
     "tag_object": "57ca0a95cdeb7cb29bda6bae084ae9de7ff7596a",
-    "origin": "https://github.com/lethinhlord/Repo.git",
     "tracked_files_sha256": "9990834ce38627d98f7293b590be3f626810df3ca810dd210a0ccb922c52607a"
   },
-  "reviewed_scope": [
-    "config/collection-design.yaml",
-    "ml/collection_adoption.py",
-    "ml/feature_pipeline.py"
+  "known_limitations": [
+    "Existing pilot evidence, backup restore and raw preflight must be verified on the unchanged real SOC runtime before any future collection authorization.",
+    "New API state uses a fresh derivation-policy database; retain older DBs.",
+    "The40-run training dataset remains exploratory; no strong response approval."
   ],
   "reviewed_collection_changes": {
+    "README.md": {
+      "after": "e2b6e2ed8b257c1174251983abb812f8fc6efb3ef450acc216ae8dc96f6266ad",
+      "before": "3b83bc0be9a7d72d6c96cc815485ac25d776e487512d446cc2ad0b1c450dd8e6"
+    },
+    "api/app/main.py": {
+      "after": "4a96d2a66c533200fd399e1be55e658b0b7a0fb8ba49728105b69f5a12705eed",
+      "before": "915ce7c5b0a480e8458334d00c58065b1c3a617ac60fe2fb5b5d614f1d2491f9"
+    },
+    "compose.yaml": {
+      "after": "af9c0dc93c8ce675b1df9dff40322bcec04501e93d33263e55ac44c9c1a61ddc",
+      "before": "57f36f8e6ed5d177d14a0927a5565f72940168e4fb6deb3ed8b1e7ffa2f017c0"
+    },
     "config/collection-design.yaml": {
-      "before": "8d259fce297e4ce776149fdc0f7e4a7ae711081921fa8a96840d6c9b10dc2d2b",
-      "after": "983f59555cac7895b583ac04d5d98798b55c56789143254f55914869bca2188a"
+      "after": "16466a213032fbdff4eece95cf30354c066c42f643d226e94ff7ce685da1d2c4",
+      "before": "8d259fce297e4ce776149fdc0f7e4a7ae711081921fa8a96840d6c9b10dc2d2b"
+    },
+    "config/training-source-compatibility.json": {
+      "after": "fd37268dff2d84b31be4f80a56921e41bfb8533564855c7151c35b0599c90fba",
+      "before": null
+    },
+    "ml/build_dataset.py": {
+      "after": "d7b7b774c214f924f7fe1c5245419e21ce25bf5644e305dc856c49f2dc537ae3",
+      "before": "a89e3b7c8e1b9e2adf5269cfed0d3b067f2f66bb04fefe08b0640b52cebf6541"
     },
     "ml/collection_adoption.py": {
-      "before": "7a5920c89ac6aa8517832a728c21e75547c8e52200a4497601fa50d6de7eaa59",
-      "after": "e157803fdd646b4dc469ad32b21b9bb82d76275b5b5f0034838f00020011fa5f"
+      "after": "fd4402ddf550661c0a8ded8def82917e9fa91e2561e19b377e0732c7c78c0260",
+      "before": "7a5920c89ac6aa8517832a728c21e75547c8e52200a4497601fa50d6de7eaa59"
+    },
+    "ml/dataset_audit.py": {
+      "after": "9e4076f96625c72a1a3d36983fe8589299f630ef8a276236443791f0aed55a92",
+      "before": "5a2d91cd0d45a6d24defe0e177920066a0b379407d94f30c8728af6af950d81c"
     },
     "ml/feature_pipeline.py": {
-      "before": "33bcbb1f2e1edcebf7924b4b76a4a741f7a371cc4a8fb8b90216bfb19c8be5b0",
-      "after": "e9366eb245ced553e0d9b4d58701a21cb1d3b0b03e518088de33b099d5bad26d"
+      "after": "a5f2291c3d66b6aeb0ee6e65b7f3642fa0bbe574332682f7fe7e4b62af3078c2",
+      "before": "33bcbb1f2e1edcebf7924b4b76a4a741f7a371cc4a8fb8b90216bfb19c8be5b0"
+    },
+    "ml/training.py": {
+      "after": "0b7b4f1ff8f0949c63b0a072b773ac4e25469a755ca074182ebcae0a1a0572dd",
+      "before": "e903233a6822d5fc62ba0f5292e6d4b1f389906adfa4c171fc8ed8f0d7cf6df1"
+    },
+    "ml/training_sources.py": {
+      "after": "1048594fc53fb766f4895a282902ab61f84affcffc732777edb02673d209cd05",
+      "before": null
+    },
+    "notebooks/week3_train_colab.ipynb": {
+      "after": "e9c74051016c7887516ea7e4ebae9b77d84d543e4158cf8a383d7e0d712828d7",
+      "before": "542cca82651e139e6ab3f5f8dadc1cfd159d2595c3b19a59465cb06de829355d"
+    },
+    "scripts/audit_dataset.py": {
+      "after": "7d85a3b0a53a0692e7e55848932b05d5408d6eef4add692af1a142b5afded4c3",
+      "before": "ba1dac75c1a079530b8da35a7e881957e7acd0a59bdc2424f6759f25802b3783"
     }
   },
-  "scope": "Proposed supplemental review for bounded 100ms Sysmon Event3 inversion only. Prior pilot raw evidence may be reverified without replay ONLY after acceptance passes unchanged pilot checks, source, runtime, backup restore and preflight. Historical G7 v1 acceptance stays immutable.",
-  "known_limitations": [
-    "Clock inversion allowance is limited to Event3 <=100ms with full identity; complete online/offline end-to-end parity remains to be demonstrated.",
-    "New acceptance must not replace or mutate legacy acceptance; migration of active source config needs separate safe authorization."
-  ],
-  "collection_patch_sha256": "becb3dc2d735ff3a53eb666d605b9bfbecb6688ec12712eb74e3d921331a0e19"
+  "scope": "Reviewed production transition from the original dev.2 pilots to candidate.8. Bounded Event3 native inversion is at most300ms with matching identity. This policy does not authorize mixed trainable origins; that requires the separate reviewed training policy and complete replay. No production G7 is issued by this file.",
+  "version": "reviewed-pilot-adoption-v1"
 }

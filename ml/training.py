@@ -36,6 +36,7 @@ from ml.metrics import (
     select_threshold,
 )
 from ml.models import build_candidates
+from ml.training_sources import verify_training_manifest
 
 
 def _is_sha256(value: Any) -> bool:
@@ -73,7 +74,7 @@ def verify_training_partitions(
     if not isinstance(manifest, dict) or not isinstance(schema, dict):
         raise ValueError("dataset manifest and feature schema must be mappings")
     if (
-        manifest.get("manifest_version") != "dataset-manifest-v2"
+        manifest.get("manifest_version") not in {"dataset-manifest-v2", "dataset-manifest-v3"}
         or manifest.get("group_key") not in {"scenario_id", "cohort_id"}
         or manifest.get("locked_test_status") != "UNOPENED"
         or manifest.get("feature_schema_version") != schema.get("version")
@@ -112,6 +113,8 @@ def verify_training_partitions(
         != provenance.get("collection_contract_sha256")
     ):
         raise ValueError("dataset collection audit provenance is missing or not ready")
+    source_root = Path(__file__).resolve().parents[1]
+    verify_training_manifest(manifest, root=source_root, expected_commit=expected_commit)
     verified: dict[str, list[dict[str, Any]]] = {}
     partitions = manifest.get("partitions")
     record_counts = manifest.get("record_counts")
@@ -152,6 +155,9 @@ def verify_training_partitions(
         except (TypeError, KeyError, ValueError) as exc:
             raise ValueError(f"{name} partition feature contract is invalid: {exc}") from exc
         verified[name] = rows
+    verify_training_manifest(
+        manifest, verified, root=source_root, expected_commit=expected_commit,
+    )
     return verified["train"], verified["validation"], manifest
 
 
@@ -606,6 +612,10 @@ def train(config_path: Path) -> dict[str, Any]:
             "numpy": np.__version__,
         },
     }
+    if manifest["manifest_version"] == "dataset-manifest-v3":
+        metadata["dataset_source_compatibility"] = manifest["collection_audit"][
+            "source_compatibility"
+        ]
     package_dir.mkdir(parents=True, exist_ok=True)
     joblib.dump({"metadata": metadata, "families": artifacts}, package_dir / "model.joblib")
     write_json(package_dir / "thresholds.json", threshold_document)
