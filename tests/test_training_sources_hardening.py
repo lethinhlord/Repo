@@ -30,6 +30,7 @@ def handoff(reviewed):
         "collection_audit": {
             "source_compatibility": copy.deepcopy(certificate),
             "status": "READY",
+            "audit_version": "dataset-audit-v2", "report_sha256": "f" * 64,
             "collection_contract_sha256": policy["collection_contract_sha256"],
             "collection_design_sha256": policy["collection_design_sha256"],
         },
@@ -38,6 +39,7 @@ def handoff(reviewed):
         "locked_test_status": "UNOPENED",
         "partition_counts": {name: 1 for name in sources.PARTITIONS},
         "record_counts": {name: 1 for name in sources.PARTITIONS},
+        "stratum_run_counts": policy["stratum_run_counts"],
         "split_assignment_commitment_sha256": policy["split_assignment_commitment_sha256"],
         "dataset_hash_sha256": policy["dataset_hash_sha256"],
         "locked_test_sha256": policy["partitions"]["locked_test"]["sha256"],
@@ -197,3 +199,27 @@ def test_unrelated_v2_loads_without_git_or_processing_policy_verification(
         {"train": [{"run_id": "UNRELATED-LEGACY"}], "validation": []},
         root=root, expected_commit=None,
     )
+
+
+def test_v2_rejects_reviewed_partition_marker_before_loading_any_rows():
+    with pytest.raises(ValueError, match="manifest v3"):
+        sources.verify_training_manifest({
+            "manifest_version": "dataset-manifest-v2", "source_partitions": {},
+        })
+
+
+@pytest.mark.parametrize("field", [
+    "audit_status", "collection_candidate", "source_config_override", "stratum_run_counts",
+])
+def test_reviewed_metadata_rejects_contradictions_before_loading_rows(handoff, field):
+    (root, *_), _, manifest, _ = handoff
+    if field == "audit_status":
+        manifest["collection_audit"]["status"] = "TARGET_MET"
+    elif field == "collection_candidate":
+        manifest["collection_audit"]["collection_candidate"] = {"commit": "0" * 40}
+    elif field == "source_config_override":
+        manifest["provenance"]["source_config_override"] = {"sha256": "0" * 64}
+    else:
+        manifest["stratum_run_counts"] = {"account:0": 999}
+    with pytest.raises(ValueError, match="inconsistent|source override hash"):
+        sources.verify_training_manifest(manifest, root=root)

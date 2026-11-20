@@ -74,6 +74,9 @@ def reviewed(tmp_path, monkeypatch):
         policy['partitions'][partition] = sources.partition_commitment([row])
     policy['dataset_hash_sha256'] = sources.canonical_dataset_hash(rows)
     policy['collection_contract_sha256'] = 'd' * 64
+    policy['audit_status'] = 'READY'
+    policy['source_config_sha256'] = 'a' * 64
+    policy['stratum_run_counts'] = {'account:0': 2, 'account:1': 1}
     policy['split_assignment_commitment_sha256'] = 'e' * 64
     import hashlib
     policy['feature_schema_sha256'] = hashlib.sha256(
@@ -134,12 +137,14 @@ def test_v3_rejects_record_and_partition_forgery_without_reading_locked(reviewed
                        'collection_mode': 'REAL_LAB'},
         'collection_audit': {'source_compatibility': cert,
                             'status': 'READY',
+                            'audit_version': 'dataset-audit-v2', 'report_sha256': 'f' * 64,
                             'collection_contract_sha256': policy['collection_contract_sha256'],
                             'collection_design_sha256': policy['collection_design_sha256']},
         'feature_schema_sha256': policy['feature_schema_sha256'],
         'group_key': 'cohort_id', 'locked_test_status': 'UNOPENED',
         'partition_counts': {n: 1 for n in sources.PARTITIONS},
         'record_counts': {n: 1 for n in sources.PARTITIONS},
+        'stratum_run_counts': policy['stratum_run_counts'],
         'split_assignment_commitment_sha256': policy['split_assignment_commitment_sha256'],
         'dataset_hash_sha256': policy['dataset_hash_sha256'],
         'locked_test_sha256': policy['partitions']['locked_test']['sha256'],

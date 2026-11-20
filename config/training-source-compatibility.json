@@ -201,6 +201,7 @@
       "record_sha256": "c0b3016e95849ba194e505be04116bf82f49f97baa5d8ed09f7fb3fd5d60bd87"
     }
   },
+  "audit_status": "READY",
   "builder_config_sha256": "3dfa8250eda64c559cedd41a95499db0de3f8839a2d96b8611ee5c9b8ba599de",
   "collection_contract_sha256": "64a5333d63e6be355ec45167934209c504ec13c128519eb9075b9a48b3816546",
   "collection_design_sha256": "16466a213032fbdff4eece95cf30354c066c42f643d226e94ff7ce685da1d2c4",
@@ -264,9 +265,16 @@
       "python_version": "3.14.4 (main, Aug 20 2026, 10:41:58) [GCC 15.2.0]"
     }
   ],
-  "processing_sha256": "7235eca06652589740ff53c295acd0d2c2ecb84340f7561a3b8b01222d234834",
+  "processing_sha256": "ff6494140f80e13208cbfdcaa139388de7c0eb6a352b2c1de2cc5b46efeceb86",
   "review_date": "2026-11-20",
   "scope": "Exact immutable 40-run handoff only; original collection identities stay intact. Every run requires raw replay; training uses fixed cohort partitions and no locked rows.",
+  "source_config_sha256": "f1f4d9cbf87d80e330d5c95880f534459366f940c957eeade6b9391e4776201b",
   "split_assignment_commitment_sha256": "6cb3b8a7bba2753d5f8eff65494dfcdb451045e97924a22a022e7a130a173a37",
+  "stratum_run_counts": {
+    "account:0": 10,
+    "account:1": 10,
+    "c2:0": 10,
+    "c2:1": 10
+  },
   "version": "reviewed-training-origins-v1"
 }

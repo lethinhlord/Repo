@@ -232,17 +232,17 @@ def build_dataset(
     }
     if audit_summary is not None:
         manifest["collection_audit"] = audit_summary
+    if source_config_path is not None:
+        manifest["provenance"]["source_config_override"] = {
+            "path": str(source_config_path.resolve()),
+            "sha256": _sha256(source_config_path),
+        }
     if source_compatibility is not None:
         from ml.training_sources import digest, verify_training_manifest
 
         manifest["source_partitions"] = source_compatibility["partitions"]
         manifest["provenance"]["source_compatibility_sha256"] = digest(source_compatibility)
         verify_training_manifest(manifest, root=Path.cwd(), expected_commit=_git_commit())
-    if source_config_path is not None:
-        manifest["provenance"]["source_config_override"] = {
-            "path": str(source_config_path.resolve()),
-            "sha256": _sha256(source_config_path),
-        }
     manifest["partition_counts"] = dict(manifest["partition_counts"])
     manifest["record_counts"] = dict(manifest["record_counts"])
     manifest["stratum_run_counts"] = dict(manifest["stratum_run_counts"])

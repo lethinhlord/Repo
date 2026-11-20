@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -236,9 +237,9 @@ def verify_training_manifest(
     if not isinstance(collection, dict) or not isinstance(provenance, dict):
         raise ValueError('training audit/provenance must be mappings')
     if manifest.get('manifest_version') == 'dataset-manifest-v2':
-        if collection.get('source_compatibility') is not None or provenance.get(
-            'source_compatibility_sha256',
-        ) is not None:
+        if ('source_partitions' in manifest
+                or collection.get('source_compatibility') is not None
+                or provenance.get('source_compatibility_sha256') is not None):
             raise ValueError('reviewed origins require manifest v3')
         if rows_by_partition:
             # Read the policy from Git, not a mutable local replacement. This
@@ -277,14 +278,25 @@ def verify_training_manifest(
     counts = {name: item['record_count'] for name, item in policy['partitions'].items()}
     if (manifest.get('group_key') != 'cohort_id'
             or manifest.get('locked_test_status') != 'UNOPENED'
-            or collection.get('status') not in {'READY', 'TARGET_MET'}
+            or collection.get('status') != policy['audit_status']
+            or collection.get('collection_candidate') is not None
+            or collection.get('audit_version') != 'dataset-audit-v2'
+            or not isinstance(collection.get('report_sha256'), str)
+            or re.fullmatch(r'[0-9a-f]{64}', collection['report_sha256']) is None
             or provenance.get('collection_mode') != 'REAL_LAB'
             or provenance.get('builder_config_sha256') != policy['builder_config_sha256']
             or manifest.get('partition_counts') != counts
             or manifest.get('record_counts') != counts
+            or manifest.get('stratum_run_counts') != policy['stratum_run_counts']
             or manifest.get('split_assignment_commitment_sha256')
             != policy['split_assignment_commitment_sha256']):
         raise ValueError('reviewed split/config/audit metadata is inconsistent')
+    override = provenance.get('source_config_override')
+    if override is not None and (
+        not isinstance(override, dict)
+        or override.get('sha256') != policy['source_config_sha256']
+    ):
+        raise ValueError('source override hash differs from reviewed collection contract')
     for name in PARTITIONS:
         actual = manifest.get('partitions', {}).get(name, {})
         approved = policy['partitions'][name]
