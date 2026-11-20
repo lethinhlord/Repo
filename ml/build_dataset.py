@@ -33,11 +33,15 @@ def _git_commit() -> str:
 
 def build_dataset(
     config_path: Path, *, source_config_path: Path | None = None,
+    compatibility_policy_path: Path | None = None,
 ) -> dict[str, object]:
     config = load_config(config_path)
     schema = load_feature_schema(Path(config["feature_schema"]))
     data_config = config["data"]
     audit_summary: dict[str, object] | None = None
+    source_compatibility = None
+    if compatibility_policy_path is not None and not data_config.get("require_collection_audit"):
+        raise ValueError("reviewed origins require full collection audit")
     if source_config_path is not None and not data_config.get("require_collection_audit", False):
         raise ValueError("source config override requires collection audit")
     if bool(data_config.get("require_collection_audit", False)):
@@ -56,6 +60,7 @@ def build_dataset(
                 data_config.get("taxonomy", "config/suspicious-process-taxonomy.yaml")
             ),
             group_key=str(data_config.get("group_key", "scenario_id")),
+            compatibility_policy_path=compatibility_policy_path,
         )
         if report["status"] not in {"READY", "TARGET_MET"}:
             raise ValueError(
@@ -72,6 +77,13 @@ def build_dataset(
             "collection_design_sha256": report.get("collection_design_sha256"),
             "collection_candidate": report.get("collection_candidate"),
         }
+        source_compatibility = report.get("source_compatibility")
+        if compatibility_policy_path is not None:
+            if source_compatibility is None:
+                raise ValueError("reviewed source compatibility certificate is missing")
+            if _sha256(config_path) != source_compatibility["builder_config_sha256"]:
+                raise ValueError("builder config differs from the reviewed training source")
+            audit_summary["source_compatibility"] = source_compatibility
         candidate = report.get("collection_candidate")
         if candidate is not None:
             from ml.collection_release import capture_candidate
@@ -89,6 +101,15 @@ def build_dataset(
         data_config["records_name"],
     )
     validate_feature_contract(records, schema)
+    portable_rows = None
+    if source_compatibility is not None:
+        from ml.training_sources import verify_export_records
+
+        portable_rows = verify_export_records(
+            [row.as_dict() for row in records], source_compatibility,
+            root=Path.cwd(), raw_dir=Path(data_config["raw_dir"]),
+            evidence_dir=Path(data_config["evidence_dir"]),
+        )
     number_of_folds = int(config["split"]["number_of_folds"])
     minimum_groups = int(data_config["minimum_groups_per_family_label"])
     group_key = str(data_config.get("group_key", "run_id"))
@@ -127,9 +148,22 @@ def build_dataset(
         partition_by_run[run_id] = next(
             name for name, allowed_folds in split_folds.items() if fold in allowed_folds
         )
+    payloads = {}
+    if portable_rows is not None:
+        from ml.training_sources import partition_bytes, partition_commitment
+
+        for partition in split_folds:
+            subset = [row for row in portable_rows if partition_by_run[row["run_id"]] == partition]
+            if partition_commitment(subset) != source_compatibility["partitions"][partition]:
+                raise ValueError("cohort split differs from the independently reviewed commitments")
+            payloads[partition] = partition_bytes(subset)
     for partition in split_folds:
-        subset = [row.as_dict() for row in records if partition_by_run[row.run_id] == partition]
-        write_jsonl(output_dir / f"{partition}.jsonl", subset)
+        if portable_rows is not None:
+            output_dir.mkdir(parents=True, exist_ok=True)
+            (output_dir / f"{partition}.jsonl").write_bytes(payloads[partition])
+        else:
+            subset = [row.as_dict() for row in records if partition_by_run[row.run_id] == partition]
+            write_jsonl(output_dir / f"{partition}.jsonl", subset)
 
     challenge = discover_records(
         Path(data_config["raw_dir"]),
@@ -149,8 +183,13 @@ def build_dataset(
         path.write_text("".join(f"{run_id}\n" for run_id in run_ids), encoding="utf-8")
 
     manifest = {
-        "manifest_version": "dataset-manifest-v2",
-        "dataset_hash_sha256": dataset_hash(records),
+        "manifest_version": (
+            "dataset-manifest-v3" if source_compatibility else "dataset-manifest-v2"
+        ),
+        "dataset_hash_sha256": (
+            source_compatibility["dataset_hash_sha256"]
+            if source_compatibility else dataset_hash(records)
+        ),
         "feature_schema_version": schema["version"],
         "feature_schema_sha256": _sha256(Path(config["feature_schema"])),
         "challenge": {
@@ -198,6 +237,12 @@ def build_dataset(
             "path": str(source_config_path.resolve()),
             "sha256": _sha256(source_config_path),
         }
+    if source_compatibility is not None:
+        from ml.training_sources import digest, verify_training_manifest
+
+        manifest["source_partitions"] = source_compatibility["partitions"]
+        manifest["provenance"]["source_compatibility_sha256"] = digest(source_compatibility)
+        verify_training_manifest(manifest, root=Path.cwd(), expected_commit=_git_commit())
     manifest["partition_counts"] = dict(manifest["partition_counts"])
     manifest["record_counts"] = dict(manifest["record_counts"])
     manifest["stratum_run_counts"] = dict(manifest["stratum_run_counts"])
@@ -209,8 +254,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Build leakage-safe grouped ML partitions")
     parser.add_argument("--config", type=Path, default=Path("ml/training_config.yaml"))
     parser.add_argument("--source-config", type=Path)
+    parser.add_argument("--compatibility-policy", type=Path)
     args = parser.parse_args()
-    manifest = build_dataset(args.config, source_config_path=args.source_config)
+    options = {"source_config_path": args.source_config}
+    if args.compatibility_policy is not None:
+        options["compatibility_policy_path"] = args.compatibility_policy
+    manifest = build_dataset(args.config, **options)
     print(f"Dataset ready: {manifest['dataset_hash_sha256']}")
     print("Locked test remains UNOPENED.")
 

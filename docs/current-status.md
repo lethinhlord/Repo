@@ -1,4 +1,16 @@
 # Trạng thái phần mềm và bàn giao
+
+Ngày 20/11/2026: candidate.8 bổ sung quy trình xử lý 40 run đã có, không thu lại.
+Xem [hướng dẫn dùng 40 run](training-existing-40-runs.md). Hai nguồn thu gốc giữ
+nguyên; chế độ được review xác minh input, source, replay và partition trước khi
+tạo manifest v3. Chế độ một nguồn cũ vẫn hoạt động. Cache dẫn xuất dùng DB/version
+mới cho thay đổi grouping và dung sai300ms; file DB cũ được giữ để audit.
+
+Các ghi nhận dưới đây là lịch sử candidate.7. Chúng không phải chỉ dẫn yêu cầu
+chạy lại pilot hoặc scenario cho bộ40 hiện có, và không cấp G7 cho candidate mới.
+
+## Lịch sử 14/11/2026
+
 Ngày 14/11/2026. Điểm vào: [runbook 4 VM](scenario-collection-runbook.md).
 Candidate: [collection-v4.0.0-candidate.7](https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.7).
 Lab đã có bốn pilot candidate.4: dùng [hướng dẫn G7 kế thừa](g7-existing-candidate4-pilots.md).

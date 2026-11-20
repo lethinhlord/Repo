@@ -521,6 +521,7 @@ def audit_dataset(
     taxonomy_path: Path = Path("config/suspicious-process-taxonomy.yaml"),
     mode: str = "final",
     group_key: str | None = None,
+    compatibility_policy_path: Path | None = None,
 ) -> dict[str, Any]:
     if mode not in {"progress", "final"}:
         raise ValueError("audit mode must be progress or final")
@@ -636,18 +637,36 @@ def audit_dataset(
             candidates[run_id] = (manifest, incidents)
 
     collection_candidate = None
+    source_compatibility = None
     trainable_ids = sorted(
         run_id for run_id, (manifest, _) in candidates.items()
         if manifest.purpose == "trainable"
     )
-    if design and trainable_ids:
+    if compatibility_policy_path is not None and (not design or not trainable_ids):
+        _issue(issues, "COLLECTION_CANDIDATE_MISMATCH",
+               "reviewed origins require a collection design and complete trainable inventory")
+    elif design and trainable_ids:
         from ml.collection_release import ReleaseError, summarize_candidates
 
         try:
-            collection_candidate = summarize_candidates(
-                evidence_dir, trainable_ids, design["candidate_tag"]
-            )
-        except ReleaseError as exc:
+            if compatibility_policy_path is not None:
+                from ml.training_sources import digest, verify_training_sources
+
+                verified_sources = verify_training_sources(
+                    Path(__file__).resolve().parents[1], raw_dir, evidence_dir,
+                    trainable_ids, compatibility_policy_path,
+                )
+                semantics = {k: v for k, v in design.items() if k not in {
+                    "candidate_tag", "sha256",
+                }}
+                if verified_sources["design_semantics_sha256"] != digest(semantics):
+                    raise ValueError("collection design differs from reviewed training semantics")
+                source_compatibility = verified_sources
+            else:
+                collection_candidate = summarize_candidates(
+                    evidence_dir, trainable_ids, design["candidate_tag"]
+                )
+        except (ReleaseError, OSError, ValueError, KeyError) as exc:
             _issue(issues, "COLLECTION_CANDIDATE_MISMATCH", str(exc))
 
     if evidence_dir.is_dir():
@@ -984,6 +1003,8 @@ def audit_dataset(
         ]
         issues = [issue for issue in issues if issue["code"] not in progress_codes]
     error_count = sum(issue["severity"] == "ERROR" for issue in issues)
+    if error_count:
+        source_compatibility = None
     minimum_met = all(value["valid_runs"] >= minimum_runs for value in strata.values())
     target_met = all(value["valid_runs"] >= target_runs for value in strata.values())
     if mode == "progress" and not error_count and incomplete:
@@ -1016,6 +1037,7 @@ def audit_dataset(
         "collection_unit": "run_id",
         "split_group_key": group_key,
         "collection_candidate": collection_candidate,
+        "source_compatibility": source_compatibility,
         "collection_design_sha256": design["sha256"] if design else None,
         "raw_event_rows_are_independent_samples": False,
         "discovered_runs": len(candidates),

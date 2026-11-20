@@ -1,88 +1,71 @@
 {
-  "version": "reviewed-pilot-adoption-v1",
+  "collection_patch_sha256": "00969b18623e4f85ff07d8d8fd06512cd322a178761ce58e5427b9989c9bb8f8",
   "from_candidate": {
-    "commit": "a7df9b623125ffd0d1403181005e05b136680bb5",
-    "tag": "collection-v4.0.0-candidate.4",
-    "tag_object": "a3c80a057cf2f545a1508a2a06b9f2c4a1d2bc5e",
+    "commit": "db166d814857ef061982839a74a17af6e500625f",
     "origin": "https://github.com/lethinhlord/Repo.git",
-    "tracked_files_sha256": "1c3b1a21cdef642f958d8fb2ac822d0fa0502b0cde878ea891422cecc1b1e78d"
+    "tag": "collection-v4.0.0-http-async-dev.2",
+    "tag_object": "57ca0a95cdeb7cb29bda6bae084ae9de7ff7596a",
+    "tracked_files_sha256": "9990834ce38627d98f7293b590be3f626810df3ca810dd210a0ccb922c52607a"
   },
-  "collection_patch_sha256": "3a3d9db10fc6d0c544b492744f761fc1ed5a58c2e955b759b211827795af5fdb",
+  "known_limitations": [
+    "Existing pilot evidence, backup restore and raw preflight must be verified on the unchanged real SOC runtime before any future collection authorization.",
+    "New API state uses a fresh derivation-policy database; retain older DBs.",
+    "The40-run training dataset remains exploratory; no strong response approval."
+  ],
   "reviewed_collection_changes": {
     "README.md": {
-      "before": "f4a887e8ae9b9e144bb3177a14e81b2c94bf2d522a81f59a801ef3240505c389",
-      "after": "3b83bc0be9a7d72d6c96cc815485ac25d776e487512d446cc2ad0b1c450dd8e6"
-    },
-    "api/app/feature_state.py": {
-      "before": "9604a2f1d7177e0bada33e41562ae9a5a301010a019ff0a3d15e3452476d96ee",
-      "after": "5b459e74a500a49ba818745693fe732b0669a543b50e330356fc3c74ed6103a2"
+      "after": "e2b6e2ed8b257c1174251983abb812f8fc6efb3ef450acc216ae8dc96f6266ad",
+      "before": "3b83bc0be9a7d72d6c96cc815485ac25d776e487512d446cc2ad0b1c450dd8e6"
     },
     "api/app/main.py": {
-      "before": "be83fd1f0cd1c760b78b72abdaafe5253cda11b9d476d388760fc567c3f1d67e",
-      "after": "915ce7c5b0a480e8458334d00c58065b1c3a617ac60fe2fb5b5d614f1d2491f9"
+      "after": "4a96d2a66c533200fd399e1be55e658b0b7a0fb8ba49728105b69f5a12705eed",
+      "before": "915ce7c5b0a480e8458334d00c58065b1c3a617ac60fe2fb5b5d614f1d2491f9"
     },
     "compose.yaml": {
-      "before": "ffd628d5f6e3439d06b06a8a9e57de8ce3503d11746228903776a3db65cf10f6",
-      "after": "57f36f8e6ed5d177d14a0927a5565f72940168e4fb6deb3ed8b1e7ffa2f017c0"
+      "after": "af9c0dc93c8ce675b1df9dff40322bcec04501e93d33263e55ac44c9c1a61ddc",
+      "before": "57f36f8e6ed5d177d14a0927a5565f72940168e4fb6deb3ed8b1e7ffa2f017c0"
     },
     "config/collection-design.yaml": {
-      "before": "e4f38cc1740ac8cb1bd304c8cf428aa31f0ca9aa7d4f2f7b2295c539912834dc",
-      "after": "06d665a80db09a1888ddd33b968ac404c9d81eeaefe76110778cd848d1c9839c"
+      "after": "16466a213032fbdff4eece95cf30354c066c42f643d226e94ff7ce685da1d2c4",
+      "before": "8d259fce297e4ce776149fdc0f7e4a7ae711081921fa8a96840d6c9b10dc2d2b"
+    },
+    "config/training-source-compatibility.json": {
+      "after": "bed0191b27614a8f1a0e0854711aec8d3878f36eb9e3d86bab1dbf2bd3529fee",
+      "before": null
     },
     "ml/build_dataset.py": {
-      "before": "258aa6cb9fb28f3fcf7e3b9aa0dfdd5a855e665306302887032a2bd06d76c9c8",
-      "after": "a89e3b7c8e1b9e2adf5269cfed0d3b067f2f66bb04fefe08b0640b52cebf6541"
+      "after": "22b8c91e3766bc1fdca0d8cad51e70cc6bc784520c528b12809d73ab2e3fee33",
+      "before": "a89e3b7c8e1b9e2adf5269cfed0d3b067f2f66bb04fefe08b0640b52cebf6541"
     },
     "ml/collection_adoption.py": {
-      "before": null,
-      "after": "7a5920c89ac6aa8517832a728c21e75547c8e52200a4497601fa50d6de7eaa59"
-    },
-    "ml/collection_release.py": {
-      "before": "37e00c890e81e3330a72bfd4fb082323647d2e9e0e9ea977de1433360f5b2b93",
-      "after": "59c353decd803de1afbddbd38a782d3141f6bcd3c95d521317f5f7584e8f766f"
+      "after": "fd4402ddf550661c0a8ded8def82917e9fa91e2561e19b377e0732c7c78c0260",
+      "before": "7a5920c89ac6aa8517832a728c21e75547c8e52200a4497601fa50d6de7eaa59"
     },
     "ml/dataset_audit.py": {
-      "before": "f10943304eb3cc7527cfe7907734b6eeca73b7e78aeb9c59fc8ed1e02189c306",
-      "after": "5a2d91cd0d45a6d24defe0e177920066a0b379407d94f30c8728af6af950d81c"
+      "after": "9e4076f96625c72a1a3d36983fe8589299f630ef8a276236443791f0aed55a92",
+      "before": "5a2d91cd0d45a6d24defe0e177920066a0b379407d94f30c8728af6af950d81c"
     },
     "ml/feature_pipeline.py": {
-      "before": "b5b5a3593aa9be0546983d9185f651818c26fa135c69d84b022b64ea4c080176",
-      "after": "4719b30be447a05ba59a784117fd2fc408611a2b95bec1a6a45549c58f86f412"
+      "after": "a5f2291c3d66b6aeb0ee6e65b7f3642fa0bbe574332682f7fe7e4b62af3078c2",
+      "before": "33bcbb1f2e1edcebf7924b4b76a4a741f7a371cc4a8fb8b90216bfb19c8be5b0"
     },
-    "ml/scenario_collection.py": {
-      "before": "993549c31fbc46fe7e50bfb3ce92a6e46767072df2673be05d1361397cc14642",
-      "after": "f58de8e2f65915d4738e38b8a81827ff0e77a186e1f5d9c681caa6654032d8a2"
+    "ml/training.py": {
+      "after": "0b7b4f1ff8f0949c63b0a072b773ac4e25469a755ca074182ebcae0a1a0572dd",
+      "before": "e903233a6822d5fc62ba0f5292e6d4b1f389906adfa4c171fc8ed8f0d7cf6df1"
     },
-    "ml/telemetry.py": {
-      "before": "3f783bd7f84d3b4020345e9835da461a7341661c6c78fefb776f3a61684d4e1c",
-      "after": "1019dfbb16429eb2bb61ff62a66037972383255607531e7586817f6e42808899"
+    "ml/training_sources.py": {
+      "after": "6aa375728960f3aec0b29f082003655c18ba56f7922a2ba3a6c196609e37bd4e",
+      "before": null
     },
-    "scripts/collection_release.py": {
-      "before": "6be5b26121245d21e54ad10c6288aba93b7b75af2f82a845f3575378dfc50025",
-      "after": "ff4ea86a4f6512a6e3b93d2434c2f1ae0555b8ed8193d45ac0da3e18ef368b78"
+    "notebooks/week3_train_colab.ipynb": {
+      "after": "01c01e26252893d0037c746a89750b68792915cd08a440ecc9abfd615c7f2964",
+      "before": "542cca82651e139e6ab3f5f8dadc1cfd159d2595c3b19a59465cb06de829355d"
     },
-    "scripts/create_run_draft.py": {
-      "before": "18d9420526417781d0e21959045819df8bec0a2b97046b1a498b0d13cc6c008f",
-      "after": "8558793bff2a154667ff8db87c2b28893cc597b621fec60ae31e7c7f6a07d813"
-    },
-    "scripts/prepare_collection_source.py": {
-      "before": null,
-      "after": "14cd28cee00c345972e72fb64d4c33dc6e402ece75e1937f2cea510d3f156706"
-    },
-    "scripts/run_training_http.ps1": {
-      "before": "ed831ad7a45df4f99bda37ef540599cb811477c8710425c1b2082f8b76f9d9b7",
-      "after": "39222cab4861a7a13ecbba2d6447df961f011e841e2a683c1844860842512be5"
-    },
-    "scripts/verify_collection_dataset.sh": {
-      "before": "d277755c1e5a288e69b03e646cfab3d3cd4e2d7c1556775ce29fa4431a838383",
-      "after": "89cb463408b7d9cebd22e3fa915cd2bf5a98f3107e8f4522fabe5f568a7437fc"
+    "scripts/audit_dataset.py": {
+      "after": "7d85a3b0a53a0692e7e55848932b05d5408d6eef4add692af1a142b5afded4c3",
+      "before": "ba1dac75c1a079530b8da35a7e881957e7acd0a59bdc2424f6759f25802b3783"
     }
   },
-  "scope": "Reuse immutable candidate.4 pilot evidence for candidate.7 after raw replay verification. Reviewed cumulative source/G7 binding, native Sysmon lifecycle, post-request HTTP hold, sensor-native asset grouping and policy-bound feature caches. Source6 trainable data remains separate; actual source7 authorization requires unchanged SOC runtime, raw preflight, backup restore, four original pilots and fresh active context. No identity, quota or quality guard is relaxed.",
-  "known_limitations": [
-    "Fast HTTP cadence can still miss its frozen schedule; no profile or quality gate is removed.",
-    "The two-second minimum post-response curl lifetime covers the observed native reporting delay but cannot guarantee arbitrary future Sysmon latency. Inconsistent process chronology remains rejected.",
-    "Source6 feature caches and acceptance receipts are preserved rather than silently relabeled. Source7 uses fresh grouping-bound feature state and actual G7 renewal.",
-    "Trainable source6 and source7 data are not automatically mixed. Keep accepted old runs intact and use a separate source7 plan under the existing single-candidate audit/build contract."
-  ]
+  "scope": "Reviewed production transition from the original dev.2 pilots to candidate.8. Bounded Event3 native inversion is at most300ms with matching identity. This policy does not authorize mixed trainable origins; that requires the separate reviewed training policy and complete replay. No production G7 is issued by this file.",
+  "version": "reviewed-pilot-adoption-v1"
 }

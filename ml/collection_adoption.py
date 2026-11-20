@@ -45,13 +45,18 @@ def _collection_changes(before: dict[str, bytes], after: dict[str, bytes]) -> di
 
 
 def verify_pilot_adoption(root: Path, pilot: dict, current: dict) -> dict:
-    """Accept only the source transition reviewed in the current immutable candidate."""
+    """Verify an explicitly scoped, immutable pilot-source transition.
+
+    V1 is kept for already-frozen acceptances. V2 is a new source review,
+    not a mutation of a previous review or a waiver of quality gates.
+    """
     try:
         raw_policy = (root / POLICY).read_bytes()
         policy = json.loads(raw_policy)
+        version = policy.get("version")
         identity = {key: pilot[key] for key in IDENTITY}
         if (
-            policy.get("version") != "reviewed-pilot-adoption-v1"
+            version not in {"reviewed-pilot-adoption-v1", "reviewed-pilot-adoption-v2"}
             or policy.get("from_candidate") != identity
             or pilot["origin"] != current["origin"]
             or any(not pilot.get(key) or pilot[key] != current.get(key) for key in RUNTIME)
@@ -71,11 +76,29 @@ def verify_pilot_adoption(root: Path, pilot: dict, current: dict) -> dict:
         })
         if tree_hash != pilot["tracked_files_sha256"]:
             raise ReleaseError("pilot source tree differs from its frozen fingerprint")
-        patch_hash = digest(_collection_changes(before, after))
-        if patch_hash != policy.get("collection_patch_sha256"):
+        changes = _collection_changes(before, after)
+        patch_hash = digest(changes)
+        if version == "reviewed-pilot-adoption-v2":
+            reviewed = policy.get("reviewed_collection_changes")
+            scope = policy.get("reviewed_scope")
+            if (
+                not isinstance(reviewed, dict)
+                or scope not in (
+                    ["ml/feature_pipeline.py"],
+                    ["config/collection-design.yaml", "ml/collection_adoption.py",
+                     "ml/feature_pipeline.py"],
+                )
+                or set(reviewed) != set(scope)
+                or changes != reviewed
+                or patch_hash != policy.get("collection_patch_sha256")
+            ):
+                raise ReleaseError(
+                    "unreviewed production change in bounded Sysmon clock transition",
+                )
+        elif patch_hash != policy.get("collection_patch_sha256"):
             raise ReleaseError("collection code or contract changed outside the reviewed G7 patch")
         return {
-            "version": policy["version"], "from_candidate": identity,
+            "version": version, "from_candidate": identity,
             "policy_sha256": hashlib.sha256(raw_policy).hexdigest(),
             "collection_patch_sha256": patch_hash,
         }

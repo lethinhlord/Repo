@@ -1,5 +1,10 @@
 # Week 3 model training runbook
 
+For the existing `raw-evidence-40valid` handoff, use
+[the 40-run processing guide](training-existing-40-runs.md). It preserves the
+23 runs from db166d8 and 17 from 273d1d0, creates a reviewed v3 manifest, and
+does not require recollection. New-collection steps below apply to a different batch.
+
 ## Outcome
 
 This pipeline benchmarks Logistic Regression, Random Forest, and XGBoost independently

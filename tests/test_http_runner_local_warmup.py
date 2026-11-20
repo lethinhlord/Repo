@@ -8,18 +8,26 @@ def test_local_file_hold_preserves_one_http_action_per_iteration():
     text = RUNNER.read_text(encoding="utf-8")
 
     assert "file:///C:/Windows/win.ini" in text
-    assert "--rate '1/2s'" in text
+    assert "'--rate','1/2s'" in text
     assert text.count("'file:///C:/Windows/win.ini'") == 2
-    assert text.index("--write-out '%{http_code}' $url") < text.index("'file:///C:/Windows/win.ini'")
+    assert text.index("'--write-out','%{http_code}', $url") < text.index(
+        "'file:///C:/Windows/win.ini'",
+    )
 
     # One frozen /beacon URL is constructed per loop iteration.
     assert text.count('/beacon?run=$RunNonce') == 1
     assert "for ($index=1; $index -le $Count; $index++)" in text
 
     # One HTTP success receipt per iteration.
-    assert "HTTP_REQUEST_OK seq=$index status=200" in text
-    assert "$LASTEXITCODE -ne 0" in text
-    assert "'200'" in text
+    assert "HTTP_REQUEST_OK seq=$($item.Index) status=200" in text
+    assert "$exitCode -ne 0 -or $status -ne '200'" in text
+    assert text.index("[System.Diagnostics.Process]::Start($psi)") < text.index(
+        "foreach ($item in $processes)",
+    )
+    assert "$psi.RedirectStandardOutput = $true" in text
+    assert "$psi.RedirectStandardError = $true" in text
+    assert "$proc.StandardOutput.ReadToEnd().Trim()" in text
+    assert "$proc.WaitForExit(15000)" in text
 
 
 def test_warmup_does_not_replace_frozen_action_schedule():
