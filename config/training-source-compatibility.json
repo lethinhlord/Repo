@@ -264,7 +264,7 @@
       "python_version": "3.14.4 (main, Aug 20 2026, 10:41:58) [GCC 15.2.0]"
     }
   ],
-  "processing_sha256": "13626fae1ee660342b97040402ca6db501c057eefe62e7b7344c07867ad0e7a0",
+  "processing_sha256": "7235eca06652589740ff53c295acd0d2c2ecb84340f7561a3b8b01222d234834",
   "review_date": "2026-11-20",
   "scope": "Exact immutable 40-run handoff only; original collection identities stay intact. Every run requires raw replay; training uses fixed cohort partitions and no locked rows.",
   "split_assignment_commitment_sha256": "6cb3b8a7bba2753d5f8eff65494dfcdb451045e97924a22a022e7a130a173a37",

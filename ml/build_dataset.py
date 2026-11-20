@@ -256,8 +256,10 @@ def main() -> None:
     parser.add_argument("--source-config", type=Path)
     parser.add_argument("--compatibility-policy", type=Path)
     args = parser.parse_args()
-    manifest = build_dataset(args.config, source_config_path=args.source_config,
-                             compatibility_policy_path=args.compatibility_policy)
+    options = {"source_config_path": args.source_config}
+    if args.compatibility_policy is not None:
+        options["compatibility_policy_path"] = args.compatibility_policy
+    manifest = build_dataset(args.config, **options)
     print(f"Dataset ready: {manifest['dataset_hash_sha256']}")
     print("Locked test remains UNOPENED.")
 
