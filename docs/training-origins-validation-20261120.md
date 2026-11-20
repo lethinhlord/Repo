@@ -21,8 +21,10 @@ frozen. Mã xử lý hiện tại có danh tính riêng. Không gán candidate m
 - Kiểm thử từ chối đổi nhãn manifest v2/v3, bỏ certificate, thay bản ghi hoặc
   đổi nguyên cohort rồi tự tính lại các hash trong manifest.
 - Kiểm tra chéo phát hiện và sửa các mâu thuẫn audit status, candidate tổng hợp,
-  số run theo stratum và checksum source active. Kiểm tra v2 được thực hiện trước
-  khi notebook cài dependency hoặc đọc partition.
+  số run theo stratum và checksum source active. Notebook từ chối marker v3 trên
+  manifest gắn nhãn v2 trước khi cài dependency hoặc đọc partition. Nếu toàn bộ
+  marker bị xóa, loader nhận diện run đã review khi đọc TRAIN/VALIDATION sau bước
+  cài dependency và từ chối downgrade trước khi fit.
 - Thử loader thật với file locked test vắng mặt và chặn mọi lần mở tên file đó.
 - Thực thi cell bootstrap notebook tại máy kiểm chứng; chỉ thay Drive mount và
   Git transport. Đây là kiểm tra cục bộ, không phải phiên huấn luyện Google Colab.

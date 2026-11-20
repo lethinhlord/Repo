@@ -32,8 +32,8 @@ Nếu cần tự dựng lại để đối chiếu, thực hiện mục 3–5 tr
 Dùng clone hoặc worktree mới, sạch, của đúng release đã phê duyệt. Ví dụ dưới đây dùng Bash trên máy xử lý tin cậy. Đặt các biến bằng đường dẫn thực tế và thông tin do chủ dự án cung cấp:
 
 - `APPROVED_PROCESSING_COMMIT`: SHA Git đủ 40 ký tự của candidate.8 đã phát hành và được phê duyệt.
-- `HANDOFF_ROOT`: thư mục bundle đã kiểm chứng, chứa `data/raw` và `evidence/scenario-runs` của đúng bộ 40 run.
-- `HANDOFF_SOURCE_ACTIVE`: đường dẫn file source active nguyên bản trong handoff.
+- `HANDOFF_ROOT`: đường dẫn tuyệt đối tới thư mục bundle đã kiểm chứng, chứa `data/raw` và `evidence/scenario-runs` của đúng bộ 40 run.
+- `HANDOFF_SOURCE_ACTIVE`: đường dẫn tuyệt đối tới file source active nguyên bản trong handoff.
 - `PROCESSING_PYTHON`: đường dẫn tuyệt đối tới Python trong môi trường xử lý đã được review, còn nguyên package inventory.
 
 Hai runtime xử lý được review gồm môi trường local Python 3.12 với package hash bắt đầu `2cd…` và môi trường SOC Python 3.14 với package hash bắt đầu `4b7…`. Đây chỉ là tên nhận diện rút gọn; phép kiểm bên dưới so sánh toàn bộ Python identity và SHA-256 package inventory với `processing_runtimes` trong policy. Không chạy `pip install`, nâng cấp pip hoặc thay package của môi trường xử lý để thử vượt kiểm tra này. Nếu môi trường không khớp, giữ nguyên dữ liệu và dùng lại đúng môi trường đã được phê duyệt.
@@ -48,10 +48,17 @@ export APPROVED_PROCESSING_COMMIT
 TAG=collection-v4.0.0-candidate.8
 BUILD_ROOT="$HOME/datn-ai-soar-40-candidate8"
 test ! -e "$BUILD_ROOT"
+case "$PROCESSING_PYTHON" in
+  /*) ;;
+  *) echo 'PROCESSING_PYTHON phai la duong dan tuyet doi' >&2; exit 1 ;;
+esac
 test -x "$PROCESSING_PYTHON"
 test -d "$HANDOFF_ROOT/data/raw"
 test -d "$HANDOFF_ROOT/evidence/scenario-runs"
 test -f "$HANDOFF_SOURCE_ACTIVE"
+# Resolve inputs before changing directory so relative inputs cannot change meaning.
+HANDOFF_ROOT=$(realpath -e -- "$HANDOFF_ROOT")
+HANDOFF_SOURCE_ACTIVE=$(realpath -e -- "$HANDOFF_SOURCE_ACTIVE")
 git clone --branch "$TAG" https://github.com/lethinhlord/Repo.git "$BUILD_ROOT"
 cd "$BUILD_ROOT"
 test "$(git cat-file -t "refs/tags/$TAG")" = tag

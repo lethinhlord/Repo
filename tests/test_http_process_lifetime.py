@@ -144,6 +144,29 @@ def test_full_async_actor_preserves_schedule_and_native_process_hold(
         server.server_close()
         thread.join(timeout=5)
 
+    if response_status != 200:
+        # After the first failed transfer, the actor cancels pending native
+        # processes. The second launched curl can be killed before its GET.
+        assert 1 <= len(requests) <= 2, (stdout, stderr)
+        assert "HTTP_REQUEST_LAUNCHED seq=1" in stdout
+        assert "HTTP_REQUEST_LAUNCHED seq=2" in stdout
+        assert "CURL_RESULT seq=1 exit=22 status=500" in stdout
+        assert returncode != 0, "Local transfers must not hide a failed HTTP action"
+        assert "HTTP request 1 failed" in stderr
+        assert "HTTP_REQUEST_OK" not in stdout
+        assert "HTTP_ACTION_COMPLETE" not in stdout
+        assert all(exited > started for started, exited in lifetimes), (
+            "Failure cleanup must terminate every observed native curl process"
+        )
+        assert any(parse_qs(urlsplit(r["path"]).query).get("n") == ["1"] for r in requests)
+        for request in requests:
+            parsed = urlsplit(request["path"])
+            query = parse_qs(parsed.query)
+            assert parsed.path == "/beacon"
+            assert query["run"] == ["unit_async_hold"] and query["v"] == ["7"]
+            assert query["n"] in (["1"], ["2"])
+        return
+
     assert len(requests) == 2, (stdout, stderr)
     requests.sort(key=lambda item: int(parse_qs(urlsplit(item["path"]).query)["n"][0]))
     for index, request in enumerate(requests, 1):
@@ -153,12 +176,6 @@ def test_full_async_actor_preserves_schedule_and_native_process_hold(
             "run": ["unit_async_hold"], "v": ["7"], "n": [str(index)],
         }
         assert f"HTTP_REQUEST_LAUNCHED seq={index}" in stdout
-    if response_status != 200:
-        assert returncode != 0, "Local transfers must not hide a failed HTTP action"
-        assert "HTTP_REQUEST_OK" not in stdout
-        assert "HTTP_ACTION_COMPLETE" not in stdout
-        return
-
     assert returncode == 0, stderr
     assert "HTTP_ACTION_COMPLETE count=2 nonce=unit_async_hold" in stdout
     assert len(lifetimes) == 2, "Observe both real curl processes independently of the parent shell"
