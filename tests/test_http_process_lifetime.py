@@ -158,13 +158,13 @@ def test_full_async_actor_preserves_schedule_and_native_process_hold(
         assert all(exited > started for started, exited in lifetimes), (
             "Failure cleanup must terminate every observed native curl process"
         )
-        assert any(parse_qs(urlsplit(r["path"]).query).get("n") == ["1"] for r in requests)
-        for request in requests:
+        requests.sort(key=lambda item: int(parse_qs(urlsplit(item["path"]).query)["n"][0]))
+        for index, request in enumerate(requests, 1):
             parsed = urlsplit(request["path"])
-            query = parse_qs(parsed.query)
             assert parsed.path == "/beacon"
-            assert query["run"] == ["unit_async_hold"] and query["v"] == ["7"]
-            assert query["n"] in (["1"], ["2"])
+            assert parse_qs(parsed.query) == {
+                "run": ["unit_async_hold"], "v": ["7"], "n": [str(index)],
+            }
         return
 
     assert len(requests) == 2, (stdout, stderr)
