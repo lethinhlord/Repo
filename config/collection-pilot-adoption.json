@@ -1,5 +1,5 @@
 {
-  "collection_patch_sha256": "0c0090250d067e3a39b8434862d0f158388e9d9222dbc786a887e333c59fa09b",
+  "collection_patch_sha256": "8567aa2ebf6478594c7f92a50179aa1c0f069366070a14fcd76e71b31a01617d",
   "from_candidate": {
     "commit": "db166d814857ef061982839a74a17af6e500625f",
     "origin": "https://github.com/lethinhlord/Repo.git",
@@ -30,7 +30,7 @@
       "before": "8d259fce297e4ce776149fdc0f7e4a7ae711081921fa8a96840d6c9b10dc2d2b"
     },
     "config/training-source-compatibility.json": {
-      "after": "53c6154223cfffae5e7c6d6f84460bfde98dad7f8628184ca936bd9c37c02033",
+      "after": "13a942a84bb935557c3f9fcc47ec789a480b47ccd538ae42e029285a3b2deb7c",
       "before": null
     },
     "ml/build_dataset.py": {
@@ -40,6 +40,10 @@
     "ml/collection_adoption.py": {
       "after": "fd4402ddf550661c0a8ded8def82917e9fa91e2561e19b377e0732c7c78c0260",
       "before": "7a5920c89ac6aa8517832a728c21e75547c8e52200a4497601fa50d6de7eaa59"
+    },
+    "ml/command_logging.py": {
+      "after": "992c67bbfad2aef98b2fceb5619206f810321556c4038b392c53272f8d8dbe72",
+      "before": null
     },
     "ml/dataset_audit.py": {
       "after": "9e4076f96625c72a1a3d36983fe8589299f630ef8a276236443791f0aed55a92",
@@ -62,7 +66,7 @@
       "before": null
     },
     "notebooks/week3_train_colab.ipynb": {
-      "after": "01c01e26252893d0037c746a89750b68792915cd08a440ecc9abfd615c7f2964",
+      "after": "60bba516559b39ea63f46e4e2ee2b0fd577be504bd574d611968d45d817f0835",
       "before": "542cca82651e139e6ab3f5f8dadc1cfd159d2595c3b19a59465cb06de829355d"
     },
     "scripts/audit_dataset.py": {
