@@ -272,7 +272,7 @@
       "python_version": "3.14.4 (main, Aug 20 2026, 10:41:58) [GCC 15.2.0]"
     }
   ],
-  "processing_sha256": "a7dbf4be77d941778d225cad55c6050a2e81043ae2fd6d0be1d9c08e76629d06",
+  "processing_sha256": "5e71eae1ce43b4746b6502b42bb5c4b865bef00022d95268fac8408b089ea65e",
   "review_date": "2026-11-20",
   "scope": "Exact immutable40-run collection input policy. Training-only source evolution may consume the exact reviewed candidate8 manifest without changing original provenance, records or locked commitments. Fresh dataset builds still require full raw verification.",
   "source_config_sha256": "f1f4d9cbf87d80e330d5c95880f534459366f940c957eeade6b9391e4776201b",

@@ -561,7 +561,8 @@ def train(config_path: Path) -> dict[str, Any]:
         selected_threshold["threshold_selection_reason"] = selected_threshold["selection_reason"]
         if gate_failures:
             selected_threshold["automation_eligible"] = False
-            selected_threshold["selection_reason"] = "calibration_or_stability_gate_failed"
+            if any(reason != "minimum_precision_not_met" for reason in gate_failures):
+                selected_threshold["selection_reason"] = "calibration_or_stability_gate_failed"
         selected_threshold["gate_failures"] = gate_failures
         selected_threshold["uncertainty_status"] = metrics["uncertainty"]["status"]
         selected_threshold["inner_cv_threshold"] = inner_threshold["threshold"]
