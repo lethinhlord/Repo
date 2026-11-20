@@ -1,5 +1,5 @@
 {
-  "collection_patch_sha256": "00969b18623e4f85ff07d8d8fd06512cd322a178761ce58e5427b9989c9bb8f8",
+  "collection_patch_sha256": "0c0090250d067e3a39b8434862d0f158388e9d9222dbc786a887e333c59fa09b",
   "from_candidate": {
     "commit": "db166d814857ef061982839a74a17af6e500625f",
     "origin": "https://github.com/lethinhlord/Repo.git",
@@ -30,7 +30,7 @@
       "before": "8d259fce297e4ce776149fdc0f7e4a7ae711081921fa8a96840d6c9b10dc2d2b"
     },
     "config/training-source-compatibility.json": {
-      "after": "bed0191b27614a8f1a0e0854711aec8d3878f36eb9e3d86bab1dbf2bd3529fee",
+      "after": "53c6154223cfffae5e7c6d6f84460bfde98dad7f8628184ca936bd9c37c02033",
       "before": null
     },
     "ml/build_dataset.py": {
@@ -49,12 +49,16 @@
       "after": "a5f2291c3d66b6aeb0ee6e65b7f3642fa0bbe574332682f7fe7e4b62af3078c2",
       "before": "33bcbb1f2e1edcebf7924b4b76a4a741f7a371cc4a8fb8b90216bfb19c8be5b0"
     },
+    "ml/metrics.py": {
+      "after": "3deebe5a6d1ddcb37017375eab18ebca35ff7227edc93ea3c931cbc73b66da4b",
+      "before": "d9add6c02b555e9c1d7443fdf93f68a39396c765c1c4ac785ff0c1ae373bdcd2"
+    },
     "ml/training.py": {
-      "after": "0b7b4f1ff8f0949c63b0a072b773ac4e25469a755ca074182ebcae0a1a0572dd",
+      "after": "45059aec09769adc0211ac8c38735324383e3504c4137a040cc5e3027c85230e",
       "before": "e903233a6822d5fc62ba0f5292e6d4b1f389906adfa4c171fc8ed8f0d7cf6df1"
     },
     "ml/training_sources.py": {
-      "after": "6aa375728960f3aec0b29f082003655c18ba56f7922a2ba3a6c196609e37bd4e",
+      "after": "821d614bf61bb02a87a892a96979410382ff775fcc6e5060d5d2b7e8cf637b6d",
       "before": null
     },
     "notebooks/week3_train_colab.ipynb": {
@@ -66,6 +70,6 @@
       "before": "ba1dac75c1a079530b8da35a7e881957e7acd0a59bdc2424f6759f25802b3783"
     }
   },
-  "scope": "Reviewed production transition from the original dev.2 pilots to candidate.8. Bounded Event3 native inversion is at most300ms with matching identity. This policy does not authorize mixed trainable origins; that requires the separate reviewed training policy and complete replay. No production G7 is issued by this file.",
+  "scope": "Reviewed source transition from original dev.2 through training reliability maintenance. It does not issue G7, relabel existing data, change collection-design candidate8 or move its immutable tag. Any future collection must independently capture and approve the exact executing candidate on the actual SOC lab.",
   "version": "reviewed-pilot-adoption-v1"
 }

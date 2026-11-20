@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.metadata
 import json
 import math
 import platform
@@ -32,8 +33,10 @@ from ml.metrics import (
     grouped_bootstrap_intervals,
     grouped_uncertainty_status,
     measure_latency_ms,
+    quality_gate_failures,
     reliability_curve,
     select_threshold,
+    training_prior_baseline,
 )
 from ml.models import build_candidates
 from ml.training_sources import verify_training_manifest
@@ -48,10 +51,17 @@ def verify_builder_provenance(
 ) -> None:
     """Shared local/Colab source binding; run before reading either training partition."""
     provenance = manifest.get("provenance", {})
-    if expected_commit is not None and (
-        expected_commit == "unknown" or provenance.get("builder_git_commit") != expected_commit
-    ):
-        raise ValueError("dataset builder commit differs from the executing training commit")
+    if expected_commit is not None:
+        if expected_commit == "unknown":
+            raise ValueError("dataset builder commit differs from the executing training commit")
+        if provenance.get("builder_git_commit") != expected_commit:
+            if manifest.get("manifest_version") != "dataset-manifest-v3":
+                raise ValueError(
+                    "dataset builder commit differs from the executing training commit",
+                )
+            # A prior v3 builder is permitted only by the current Git-pinned exact
+            # manifest review. It cannot impersonate the executing trainer source.
+            verify_training_manifest(manifest, expected_commit=expected_commit)
     if config_path is not None and provenance.get("builder_config_sha256") != hashlib.sha256(
         config_path.read_bytes()
     ).hexdigest():
@@ -388,6 +398,7 @@ def _git_commit() -> str:
 
 
 def train(config_path: Path) -> dict[str, Any]:
+    print("[train] Verifying dataset source, partitions and leakage", flush=True)
     config = load_config(config_path)
     schema = load_feature_schema(Path(config["feature_schema"]))
     processed_dir = Path(config["data"]["processed_dir"])
@@ -412,6 +423,10 @@ def train(config_path: Path) -> dict[str, Any]:
         raise ValueError(f"leakage audit failed: {audit['checks']}")
     eda = exploratory_summary(train_rows, schema)
     profile = feature_profile(train_rows, schema)
+    print(
+        f"[train] Verified {len(train_rows)} TRAIN / {len(validation_rows)} VALIDATION records; "
+        "locked test remains unopened", flush=True,
+    )
 
     artifacts: dict[str, Any] = {}
     all_metrics: dict[str, Any] = {"families": {}}
@@ -442,6 +457,7 @@ def train(config_path: Path) -> dict[str, Any]:
             random_seed=int(config["random_seed"]),
         )
         for model_name, estimator in candidates.items():
+            print(f"[train] {family}: grouped CV candidate {model_name}", flush=True)
             if model_name == "xgboost":
                 positives = int(np.sum(y_train == 1))
                 negatives = int(np.sum(y_train == 0))
@@ -482,6 +498,7 @@ def train(config_path: Path) -> dict[str, Any]:
             cv=inner_splits,
             ensemble=False,
         )
+        print(f"[train] {family}: calibrating selected {selected_name} on TRAIN", flush=True)
         calibrated.fit(x_train, y_train)
         probabilities = calibrated.predict_proba(x_validation)[:, 1]
         selected_threshold = select_threshold(
@@ -516,6 +533,7 @@ def train(config_path: Path) -> dict[str, Any]:
             probabilities,
             selected_threshold["threshold"],
         )
+        print(f"[train] {family}: nested grouped stability assessment on TRAIN", flush=True)
         stability_probabilities, stability_audit = grouped_calibrated_probabilities(
             candidates, x_train, y_train, train_groups,
             outer_splits=inner_splits, folds=int(config["selection"]["inner_cv_folds"]),
@@ -533,15 +551,14 @@ def train(config_path: Path) -> dict[str, Any]:
         threshold_delta = abs(
             float(selected_threshold["threshold"]) - float(inner_threshold["threshold"])
         )
-        gate_failures = []
-        if metrics["uncertainty"]["status"] != "ESTIMATED":
-            gate_failures.append("insufficient_validation_groups")
-        if metrics["brier"] > float(config["selection"]["maximum_brier"]):
-            gate_failures.append("maximum_brier_exceeded")
-        if metrics["ece"] > float(config["selection"]["maximum_ece"]):
-            gate_failures.append("maximum_ece_exceeded")
-        if threshold_delta > float(config["selection"]["maximum_threshold_delta"]):
-            gate_failures.append("threshold_instability")
+        gate_failures = quality_gate_failures(
+            metrics, minimum_precision=float(config["selection"]["minimum_precision"]),
+            maximum_brier=float(config["selection"]["maximum_brier"]),
+            maximum_ece=float(config["selection"]["maximum_ece"]),
+            threshold_delta=threshold_delta,
+            maximum_threshold_delta=float(config["selection"]["maximum_threshold_delta"]),
+        )
+        selected_threshold["threshold_selection_reason"] = selected_threshold["selection_reason"]
         if gate_failures:
             selected_threshold["automation_eligible"] = False
             selected_threshold["selection_reason"] = "calibration_or_stability_gate_failed"
@@ -565,6 +582,10 @@ def train(config_path: Path) -> dict[str, Any]:
         all_metrics["families"][family] = {
             "selected_model": selected_name,
             "candidates": family_results,
+            "prior_baseline": training_prior_baseline(
+                y_train, y_validation, threshold=selected_threshold["threshold"],
+                calibration_bins=int(config["selection"]["calibration_bins"]),
+            ),
         }
         calibration_document["families"][family] = {
             "method": config["selection"]["calibration_method"],
@@ -579,8 +600,20 @@ def train(config_path: Path) -> dict[str, Any]:
             "maximum_ece": float(config["selection"]["maximum_ece"]),
             "gate_failures": gate_failures,
         }
+        print(
+            f"[train] {family}: validation precision={metrics['precision']:.6f}, "
+            f"F1={metrics['f1']:.6f}, Brier={metrics['brier']:.6f}, "
+            f"ECE={metrics['ece']:.6f}; automation_eligible="
+            f"{selected_threshold['automation_eligible']}; gate_failures={gate_failures}",
+            flush=True,
+        )
 
     trained_at = datetime.now(UTC)
+    packages = {
+        re.sub(r"[-_.]+", "-", distribution.metadata["Name"]).lower(): distribution.version
+        for distribution in importlib.metadata.distributions() if distribution.metadata["Name"]
+    }
+    runtime_lock = Path(__file__).resolve().parents[1] / "requirements-runtime.lock"
     metadata = {
         "model_version": f"week3-{trained_at.strftime('%Y%m%dT%H%M%SZ')}",
         "feature_schema_version": schema["version"],
@@ -605,11 +638,23 @@ def train(config_path: Path) -> dict[str, Any]:
         "calibration_revision": calibration_document["revision"],
         "calibration_bins": int(config["selection"]["calibration_bins"]),
         "partition_record_counts": manifest["record_counts"],
+        "training_environment": {
+            "python_implementation": platform.python_implementation(),
+            "platform": platform.platform(),
+            "packages": dict(sorted(packages.items())),
+            "packages_sha256": hashlib.sha256(
+                json.dumps(packages, sort_keys=True, separators=(",", ":")).encode(),
+            ).hexdigest(),
+            "runtime_lock_sha256": hashlib.sha256(runtime_lock.read_bytes()).hexdigest(),
+        },
         "libraries": {
             "python": platform.python_version(),
             "scikit_learn": sklearn.__version__,
             "xgboost": xgboost.__version__,
             "numpy": np.__version__,
+            "scipy": importlib.metadata.version("scipy"),
+            "joblib": joblib.__version__,
+            "threadpoolctl": importlib.metadata.version("threadpoolctl"),
         },
     }
     if manifest["manifest_version"] == "dataset-manifest-v3":
@@ -626,4 +671,5 @@ def train(config_path: Path) -> dict[str, Any]:
     write_json(package_dir / "calibration_validation.json", calibration_document)
     write_json(package_dir / "feature_profile.json", profile)
     shutil.copy2(Path(config["feature_schema"]), package_dir / "feature_schema.json")
+    print(f"[train] Exported model package to {package_dir}", flush=True)
     return metadata
