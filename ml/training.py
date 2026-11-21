@@ -79,6 +79,8 @@ def verify_training_partitions(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     """Validate the builder's contract without reading the locked-test partition."""
     manifest = json.loads((processed_dir / "dataset_manifest.json").read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict):
+        raise ValueError("dataset manifest must be a mapping")
     if manifest.get("manifest_version") == "dataset-manifest-v4-stream-v1":
         from ml.stream_sources import load_stream_partitions
 

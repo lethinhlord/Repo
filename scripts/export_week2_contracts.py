@@ -24,6 +24,10 @@ from api.app.contracts import (  # noqa: E402 - repository root is bootstrapped 
     RiskEvaluationRequest,
     SignedWazuhIngestRequest,
     SignedWazuhIngestResponse,
+    StreamFeatureBatchResponse,
+    StreamFeaturePipelineResponse,
+    StreamFeatureStateResponse,
+    StreamIncidentRequest,
     ThreatIntelligenceResult,
     ThreatLookupRequest,
 )
@@ -74,4 +78,11 @@ if __name__ == "__main__":
     write_json("ti-result.schema.json", ThreatIntelligenceResult.model_json_schema())
     write_json("risk-evaluation-request.schema.json", RiskEvaluationRequest.model_json_schema())
     write_json("risk-evaluation.schema.json", RiskEvaluation.model_json_schema())
+    for name, contract in (
+        ("stream-incident-request.schema.json", StreamIncidentRequest),
+        ("stream-feature-pipeline-response.schema.json", StreamFeaturePipelineResponse),
+        ("stream-feature-batch-response.schema.json", StreamFeatureBatchResponse),
+        ("stream-feature-state-response.schema.json", StreamFeatureStateResponse),
+    ):
+        write_json(name, contract.model_json_schema())
     write_json("openapi-week2.json", app.openapi())
