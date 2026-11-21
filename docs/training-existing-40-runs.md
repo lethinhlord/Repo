@@ -1,5 +1,10 @@
 # Huấn luyện từ bộ 40 run đã có
 
+Nếu đã có bốn file candidate.8 trên Drive, xem
+[bản cập nhật huấn luyện 21/11/2026](training-reliability-20261121.md).
+Quy trình dưới đây mô tả bước xử lý dữ liệu gốc; không cần build, thu pilot hoặc
+upload lại dữ liệu chỉ để dùng mã train mới đã được review.
+
 Tài liệu này hướng dẫn sử dụng nguyên trạng bộ 40 run đã bàn giao, không yêu cầu thu lại dữ liệu. Quy trình dành riêng cho hai nguồn thu đã được review và được ghi trong `config/training-source-compatibility.json`. Không áp dụng quy trình này cho một bộ dữ liệu hỗn hợp khác.
 
 Bản mã dự kiến dùng cho xử lý và huấn luyện là `collection-v4.0.0-candidate.8`. Chỉ thực hiện các lệnh lấy mã dưới đây sau khi tag này đã được phát hành lên GitHub và chủ dự án đã cung cấp SHA đầy đủ được phê duyệt. Tài liệu không xác nhận tag đã được phát hành, lab đã đạt G7 mới hoặc mô hình đã được huấn luyện đạt chất lượng.

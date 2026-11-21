@@ -49,5 +49,22 @@ policy edits until root coordinates shared production hashes.
 
 ## State
 
-Working branch fix/c2-training-reliability based16b19887. No user evidence changed.
-Pending experiment protocol, implementation and final verification.
+Implemented on fix/c2-training-reliability, core e0c777c, notebook ef5bf5f,
+precision-only report correction b5e677e. Both source policies refreshed without
+reading any locked rows. Actual unchanged40 manifest accepted on the new source;
+independent nine-case mutation review passed with zero locked-file reads.
+
+All12 C2 TRAIN evidence runs replayed PASS in isolated16b1988 worktree containing
+only those12 directories. Predeclared10-candidate nested TRAIN-only experiment
+did not establish defensible classifier improvement; keep production LR/RF/XGB,
+the24 features, original config/partitions and AUTO gates unchanged.
+
+RED/GREEN evidence covers gate completeness, precision-only written record,
+training metadata, historical source transition and live subprocess logs.
+Actual pinned Linux3.12.15 bootstrap/dependency checks and POSIX interruption tests
+passed independently. Full Windows regression interrupted after14/23 groups
+overnight; 21November resume preserves passed reports and reruns missing groups.
+Final actual-notebook backend run in pinned Linux and release checks are pending.
+
+Evidence directory: outputs/c2-training-improvement-20261120. The initial Colab
+package remains immutable at D:/model-package-week3; no new lab G7 issued.
