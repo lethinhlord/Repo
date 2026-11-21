@@ -98,6 +98,11 @@ def test_trainer_output_is_consumed_by_colab_result_and_archive_cells(
     config_path, manifest = prepare_dataset(tmp_path)
     (tmp_path / "processed/locked_test.jsonl").unlink()
     metadata = train(config_path)
+    assert {"scipy", "joblib", "threadpoolctl"} <= metadata["libraries"].keys()
+    environment = metadata["training_environment"]
+    assert environment["python_implementation"] == "CPython"
+    assert environment["packages"]["scikit-learn"] == metadata["libraries"]["scikit_learn"]
+    assert len(environment["runtime_lock_sha256"]) == 64
     notebook = json.loads((ROOT / "notebooks/week3_train_colab.ipynb").read_text(encoding="utf-8"))
     result_cell = next(
         "".join(cell["source"])

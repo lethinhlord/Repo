@@ -75,6 +75,37 @@ def classification_metrics(
     }
 
 
+def quality_gate_failures(
+    metrics: dict[str, Any], *, minimum_precision: float, maximum_brier: float,
+    maximum_ece: float, threshold_delta: float, maximum_threshold_delta: float,
+) -> list[str]:
+    """Report every failed gate, including a threshold that missed precision."""
+    conditions = (
+        (metrics["precision"] < minimum_precision, "minimum_precision_not_met"),
+        (metrics["uncertainty"]["status"] != "ESTIMATED", "insufficient_validation_groups"),
+        (metrics["brier"] > maximum_brier, "maximum_brier_exceeded"),
+        (metrics["ece"] > maximum_ece, "maximum_ece_exceeded"),
+        (threshold_delta > maximum_threshold_delta, "threshold_instability"),
+    )
+    return [reason for failed, reason in conditions if failed]
+
+
+def training_prior_baseline(
+    training_labels: np.ndarray, assessment_labels: np.ndarray, *, threshold: float,
+    calibration_bins: int = 10,
+) -> dict[str, Any]:
+    """A feature-free reference whose probability is learned from TRAIN only."""
+    probability = float(np.mean(training_labels))
+    return {
+        "name": "training_class_prior", "fit_partition": "train",
+        "malicious_probability": probability, "threshold": threshold,
+        "metrics": classification_metrics(
+            assessment_labels, np.full(len(assessment_labels), probability), threshold,
+            calibration_bins=calibration_bins,
+        ),
+    }
+
+
 def reliability_curve(
     labels: np.ndarray, probabilities: np.ndarray, *, bins: int = 10
 ) -> list[dict[str, float | int]]:

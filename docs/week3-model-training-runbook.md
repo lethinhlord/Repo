@@ -1,5 +1,9 @@
 # Week 3 model training runbook
 
+For the unchanged candidate.8 four-file package, the reviewed training-only
+update is described in [the 21 November guide](training-reliability-20261121.md).
+Its current trainer SHA is distinct from the retained dataset builder SHA.
+
 For the existing `raw-evidence-40valid` handoff, use
 [the 40-run processing guide](training-existing-40-runs.md). It preserves the
 23 runs from db166d8 and 17 from 273d1d0, creates a reviewed v3 manifest, and
@@ -130,21 +134,26 @@ On the trusted Ubuntu VM, generate the checksum file before uploading the four f
 ```
 
 Do not place `locked_test.jsonl`, split mapping, raw telemetry, `.env`, credentials,
-or API keys in the staging folder. Open the released notebook from `main` at the
-owner-approved source revision. Set its `EXPECTED_TRAINING_COMMIT` field to the exact
-40-character SHA approved by the owner and recorded as
-`dataset_manifest.json.provenance.builder_git_commit` by the trusted build. Do not
-substitute a branch name, current HEAD, or copy an unapproved SHA from an upload.
-The approved SHA and manifest builder SHA must agree. Build with that approved clean
-checkout and its committed `ml/training_config.yaml`; changing the config requires a
-new approved source revision and rebuild. No notebook code patch is needed.
+or API keys in the staging folder. Open the released notebook at the owner-approved
+training revision. Set `EXPECTED_TRAINING_COMMIT` to its full SHA from the handoff.
+Use a fresh Colab CPU runtime and run cells in order. The checkout must be detached at
+that exact revision. The manifest retains its original builder SHA. Legacy v2 requires
+the same builder and trainer SHA. For v3, a different builder requires the exact historical
+manifest and source transition authorized by the approved training policy. The bootstrap
+checks the staged checksums, UNOPENED status, config, collection design and trusted
+source policy before installing training dependencies.
 
-Use a fresh Colab runtime with no existing project directory, then run cells in order.
-Before installing repository dependencies or running EDA, the notebook checks all three
-data hashes, UNOPENED status, approved/builder SHA equality, checks out that exact SHA
-in detached mode, and verifies the config SHA against the manifest. A stale project,
-missing checksum, source mismatch or config mismatch stops the run. The notebook performs EDA,
-checks split independence, runs Ruff and pytest, executes the trusted training module,
+The Colab kernel mounts Drive and displays results. A verified uv wheel provisions an
+isolated CPython 3.12.15, matching the Linux AMD64 interpreter in the pinned API base
+image. The notebook installs the API's binary packages with the SHA-256 hashes in
+`requirements-runtime.lock`, constrains additional quality and notebook dependencies
+to those runtime versions, then records the executable, Python version, installed core
+versions and lock checksum. The same isolated executable verifies the visible partitions,
+generates TRAIN EDA, runs Ruff and the full pytest suite, and trains the models.
+Each phase streams stdout and stderr to the notebook and appends to
+`operator-logs/week3-colab/week3-colab-training.log`. This transcript also records
+failed or interrupted phases in the current Colab VM. A successful run includes it as
+`evidence/week3-colab-training.log` in the archive
 and writes `model-package-week3.tar.gz` to:
 
 ```text
@@ -152,8 +161,8 @@ MyDrive/DATN/week3-results/
 ```
 
 The notebook deliberately stops if a locked-test file is visible in either the Drive
-staging folder or the Colab checkout. Runtime, ML and notebook dependencies are pinned
-in `requirements.lock`, `requirements-ml.lock` and `requirements-notebook.lock`.
+staging folder or the Colab checkout. The additional training dependencies come from
+`requirements.lock`, `requirements-ml.lock` and `requirements-notebook.lock`.
 
 ### Option B: Ubuntu VM
 
@@ -325,7 +334,8 @@ Do not capture passwords, SSH private keys, API keys, `.env`, or raw personal da
 ## Audit corrections: provenance, calibration and challenge replay
 
 Local training and the Colab partition gate use the same builder provenance validator.
-The builder commit must equal the executing training commit, and the byte hash of the
+Legacy v2 requires equal builder and trainer commits. A reviewed v3 historical manifest
+requires an explicit source transition at the executing training commit. The byte hash of the
 training configuration must equal the builder configuration hash, before train or
 validation is read. Rebuild under an approved source/configuration if they differ; do
 not edit manifest hashes to bypass this gate. The Colab pre-install owner approval and

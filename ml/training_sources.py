@@ -226,6 +226,43 @@ def verify_export_records(
     return canonical
 
 
+def _reviewed_manifest_policy(
+    root: Path, manifest: dict, current: dict, current_sha: str, trainer_commit: str,
+) -> tuple[dict, str, str]:
+    """Authorize an exact prior dataset without rewriting its processor identity."""
+    builder = manifest.get('provenance', {}).get('builder_git_commit')
+    if builder == trainer_commit:
+        return current, current_sha, trainer_commit
+    approvals = current.get('approved_training_manifests', {})
+    if not isinstance(approvals, dict):
+        raise ValueError('invalid pinned historical training review')
+    approved = approvals.get(digest(manifest))
+    if (not isinstance(approved, dict) or approved.get('builder_commit') != builder
+            or not isinstance(builder, str) or re.fullmatch(r'[0-9a-f]{40}', builder) is None):
+        raise ValueError('prior processing manifest is outside the pinned training review')
+    _git(root, 'merge-base', '--is-ancestor', builder, trainer_commit)
+    raw = _files(root, builder).get(POLICY_RELATIVE)
+    if raw is None or hashlib.sha256(raw).hexdigest() != approved.get('policy_sha256'):
+        raise ValueError('historical processing policy differs from the pinned training review')
+    policy = json.loads(raw)
+    if (not isinstance(policy, dict) or policy.get('version') != POLICY_VERSION
+            or policy.get('processing_sha256') != approved.get('processing_sha256')
+            or policy.get('processing_sha256') != processing_hash(root, builder)):
+        raise ValueError('historical processing source differs from the pinned training review')
+    # Training code may evolve, but the reviewed observations, collection semantics,
+    # cohort membership and original feature bytes must not silently change with it.
+    shared = (
+        'approved_runs', 'origins', 'partitions', 'dataset_hash_sha256',
+        'source_config_sha256', 'audit_status', 'stratum_run_counts',
+        'collection_contract_sha256', 'design_semantics_sha256',
+        'feature_schema_sha256', 'collection_design_sha256', 'builder_config_sha256',
+        'split_assignment_commitment_sha256',
+    )
+    if any(policy.get(key) != current.get(key) for key in shared):
+        raise ValueError('historical dataset contract differs from the current training review')
+    return policy, hashlib.sha256(raw).hexdigest(), builder
+
+
 def verify_training_manifest(
     manifest: dict, rows_by_partition: dict[str, list[dict]] | None = None, *,
     root: Path | None = None, expected_commit: str | None = None,
@@ -257,14 +294,18 @@ def verify_training_manifest(
     if manifest.get('manifest_version') != 'dataset-manifest-v3':
         raise ValueError('unsupported training manifest version')
     policy, policy_sha, commit = _policy(root)
+    if expected_commit is not None and expected_commit != commit:
+        raise ValueError('executing trainer differs from the pinned expected source')
+    policy, policy_sha, builder_commit = _reviewed_manifest_policy(
+        root, manifest, policy, policy_sha, commit,
+    )
     supplied = collection.get('source_compatibility')
     if not isinstance(supplied, dict):
         raise ValueError('reviewed source compatibility certificate is missing')
-    cert = _certificate(policy, policy_sha, commit, supplied.get('processing_runtime'))
+    cert = _certificate(policy, policy_sha, builder_commit, supplied.get('processing_runtime'))
     if (collection.get('source_compatibility') != cert
             or provenance.get('source_compatibility_sha256') != digest(cert)
-            or provenance.get('builder_git_commit') != commit
-            or (expected_commit is not None and expected_commit != commit)
+            or provenance.get('builder_git_commit') != builder_commit
             or manifest.get('dataset_hash_sha256') != policy['dataset_hash_sha256']
             or manifest.get('locked_test_sha256') != policy['partitions']['locked_test']['sha256']
             or manifest.get('source_partitions') != policy['partitions']):
