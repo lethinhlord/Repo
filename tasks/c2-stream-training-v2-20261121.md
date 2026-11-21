@@ -52,7 +52,7 @@ Append explicit TCP count, DNS fraction, process/conversation counts, dominant
 conversation share/count, timing/periodicity/order availability masks, per-stream
 mean/CV/periodicity/duration/order alternation, destination history/novelty and
 DNS-only mode. No exact identities, URLs, nonce, scenario/label, TI/asset/risk
-inputs. A fixed deterministic tie-break resolves equal stream counts.
+inputs. Equal maximum stream counts remain ambiguous: no representative target or dominant timing is asserted.
 
 Retain full-window legacy behavior alongside decomposition. Availability masks
 represent insufficient sample support; zero must not silently mean measured
@@ -63,4 +63,8 @@ false.
 ## State
 
 Branch feature/c2-stream-training-v2, starting source e8f970f3. Prior audit is
-saved in D:/C2_TRAIN_SIGNAL_AUDIT_20261121. Implementation in progress.
+saved in D:/C2_TRAIN_SIGNAL_AUDIT_20261121. Core implementation, exact raw-verified derivation and four-file staging are complete. Full Windows regression and pinned Linux notebook fitting/export checks are running; no release or automation approval is claimed yet.
+
+Builder:57d815d83ace89e8db8c1859ad7b8122bb2e7493. Exact review commit:f2a9438129fced35520af2bc1ea9f73d3db5c401. Derived manifest:f552c36d391bcf097af77eba3894d2a852f870a85d453b249499962dae2c23d9. Original889 files, original v3 staging and original12-file model remain unchanged. Independent core/source/notebook and guide reviews are retained under outputs/c2-stream-training-v2-20261121.
+
+The compact12 representation was predeclared before TRAIN fits. Nested TRAIN comparison did not establish broad performance or automation readiness (three independent C2 cohorts only). Held-out processing was a deterministic blind transform after code was committed; no locked-test partition was opened for feature/model selection. The full44 includes structural zeros and unsupported DNS-only observations, with explicit REVIEW behavior instead of silently dropping them.
