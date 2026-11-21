@@ -34,6 +34,9 @@ from api.app.contracts import (
     RiskEvaluationRequest,
     SignedWazuhIngestRequest,
     SignedWazuhIngestResponse,
+    StreamFeatureBatchResponse,
+    StreamFeatureStateResponse,
+    StreamIncidentRequest,
     ThreatIntelligenceResult,
     ThreatLookupRequest,
     WazuhAlert,
@@ -57,6 +60,7 @@ from ml.feature_pipeline import (
     extract_wazuh_features,
 )
 from ml.inference import InferenceInputError, ModelPackageError, ModelRuntime
+from ml.stream_pipeline import aggregate_stream_alerts
 
 logger = logging.getLogger(__name__)
 
@@ -87,10 +91,13 @@ def _model_monitoring_path() -> str:
 
 
 @lru_cache(maxsize=4)
-def load_feature_state_store(path: str, retention_seconds: int) -> FeatureStateStore:
+def load_feature_state_store(
+    path: str, retention_seconds: int, feature_profile: str = "features-v3",
+) -> FeatureStateStore:
     return FeatureStateStore(
         Path(path), retention_seconds=retention_seconds,
         late_arrival_grace_seconds=collection_grace_seconds(),
+        feature_profile=feature_profile,
     )
 
 
@@ -125,28 +132,31 @@ def _allow_mock_inference() -> bool:
     return os.getenv("ALLOW_MOCK_INFERENCE", "false").strip().lower() == "true"
 
 
-def _model_state() -> tuple[str, str]:
+def _model_state() -> tuple[str, str, str]:
     package_dir = os.getenv("MODEL_PACKAGE_DIR", "").strip()
     if not package_dir:
-        return ("not_configured", "mock" if _allow_mock_inference() else "unconfigured")
+        return (
+            "not_configured", "mock" if _allow_mock_inference() else "unconfigured", "features-v3",
+        )
     try:
-        load_model_runtime(package_dir, _model_monitoring_path())
+        runtime = load_model_runtime(package_dir, _model_monitoring_path())
     except (ModelPackageError, OSError, ValueError):
-        return ("invalid", "unconfigured")
-    return ("ready", "trained")
+        return ("invalid", "unconfigured", "features-v3")
+    return ("ready", "trained", runtime.metadata["feature_schema_version"])
 
 
 @app.get("/ready", response_model=ReadinessResponse)
 def readiness() -> ReadinessResponse:
     raw_mode = os.getenv("VT_MODE", "mock").strip().lower()
     mode = raw_mode if raw_mode in {"mock", "live", "disabled"} else "invalid"
-    model_status, inference_mode = _model_state()
+    model_status, inference_mode, feature_schema_version = _model_state()
     degraded = (
         mode == "invalid"
         or (mode == "live" and not os.getenv("VT_API_KEY"))
         or model_status != "ready"
     )
     return ReadinessResponse(
+        feature_schema_version=feature_schema_version,
         status="degraded" if degraded else "ready",
         ti_mode=mode,
         model_status=model_status,
@@ -278,6 +288,48 @@ def features_from_wazuh_batch(batch: WazuhAlertBatch) -> FeatureBatchResponse:
         batch.alerts,
         window_minutes=batch.window_minutes,
     )
+
+
+@app.post("/features/wazuh/stream/batch", response_model=StreamFeatureBatchResponse)
+def features_from_wazuh_stream_batch(batch: WazuhAlertBatch) -> StreamFeatureBatchResponse:
+    return aggregate_stream_alerts(batch.alerts, window_minutes=batch.window_minutes)
+
+
+@app.post("/predict/stream", response_model=PredictionResponse)
+def predict_stream(incident: StreamIncidentRequest) -> PredictionResponse:
+    if not os.getenv("MODEL_PACKAGE_DIR", "").strip():
+        raise HTTPException(status_code=503, detail="a reviewed stream model package is required")
+    return predict(incident)
+
+
+@app.post("/features/wazuh/stream/stateful", response_model=StreamFeatureStateResponse)
+def stream_features_stateful(alert: WazuhAlert) -> StreamFeatureStateResponse:
+    path = os.getenv("FEATURE_STREAM_STATE_DB", "/tmp/datn-feature-state-stream-v1.sqlite3").strip()
+    try:
+        retention = int(os.getenv("FEATURE_STATE_RETENTION_SECONDS", "86400"))
+        return load_feature_state_store(path, retention, "features-v4-stream-v1").ingest(alert)
+    except FeatureStateConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        raise HTTPException(
+            status_code=503, detail=f"stream feature state unavailable: {exc}",
+        ) from exc
+
+
+@app.post("/features/wazuh/stream/finalize-window", response_model=StreamFeatureStateResponse)
+def stream_features_finalize(request: FeatureWindowFinalizeRequest) -> StreamFeatureStateResponse:
+    path = os.getenv("FEATURE_STREAM_STATE_DB", "/tmp/datn-feature-state-stream-v1.sqlite3").strip()
+    try:
+        retention = int(os.getenv("FEATURE_STATE_RETENTION_SECONDS", "86400"))
+        return load_feature_state_store(path, retention, "features-v4-stream-v1").finalize_window(
+            request.alert_id, window_minutes=request.window_minutes,
+        )
+    except FeatureStateConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        raise HTTPException(
+            status_code=503, detail=f"stream feature state unavailable: {exc}",
+        ) from exc
 
 
 @app.post("/features/wazuh/stateful", response_model=FeatureStateResponse)

@@ -29,11 +29,13 @@ class StreamObservation:
     network: NetworkObservation
     process_instance: str
     process_image: str
+    source_event_id: str = ""
 
 
 def conversation_key(item: StreamObservation) -> tuple[str, str, int | None, str]:
     n = item.network
-    return (basename(item.process_image), normalize_ip(n.destination).strip("."),
+    image = item.process_image.strip().replace("/", "\\").casefold()
+    return (image, normalize_ip(n.destination).strip("."),
             n.destination_port, str(n.protocol or "").casefold())
 
 
@@ -41,8 +43,11 @@ def tcp_conversations(observations: list[StreamObservation]) -> list[list[Stream
     groups = defaultdict(list)
     identities = {}
     for item in observations:
-        image, guid = basename(item.process_image), item.process_instance.strip().casefold()
-        if not guid or not image or image in {"<unknown process>", "&lt;unknown process&gt;"}:
+        image = item.process_image.strip().replace("/", "\\").casefold()
+        guid = item.process_instance.strip().casefold()
+        if not guid or not image or basename(image) in {
+            "<unknown process>", "&lt;unknown process&gt;",
+        }:
             raise ValueError("verified process identity is required for stream observations")
         if guid in identities and identities[guid] != image:
             raise ValueError("conflicting process identity in stream observations")

@@ -93,3 +93,22 @@ def test_tied_dominant_stream_is_explicitly_ambiguous():
 def test_missing_process_identity_is_not_a_verified_conversation():
     with pytest.raises(ValueError, match="process identity"):
         derive_stream_features([observation(0, image="", guid="")])
+
+
+def test_same_basename_at_different_executable_paths_is_not_one_conversation():
+    result = derive_stream_features([
+        observation(0, image=r"C:\Windows\System32\curl.exe", guid="system"),
+        observation(5, image=r"C:\Windows\System32\curl.exe", guid="system"),
+        observation(0, image=r"C:\Temp\curl.exe", guid="other"),
+        observation(12, image=r"C:\Temp\curl.exe", guid="other"),
+    ])
+    assert result['tcp_conversation_count'] == 2
+    assert result['dominant_tcp_unique'] == 0
+
+
+def test_windows_image_case_and_slash_adapter_changes_preserve_conversation():
+    result = derive_stream_features([
+        observation(0, image=r"C:\Windows\System32\curl.exe", guid="one"),
+        observation(5, image="c:/WINDOWS/system32/CURL.EXE", guid="two"),
+    ])
+    assert result['tcp_conversation_count'] == 1

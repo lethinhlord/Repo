@@ -1618,6 +1618,7 @@ def _verify_full_capture_parity(
     evidence_dir: Path,
     *,
     compare: bool = True,
+    feature_profile: str = "features-v3",
 ) -> IncidentRequest:
     """Replay the full asset bucket without label, scenario or nonce filtering."""
     # Anchor parity to the actual action bucket, not session START.
@@ -1677,8 +1678,19 @@ def _verify_full_capture_parity(
         raise CollectionError("full-capture parity has no replayable records")
     baseline = load_baseline(evidence_dir / "context-baseline.json")
     taxonomy = _load_taxonomy(evidence_dir / "suspicious-process-taxonomy.yaml")
+    aggregate = aggregate_wazuh_alerts
+    if feature_profile == "features-v4-stream-v1":
+        from ml.stream_pipeline import aggregate_stream_alerts
+
+        if compare:
+            raise CollectionError(
+                "stream projection requires a separate legacy-vector verification",
+            )
+        aggregate = aggregate_stream_alerts
+    elif feature_profile != "features-v3":
+        raise CollectionError("unsupported replay feature profile")
     try:
-        batch = aggregate_wazuh_alerts(
+        batch = aggregate(
             alerts,
             baseline=baseline,
             source_config=source.model_dump(mode="json"),
