@@ -23,6 +23,9 @@ def reviewed(tmp_path, monkeypatch):
     root = tmp_path / 'source'
     root.mkdir()
     git(root, 'init', '-q')
+    # Synthetic histories bind literal bytes; do not inherit a host's archive
+    # newline conversion (the actual project has its own committed LF rules).
+    git(root, 'config', 'core.autocrlf', 'false')
     git(root, 'remote', 'add', 'origin', 'https://github.com/lethinhlord/Repo.git')
     (root / 'module.py').write_text('version = 1\n')
     (root / 'config').mkdir()

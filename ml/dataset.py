@@ -96,6 +96,7 @@ class DatasetRecord:
     purpose: str = "trainable"
     cohort_id: str | None = None
     incident: dict[str, Any] | None = None
+    source_incident: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         result = {
@@ -111,6 +112,8 @@ class DatasetRecord:
         }
         if self.incident is not None:
             result["incident"] = self.incident
+        if self.source_incident is not None:
+            result["source_incident"] = self.source_incident
         return result
 
 

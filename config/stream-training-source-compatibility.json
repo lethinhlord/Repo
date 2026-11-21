@@ -1,0 +1,10 @@
+{
+  "version": "reviewed-stream-training-v1",
+  "status": "BUILD_PENDING",
+  "scope": "Training is refused until the exact parent, deterministic stream transform, unchanged memberships and derived partition bytes have been reviewed.",
+  "parent_manifest_sha256": "3081768547d6a14f09d1e8f79fe83f08d17fed52b4012285a57f219799807bca",
+  "approved_manifest_sha256": null,
+  "processing_sha256": null,
+  "feature_schema_sha256": null,
+  "builder_config_sha256": null
+}

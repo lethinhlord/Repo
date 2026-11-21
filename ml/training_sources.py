@@ -59,10 +59,11 @@ def source_tree_hash(root: Path, commit: str) -> str:
 
 
 def processing_hash(root: Path, commit: str = 'HEAD') -> str:
-    # Both review documents are separately Git-pinned. Excluding them avoids
-    # circular hashes between source and the two review-policy commitments.
+    # Review documents are separately Git-pinned. Excluding them avoids
+    # circular hashes between source and review-policy commitments.
     return digest({n: hashlib.sha256(b).hexdigest() for n, b in _files(root, commit).items()
-                   if n not in {POLICY_RELATIVE, 'config/collection-pilot-adoption.json'}
+                   if n not in {POLICY_RELATIVE, 'config/collection-pilot-adoption.json',
+                                'config/stream-training-source-compatibility.json'}
                    and not n.startswith(('docs/', 'tests/', 'tasks/'))})
 
 

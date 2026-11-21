@@ -1,5 +1,5 @@
 {
-  "collection_patch_sha256": "aab7962d3f97e03183d7465a28723daf623be4d31bddb900b0244d47445de4db",
+  "collection_patch_sha256": "ba07a525e8e31154e34e69bcaa1feb4a0c467fa28e5c7716b88313d8fe23d498",
   "from_candidate": {
     "commit": "db166d814857ef061982839a74a17af6e500625f",
     "origin": "https://github.com/lethinhlord/Repo.git",
@@ -13,6 +13,10 @@
     "The40-run training dataset remains exploratory; no strong response approval."
   ],
   "reviewed_collection_changes": {
+    ".gitignore": {
+      "after": "ad726fc3c808e83582e1f498de2feb380d26d628470e062e43e48c77a167a3da",
+      "before": "fdee38680a9cbbff45ace34179aad9ade82ee8bbb03328a6d2bfd9a684b6117a"
+    },
     "README.md": {
       "after": "e2b6e2ed8b257c1174251983abb812f8fc6efb3ef450acc216ae8dc96f6266ad",
       "before": "3b83bc0be9a7d72d6c96cc815485ac25d776e487512d446cc2ad0b1c450dd8e6"
@@ -37,8 +41,12 @@
       "after": "16466a213032fbdff4eece95cf30354c066c42f643d226e94ff7ce685da1d2c4",
       "before": "8d259fce297e4ce776149fdc0f7e4a7ae711081921fa8a96840d6c9b10dc2d2b"
     },
+    "config/stream-training-source-compatibility.json": {
+      "after": "e84dd537bcc96acb1596b88be0dd8c9e6dbdb65ddf66fb5e16f1825d84cf54a1",
+      "before": null
+    },
     "config/training-source-compatibility.json": {
-      "after": "f2a919e0d9a806923441a2c2b54d8e3bd967a85ded2ccd654e3121d7ad79a535",
+      "after": "1b3a4a3ee30c964131a39f10043b65695bdbe03abe6c6cb9f7c75b3ce5fc902b",
       "before": null
     },
     "ml/build_dataset.py": {
@@ -52,6 +60,10 @@
     "ml/command_logging.py": {
       "after": "992c67bbfad2aef98b2fceb5619206f810321556c4038b392c53272f8d8dbe72",
       "before": null
+    },
+    "ml/dataset.py": {
+      "after": "916e549b8018546617277bef51fce7cfb64597774d25d97b650c0aea1f413f8f",
+      "before": "213061fc922ebabda0d3f820a2dfa7452d6ffcf86e42fb8b402ac252acd86a7c"
     },
     "ml/dataset_audit.py": {
       "after": "9e4076f96625c72a1a3d36983fe8589299f630ef8a276236443791f0aed55a92",
@@ -81,6 +93,10 @@
       "after": "47cc621d3be2d8bd83bfdc910b4eae8c033a4e1b06012d2bd37b29afd38dafb2",
       "before": "9a517de3fc81a3948bac7e461b462a8d74e14bc75da2623d08ba7bdce1a8b435"
     },
+    "ml/stream_dataset.py": {
+      "after": "006df6c172b682e3efe7a33dc4b981eeb6facfb17f08706dfd388f2cea6cd0dd",
+      "before": null
+    },
     "ml/stream_features.py": {
       "after": "0e23de9ebe88fc53ed605d0beba5f4e75d702b2bbaada3a6af49d42fbdab4880",
       "before": null
@@ -89,17 +105,29 @@
       "after": "00a9da2ee9ca5db9a7b7b153ea6e86f86313207fb6485b0c6ded2badb50fda9d",
       "before": null
     },
+    "ml/stream_sources.py": {
+      "after": "2be5918a823a39ba7757d16a4acc3fd612c01bcfdf1cf602a9088ebb471d0949",
+      "before": null
+    },
     "ml/training.py": {
-      "after": "2546440450f59f4ed304a0beebe99964ac43c2e3715f6f022049a508da2a4951",
+      "after": "d4f5b171706e7d93ea4e59fd37c82b5c1150f7afef9b905740c1f6dee94fd16f",
       "before": "e903233a6822d5fc62ba0f5292e6d4b1f389906adfa4c171fc8ed8f0d7cf6df1"
     },
     "ml/training_sources.py": {
-      "after": "821d614bf61bb02a87a892a96979410382ff775fcc6e5060d5d2b7e8cf637b6d",
+      "after": "196896389cdfb61ab3c3451cf33bd97cf548bfc495c2c8926a4fa454a730417b",
+      "before": null
+    },
+    "ml/training_stream_config.yaml": {
+      "after": "90b316a41daaacf7daf18f859585c2126d3207c3c188d0591e55e0982fb54290",
       "before": null
     },
     "notebooks/week3_train_colab.ipynb": {
       "after": "c5fa46768829b090e2872a708658bab1c3fbf9589c5917fefdcc3f487d21f46c",
       "before": "542cca82651e139e6ab3f5f8dadc1cfd159d2595c3b19a59465cb06de829355d"
+    },
+    "notebooks/week3_train_stream_colab.ipynb": {
+      "after": "74ed5960099c799f1142afcb3fa66933b148da8d225dcd4bbfb6e6fabcee8504",
+      "before": null
     },
     "scripts/audit_dataset.py": {
       "after": "7d85a3b0a53a0692e7e55848932b05d5408d6eef4add692af1a142b5afded4c3",
