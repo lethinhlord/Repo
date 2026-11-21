@@ -62,9 +62,17 @@ the24 features, original config/partitions and AUTO gates unchanged.
 RED/GREEN evidence covers gate completeness, precision-only written record,
 training metadata, historical source transition and live subprocess logs.
 Actual pinned Linux3.12.15 bootstrap/dependency checks and POSIX interruption tests
-passed independently. Full Windows regression interrupted after14/23 groups
-overnight; 21November resume preserves passed reports and reruns missing groups.
-Final actual-notebook backend run in pinned Linux and release checks are pending.
+passed independently. Windows regression completed all23 groups:1258passed,
+2platform skips,0failures/errors. The Linux full actual-notebook backend on9289c88
+completed bootstrap/source/EDA, full quality gate (1193passed/60platform skips),
+actual training, metadata/gates and export. The initial harness failure from missing
+/dev/shm was retained, repaired in the harness and verified by the full rerun;
+no product tests/assertions were weakened. Local Drive/Git/display substitutions
+are declared; this is not a real Google Colab session.
+
+Final independent review at9289 found no regression in source/runtime/quality gates,
+the user Colab metadata preservation or either refreshed policy. Release identity
+and the actual published-SHA model are recorded in the final handoff separately.
 
 Evidence directory: outputs/c2-training-improvement-20261120. The initial Colab
 package remains immutable at D:/model-package-week3; no new lab G7 issued.

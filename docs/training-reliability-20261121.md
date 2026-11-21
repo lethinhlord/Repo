@@ -6,8 +6,8 @@ Bản cập nhật dành cho đúng bốn file đã đưa lên Drive từ candid
 lại, đổi nhãn, xóa mẫu, chia lại dữ liệu hoặc sửa manifest/checksum cũ. Dữ liệu
 vẫn do commit `16b19887c65b850db38199bad79e7b8e50c0b8db` xử lý; mã huấn luyện
 được phát hành riêng. Dùng SHA đầy đủ của bản train được bàn giao, không lấy SHA
-builder cũ điền vào notebook mới. Bản phát hành dự kiến có tag `training-v1.1.0`;
-chỉ dùng sau khi tag và SHA đã được xác minh trong bàn giao.
+builder cũ điền vào notebook mới. Tag của bản train là `training-v1.1.0`;
+SHA đầy đủ và link Colab cố định theo SHA được ghi trong bộ bàn giao đã xác minh.
 
 Model Colab ngày 20/11 đã train và export đúng, nhưng chưa đạt chất lượng AUTO.
 Archive gốc có SHA-256
@@ -119,3 +119,33 @@ cấp G7 mới, ký model, triển khai dịch vụ hoặc phê duyệt AUTO.
 Quy trình tạo lại bộ bốn file ban đầu khi thực sự cần đối chiếu nằm tại
 [hướng dẫn xử lý 40 run](training-existing-40-runs.md); không cần chạy lại quy
 trình đó chỉ để dùng notebook train mới.
+
+## Kiểm chứng bản cập nhật
+
+Kết quả ngày 21/11/2026:
+
+- Windows: 1,258 test đạt, 2 test bỏ qua theo nền tảng,
+  không lỗi. Các nhóm bị ngắt qua đêm được chạy tiếp; nhóm test có thay đổi được
+  chạy lại. Đây là báo cáo gộp các nhóm, không giả định một phiên duy nhất.
+- Linux: toàn bộ cell backend thực tế của notebook tại commit
+  `9289c889ceabe60770de453a1671d4fd7147ce74` đã chạy lần lượt: kiểm source,
+  bootstrap, kiểm runtime, stage, preflight/EDA, Ruff, toàn bộ pytest, train,
+  kiểm metadata/metric và export. 1,193 test đạt, 60 test bỏ qua theo nền tảng,
+  không lỗi. Không bỏ hoặc nới assertion để đạt kết quả này.
+- Môi trường Linux thử nghiệm dùng đúng image API đã pin, CPython 3.12.15 và
+  31 dependency runtime đúng lock. Bản thử ban đầu thiếu `/dev/shm` đã được giữ
+  log lỗi; lần chạy đầy đủ sau bổ sung mount chuẩn đã đạt. Đây là sửa harness
+  kiểm chứng, không thay logic hoặc assertion của sản phẩm.
+- Mount Drive, Git transport và hiển thị native kernel được thay bằng thư mục,
+  bản clone và giao diện hiển thị cục bộ. Preflight, test và fit chạy thật bằng
+  interpreter cô lập; không coi đây là phiên Google Colab thực tế.
+- Kiểm chéo độc lập xác minh policy/source tại đúng commit trên, giữ lịch sử và
+  metadata bản Colab người dùng đã lưu. Kiểm manifest thật nhận 24/8 mẫu, các
+  trường hợp biến đổi metadata bị từ chối, không mở file test khóa.
+- Đối chiếu lại 889 file handoff gốc, 12 file model cũ và bốn file staging:
+  nguyên vẹn. Gói model gốc không bị ghi đè. Thuật toán, feature schema, cấu hình,
+  nhãn, cohort, split và cổng AUTO giữ nguyên.
+
+Báo cáo bàn giao ghi riêng SHA đã chạy toàn bộ notebook và SHA phát hành cuối.
+Nếu merge/chốt tài liệu tạo SHA mới, chỉ train lại từ chính checkout mới và ghi
+SHA thực thi thật; không sửa metadata của model đã xuất để đổi danh tính nguồn.

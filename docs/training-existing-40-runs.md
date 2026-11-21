@@ -7,7 +7,7 @@ upload lại dữ liệu chỉ để dùng mã train mới đã được review.
 
 Tài liệu này hướng dẫn sử dụng nguyên trạng bộ 40 run đã bàn giao, không yêu cầu thu lại dữ liệu. Quy trình dành riêng cho hai nguồn thu đã được review và được ghi trong `config/training-source-compatibility.json`. Không áp dụng quy trình này cho một bộ dữ liệu hỗn hợp khác.
 
-Bản mã dự kiến dùng cho xử lý và huấn luyện là `collection-v4.0.0-candidate.8`. Chỉ thực hiện các lệnh lấy mã dưới đây sau khi tag này đã được phát hành lên GitHub và chủ dự án đã cung cấp SHA đầy đủ được phê duyệt. Tài liệu không xác nhận tag đã được phát hành, lab đã đạt G7 mới hoặc mô hình đã được huấn luyện đạt chất lượng.
+Bộ dữ liệu hiện có đã được xử lý bằng `collection-v4.0.0-candidate.8`, commit `16b19887c65b850db38199bad79e7b8e50c0b8db`. Các bước dưới đây giữ đúng bản xử lý đó khi cần dựng lại để đối chiếu. Huấn luyện bằng mã mới dùng tag riêng `training-v1.1.0` theo hướng dẫn 21/11 ở trên, giữ nguyên builder trong manifest. Việc phát hành phần mềm không cấp G7 mới hoặc chứng minh chất lượng model.
 
 ## 1. Phạm vi dữ liệu và bằng chứng
 

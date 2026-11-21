@@ -1,5 +1,12 @@
 # Trạng thái phần mềm và bàn giao
 
+Ngày 21/11/2026: bản train riêng `training-v1.1.0` dùng nguyên bốn file
+candidate.8 hiện có. Xem [hướng dẫn train mới](training-reliability-20261121.md).
+Đã kiểm runtime cô lập, source/certificate cũ, toàn bộ hồi quy và train/export
+Linux thật. Bản cập nhật cải thiện độ tái lập và báo cáo; thử nghiệm TRAIN-only
+chưa chứng minh cải thiện khả năng phân loại C2. Hai family vẫn không đủ AUTO.
+Không thu lại, đổi nhãn, chia lại dữ liệu hoặc phát hành G7 mới từ kết quả train.
+
 Ngày 20/11/2026: candidate.8 bổ sung quy trình xử lý 40 run đã có, không thu lại.
 Xem [hướng dẫn dùng 40 run](training-existing-40-runs.md). Hai nguồn thu gốc giữ
 nguyên; chế độ được review xác minh input, source, replay và partition trước khi
