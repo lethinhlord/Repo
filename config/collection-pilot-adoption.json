@@ -1,5 +1,5 @@
 {
-  "collection_patch_sha256": "bff9bb5dfbeec2d2f87e21840e4dfb3aefed129d0618b18cf85e101963118ded",
+  "collection_patch_sha256": "f38bbe4d65eacf43647d874332dc5dc98412ace9be0173a24abb19d5e22e479b",
   "from_candidate": {
     "commit": "db166d814857ef061982839a74a17af6e500625f",
     "origin": "https://github.com/lethinhlord/Repo.git",
@@ -30,7 +30,7 @@
       "before": "8d259fce297e4ce776149fdc0f7e4a7ae711081921fa8a96840d6c9b10dc2d2b"
     },
     "config/training-source-compatibility.json": {
-      "after": "e0b38ca3a8556b5fe3d4d38b2a66c605cae77933533a7fca4e35e39128989e13",
+      "after": "f03eccbb79cbaf01b37f97546940c9f67bbeb5c759353c091478f62fb9735346",
       "before": null
     },
     "ml/build_dataset.py": {
@@ -56,6 +56,10 @@
     "ml/metrics.py": {
       "after": "3deebe5a6d1ddcb37017375eab18ebca35ff7227edc93ea3c931cbc73b66da4b",
       "before": "d9add6c02b555e9c1d7443fdf93f68a39396c765c1c4ac785ff0c1ae373bdcd2"
+    },
+    "ml/stream_features.py": {
+      "after": "b81cf52e2b1f1ee27bce17c83948638fddd612575d7655e7a55d62224e5220fc",
+      "before": null
     },
     "ml/training.py": {
       "after": "2546440450f59f4ed304a0beebe99964ac43c2e3715f6f022049a508da2a4951",
