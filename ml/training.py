@@ -79,6 +79,13 @@ def verify_training_partitions(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     """Validate the builder's contract without reading the locked-test partition."""
     manifest = json.loads((processed_dir / "dataset_manifest.json").read_text(encoding="utf-8"))
+    if manifest.get("manifest_version") == "dataset-manifest-v4-stream-v1":
+        from ml.stream_sources import load_stream_partitions
+
+        return load_stream_partitions(
+            processed_dir, schema_path, config_path=config_path,
+            collection_design_path=collection_design_path, expected_commit=expected_commit,
+        )
     schema_bytes = schema_path.read_bytes()
     schema = json.loads(schema_bytes)
     if not isinstance(manifest, dict) or not isinstance(schema, dict):
@@ -658,10 +665,17 @@ def train(config_path: Path) -> dict[str, Any]:
             "threadpoolctl": importlib.metadata.version("threadpoolctl"),
         },
     }
-    if manifest["manifest_version"] == "dataset-manifest-v3":
+    if manifest["manifest_version"] in {"dataset-manifest-v3", "dataset-manifest-v4-stream-v1"}:
         metadata["dataset_source_compatibility"] = manifest["collection_audit"][
             "source_compatibility"
         ]
+    if manifest["manifest_version"] == "dataset-manifest-v4-stream-v1":
+        metadata["parent_manifest_sha256"] = manifest["parent_manifest_sha256"]
+        metadata["stream_scope"] = {
+            "representation": "dominant verified TCP conversation",
+            "unsupported_behavior": "non-TCP or ambiguous target requires REVIEW",
+            "raw_and_legacy_features_preserved": True,
+        }
     package_dir.mkdir(parents=True, exist_ok=True)
     joblib.dump({"metadata": metadata, "families": artifacts}, package_dir / "model.joblib")
     write_json(package_dir / "thresholds.json", threshold_document)

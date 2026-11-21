@@ -1,0 +1,403 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://datn.local/schemas/features-v4-stream-v1.json",
+  "title": "Observed host window and verified conversation features v4",
+  "version": "features-v4-stream-v1",
+  "description": "Additive stream decomposition retaining all legacy24 values; compact C2 classifier inputs and explicit support masks.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "failed_login_count",
+    "successful_login_count",
+    "success_after_fail",
+    "unique_target_account_count",
+    "unique_source_count",
+    "remote_logon_ratio",
+    "failure_window_seconds",
+    "attempt_rate_per_minute",
+    "source_history_known",
+    "new_source_for_user",
+    "suspicious_process",
+    "periodicity_score",
+    "connection_interval_cv",
+    "mean_interval_seconds",
+    "suricata_alert_count",
+    "suricata_severity_score",
+    "outbound_connection_count",
+    "unique_destination_count",
+    "destination_port_count",
+    "dns_query_count",
+    "dns_unique_query_ratio",
+    "flow_total_bytes_log1p",
+    "destination_history_known",
+    "new_destination",
+    "tcp_connection_count",
+    "udp_connection_count",
+    "dns_observation_fraction",
+    "network_process_count",
+    "tcp_conversation_count",
+    "dominant_tcp_share",
+    "dominant_tcp_observation_count",
+    "dominant_tcp_unique",
+    "dominant_tcp_timing_available",
+    "dominant_tcp_periodicity_available",
+    "dominant_tcp_order_available",
+    "dominant_tcp_periodicity_score",
+    "dominant_tcp_interval_cv",
+    "dominant_tcp_mean_interval_seconds",
+    "dominant_tcp_duration_seconds",
+    "dominant_tcp_interval_alternation",
+    "dominant_tcp_context_known",
+    "dominant_tcp_new_destination",
+    "novel_tcp_conversation_fraction",
+    "dns_only_window"
+  ],
+  "properties": {
+    "failed_login_count": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "successful_login_count": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "success_after_fail": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "unique_target_account_count": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "unique_source_count": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "remote_logon_ratio": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "failure_window_seconds": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 86400
+    },
+    "attempt_rate_per_minute": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "source_history_known": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "new_source_for_user": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "suspicious_process": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "periodicity_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "connection_interval_cv": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "mean_interval_seconds": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 86400
+    },
+    "suricata_alert_count": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "suricata_severity_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "outbound_connection_count": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "unique_destination_count": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "destination_port_count": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 65535
+    },
+    "dns_query_count": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "dns_unique_query_ratio": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "flow_total_bytes_log1p": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "destination_history_known": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "new_destination": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "tcp_connection_count": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "udp_connection_count": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "dns_observation_fraction": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "network_process_count": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "tcp_conversation_count": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "dominant_tcp_share": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "dominant_tcp_observation_count": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "dominant_tcp_unique": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "dominant_tcp_timing_available": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "dominant_tcp_periodicity_available": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "dominant_tcp_order_available": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "dominant_tcp_periodicity_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "dominant_tcp_interval_cv": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000000
+    },
+    "dominant_tcp_mean_interval_seconds": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 86400
+    },
+    "dominant_tcp_duration_seconds": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 86400
+    },
+    "dominant_tcp_interval_alternation": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "dominant_tcp_context_known": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "dominant_tcp_new_destination": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "novel_tcp_conversation_fraction": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "dns_only_window": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    }
+  },
+  "x-feature-order": [
+    "failed_login_count",
+    "successful_login_count",
+    "success_after_fail",
+    "unique_target_account_count",
+    "unique_source_count",
+    "remote_logon_ratio",
+    "failure_window_seconds",
+    "attempt_rate_per_minute",
+    "source_history_known",
+    "new_source_for_user",
+    "suspicious_process",
+    "periodicity_score",
+    "connection_interval_cv",
+    "mean_interval_seconds",
+    "suricata_alert_count",
+    "suricata_severity_score",
+    "outbound_connection_count",
+    "unique_destination_count",
+    "destination_port_count",
+    "dns_query_count",
+    "dns_unique_query_ratio",
+    "flow_total_bytes_log1p",
+    "destination_history_known",
+    "new_destination",
+    "tcp_connection_count",
+    "udp_connection_count",
+    "dns_observation_fraction",
+    "network_process_count",
+    "tcp_conversation_count",
+    "dominant_tcp_share",
+    "dominant_tcp_observation_count",
+    "dominant_tcp_unique",
+    "dominant_tcp_timing_available",
+    "dominant_tcp_periodicity_available",
+    "dominant_tcp_order_available",
+    "dominant_tcp_periodicity_score",
+    "dominant_tcp_interval_cv",
+    "dominant_tcp_mean_interval_seconds",
+    "dominant_tcp_duration_seconds",
+    "dominant_tcp_interval_alternation",
+    "dominant_tcp_context_known",
+    "dominant_tcp_new_destination",
+    "novel_tcp_conversation_fraction",
+    "dns_only_window"
+  ],
+  "x-family-features": {
+    "account": [
+      "failed_login_count",
+      "successful_login_count",
+      "success_after_fail",
+      "unique_target_account_count",
+      "unique_source_count",
+      "remote_logon_ratio",
+      "failure_window_seconds",
+      "attempt_rate_per_minute",
+      "source_history_known",
+      "new_source_for_user"
+    ],
+    "c2": [
+      "tcp_connection_count",
+      "tcp_conversation_count",
+      "dominant_tcp_share",
+      "dominant_tcp_unique",
+      "dominant_tcp_timing_available",
+      "dominant_tcp_order_available",
+      "dominant_tcp_mean_interval_seconds",
+      "dominant_tcp_interval_cv",
+      "dominant_tcp_duration_seconds",
+      "dominant_tcp_interval_alternation",
+      "dominant_tcp_context_known",
+      "dominant_tcp_new_destination"
+    ]
+  },
+  "x-excluded-context": [
+    "threat_intelligence",
+    "asset_criticality",
+    "scenario_label",
+    "ground_truth",
+    "account_identity",
+    "exact_destination_identity"
+  ],
+  "x-context-contract": "context-baseline-v1",
+  "x-context-features": [
+    "source_history_known",
+    "new_source_for_user",
+    "destination_history_known",
+    "new_destination"
+  ],
+  "x-retained-legacy-features": [
+    "failed_login_count",
+    "successful_login_count",
+    "success_after_fail",
+    "unique_target_account_count",
+    "unique_source_count",
+    "remote_logon_ratio",
+    "failure_window_seconds",
+    "attempt_rate_per_minute",
+    "source_history_known",
+    "new_source_for_user",
+    "suspicious_process",
+    "periodicity_score",
+    "connection_interval_cv",
+    "mean_interval_seconds",
+    "suricata_alert_count",
+    "suricata_severity_score",
+    "outbound_connection_count",
+    "unique_destination_count",
+    "destination_port_count",
+    "dns_query_count",
+    "dns_unique_query_ratio",
+    "flow_total_bytes_log1p",
+    "destination_history_known",
+    "new_destination"
+  ],
+  "x-stream-contract": {
+    "grouping": [
+      "verified_process_image",
+      "destination",
+      "port",
+      "protocol"
+    ],
+    "ties": "dominant timing/context unavailable; no representative target",
+    "scope": "Observed TCP profile only; unsupported non-TCP inference requires review",
+    "identity_fields_are_features": false
+  }
+}

@@ -15,15 +15,17 @@ ROOT = Path(__file__).resolve().parents[1]
 NOTEBOOK = ROOT / "notebooks/week3_train_colab.ipynb"
 
 
-def _cell(marker: str) -> str:
-    notebook = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
+def _cell(marker: str, stream: bool = False) -> str:
+    path = NOTEBOOK.with_name("week3_train_stream_colab.ipynb") if stream else NOTEBOOK
+    notebook = json.loads(path.read_text(encoding="utf-8"))
     return next("".join(cell["source"]) for cell in notebook["cells"]
                 if marker in "".join(cell["source"]))
 
 
 @pytest.mark.parametrize("reject", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
 def test_preinstall_verifies_reviewed_metadata_before_reading_partitions(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reject: bool,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reject: bool, stream: bool,
 ) -> None:
     sha = "a" * 40
     staging = tmp_path / "staging"
@@ -42,6 +44,12 @@ def test_preinstall_verifies_reviewed_metadata_before_reading_partitions(
             "collection_design_sha256": design_hash,
         },
     }
+    if stream:
+        manifest["manifest_version"] = "dataset-manifest-v4-stream-v1"
+        manifest["parent_manifest"] = {
+            "provenance": {"collection_design_sha256": design_hash},
+            "collection_audit": {"collection_design_sha256": design_hash},
+        }
     names = ("train.jsonl", "validation.jsonl", "dataset_manifest.json")
     for name in names[:2]:
         (staging / name).write_bytes(b"SYNTHETIC-NOT-LAB\n")
@@ -60,20 +68,23 @@ def test_preinstall_verifies_reviewed_metadata_before_reading_partitions(
         if reject:
             raise ValueError("reviewed source certificate rejected")
 
-    source_module = types.ModuleType("ml.training_sources")
-    source_module.verify_training_manifest = verify
+    module_name = "ml.stream_sources" if stream else "ml.training_sources"
+    source_module = types.ModuleType(module_name)
+    verifier_name = "verify_stream_manifest" if stream else "verify_training_manifest"
+    setattr(source_module, verifier_name, verify)
     google = types.ModuleType("google")
     colab = types.ModuleType("google.colab")
     colab.drive = types.SimpleNamespace(mount=lambda _: None)
     monkeypatch.setitem(sys.modules, "google", google)
     monkeypatch.setitem(sys.modules, "google.colab", colab)
-    monkeypatch.setitem(sys.modules, "ml.training_sources", source_module)
+    monkeypatch.setitem(sys.modules, module_name, source_module)
 
     def run(command, **kwargs):
         if command[1] == "clone":
             (project / "ml").mkdir(parents=True)
             (project / "config").mkdir()
-            (project / "ml/training_config.yaml").write_bytes(config)
+            config_name = "training_stream_config.yaml" if stream else "training_config.yaml"
+            (project / "ml" / config_name).write_bytes(config)
             (project / "config/collection-design.yaml").write_bytes(design)
         return subprocess.CompletedProcess(command, 0)
 
@@ -96,7 +107,7 @@ def test_preinstall_verifies_reviewed_metadata_before_reading_partitions(
         "EXPECTED_FILES": (*names, "colab-upload.sha256"), "EXPECTED_DATA_FILES": names,
         "CHECKSUM_FILE": "colab-upload.sha256",
     }
-    gate = _cell("# Read only the staged manifest")
+    gate = _cell("# Read only the staged manifest", stream)
     if reject:
         with pytest.raises(ValueError, match="reviewed source certificate rejected"):
             exec(gate, namespace)
@@ -114,10 +125,11 @@ class _Table:
 
 
 @pytest.mark.parametrize("mismatch", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
 def test_result_and_archive_bind_and_export_the_reviewed_provenance(
-    tmp_path: Path, mismatch: bool,
+    tmp_path: Path, mismatch: bool, stream: bool,
 ) -> None:
-    package = tmp_path / "ml/model-package"
+    package = tmp_path / ("ml/model-package-stream-v1" if stream else "ml/model-package")
     package.mkdir(parents=True)
     certificate = {"review_id": "SYNTHETIC-NOT-LAB"}
     certificate_hash = hashlib.sha256(
@@ -139,6 +151,13 @@ def test_result_and_archive_bind_and_export_the_reviewed_provenance(
             json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode(),
         ).hexdigest(),
     }
+    if stream:
+        manifest["manifest_version"] = "dataset-manifest-v4-stream-v1"
+        manifest["parent_manifest_sha256"] = "a" * 64
+        metadata["parent_manifest_sha256"] = manifest["parent_manifest_sha256"]
+        metadata["dataset_manifest_payload_sha256"] = hashlib.sha256(
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode(),
+        ).hexdigest()
     documents = {
         "metadata.json": metadata, "metrics_validation.json": {"families": {}},
         "thresholds.json": {"families": {}}, "leakage_audit.json": {"passed": True},
@@ -150,22 +169,23 @@ def test_result_and_archive_bind_and_export_the_reviewed_provenance(
     (package / "model.joblib").write_bytes(b"SYNTHETIC-NOT-A-MODEL")
     evidence = tmp_path / "evidence"
     evidence.mkdir()
-    (evidence / "week3-colab-training.log").write_text("SYNTHETIC-NOT-LAB\n", encoding="utf-8")
+    stem = "week3-stream-colab" if stream else "week3-colab"
+    (evidence / f"{stem}-training.log").write_text("SYNTHETIC-NOT-LAB\n", encoding="utf-8")
     namespace = {
         "PROJECT_DIR": tmp_path, "DRIVE_OUTPUT_DIR": tmp_path / "results",
         "EVIDENCE_DIR": evidence, "Path": Path, "json": json, "hashlib": hashlib,
         "manifest": manifest, "pd": types.SimpleNamespace(DataFrame=_Table),
         "display": lambda _: None, "commit": "a" * 40, "RANDOM_SEED": 42,
     }
-    result = _cell("candidate_rows = []")
+    result = _cell("candidate_rows = []", stream)
     if mismatch:
         with pytest.raises(AssertionError):
             exec(result, namespace)
         return
     exec(result, namespace)
-    exec(_cell("experiment_summary = {"), namespace)
+    exec(_cell("experiment_summary = {", stream), namespace)
     with tarfile.open(namespace["destination"]) as archive:
-        summary = json.load(archive.extractfile("evidence/week3-colab-experiment-summary.json"))
+        summary = json.load(archive.extractfile(f"evidence/{stem}-experiment-summary.json"))
         archived_metadata = json.load(archive.extractfile("ml/model-package/metadata.json"))
         assert not any("locked_test" in name or "data/raw" in name for name in archive.getnames())
     assert summary["dataset_provenance"] == manifest["provenance"]

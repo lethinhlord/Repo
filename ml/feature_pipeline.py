@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path, PurePath
@@ -22,7 +23,6 @@ from ml.behavior_features import (
     FEATURE_ORDER,
     AccountObservation,
     NetworkObservation,
-    SuricataObservation,
     derive_account_features,
     derive_c2_features,
     empty_feature_vector,
@@ -33,6 +33,7 @@ from ml.context import (
     context_observation_as_of,
     load_baseline,
 )
+from ml.stream_features import StreamObservation
 from ml.telemetry import (
     account_observation_eligible,
     account_observation_issues,
@@ -273,6 +274,118 @@ def _legacy_features(alert: WazuhAlert) -> tuple[dict[str, float], list[str]]:
     return features, missing
 
 
+@dataclass(frozen=True)
+class C2NetworkEvidence:
+    observations: tuple[NetworkObservation, ...]
+    streams: tuple[StreamObservation, ...]
+    attributed: tuple[WazuhAlert, ...]
+    suspicious_process: bool
+    indicator: str | None
+    source_ips: frozenset[str]
+
+
+def derive_c2_network_evidence(
+    alerts: list[WazuhAlert], config: dict[str, Any], taxonomy: dict[str, Any] | None = None,
+    process_context: list[WazuhAlert] | None = None,
+) -> C2NetworkEvidence:
+    """Share the existing identity/chronology proof; never select by scenario or label."""
+    network: list[NetworkObservation] = []
+    suspicious = False
+    indicator: str | None = None
+    attributed: list[WazuhAlert] = []
+    windows_agent, _ = _collection_sources(config)
+    configured_sources = {normalize_ip(value) for value in config.get("windows_source_ips", [])}
+    identity_events = {}
+    for item in [*(process_context or []), *alerts]:
+        payload = item.model_dump(mode="json")
+        if item.id in identity_events and identity_events[item.id] != payload:
+            raise ValueError(f"duplicate alert id has conflicting payload: {item.id}")
+        identity_events[item.id] = payload
+    identities_by_guid: dict[str, list[dict[str, Any]]] = {}
+    for identity in identity_events.values():
+        kind, _, fields = windows_fields(identity)
+        if kind in {"1", "5"}:
+            identities_by_guid.setdefault(process_guid(fields), []).append(identity)
+    alerts_by_id = {alert.id: alert for alert in alerts}
+
+    observed_sources: set[str] = set()
+    streams: list[StreamObservation] = []
+    used_processes: dict[str, dict[str, Any]] = {}
+    for alert in alerts:
+        if alert.agent.name != windows_agent:
+            continue
+        event_id, eventdata = _windows_fields(alert)
+        if event_id not in {"3", "22"}:
+            continue
+        guid = process_guid(eventdata)
+        timestamp = alert_event_time(alert)
+        processes = _process_creation_index(
+            identities_by_guid.get(guid, []),
+            windows_agent,
+            as_of=timestamp,
+            creation_tolerance=(
+                _SYSMON_EVENT3_CREATION_TOLERANCE
+                if event_id == "3" else timedelta(0)
+            ),
+        )
+        if guid not in processes:
+            continue
+        if not _process_observation_matches(event_id, eventdata, timestamp, processes[guid]):
+            continue
+        if event_id == "3":
+            source = normalize_ip(eventdata.get("sourceIp"))
+            if not network_is_outbound(eventdata) or (
+                configured_sources and source not in configured_sources
+            ):
+                continue
+            destination = normalize_ip(eventdata.get("destinationIp"))
+            try:
+                port = int(eventdata.get("destinationPort"))
+            except (TypeError, ValueError):
+                continue
+            if not destination or not 0 < port <= 65535:
+                continue
+            network.append(
+                NetworkObservation(
+                    timestamp,
+                    destination,
+                    port,
+                    source=source,
+                    source_port=_transport_port(eventdata.get("sourcePort")),
+                    protocol=str(eventdata.get("protocol", "")),
+                )
+            )
+            observed_sources.add(source)
+            indicator = indicator or destination
+        else:
+            query = str(eventdata.get("queryName", "")).strip(".").casefold()
+            if not query:
+                continue
+            network.append(NetworkObservation(timestamp, query, 53, query))
+            indicator = indicator or query
+        used_processes[guid] = processes[guid]
+        streams.append(StreamObservation(
+            network[-1], process_instance=guid,
+            process_image=str(windows_fields(processes[guid])[2].get("image", "")),
+            source_event_id=alert.id,
+        ))
+        attributed.append(alert)
+    for guid in sorted(used_processes):
+        creation = used_processes[guid]
+        process = windows_fields(creation)[2]
+        if creation["id"] in alerts_by_id:
+            attributed.append(alerts_by_id[creation["id"]])
+        suspicious = suspicious or taxonomy_match(
+            process,
+            _process_taxonomy() if taxonomy is None else taxonomy,
+        )
+
+    return C2NetworkEvidence(
+        tuple(network), tuple(streams), tuple(attributed), suspicious, indicator,
+        frozenset(configured_sources or observed_sources),
+    )
+
+
 def _derive_raw_group(
     alerts: list[WazuhAlert],
     family: str,
@@ -324,93 +437,12 @@ def _derive_raw_group(
 
     if family == "c2":
         from ml.telemetry import linked_transaction
-        network: list[NetworkObservation] = []
-        suricata: list[SuricataObservation] = []
-        suspicious = False
-        indicator: str | None = None
-        attributed: list[WazuhAlert] = []
-        windows_agent, sensor_agent = _collection_sources(config)
-        configured_sources = {normalize_ip(value) for value in config.get("windows_source_ips", [])}
-        identity_events = {}
-        for item in [*(process_context or []), *alerts]:
-            payload = item.model_dump(mode="json")
-            if item.id in identity_events and identity_events[item.id] != payload:
-                raise ValueError(f"duplicate alert id has conflicting payload: {item.id}")
-            identity_events[item.id] = payload
-        identities_by_guid: dict[str, list[dict[str, Any]]] = {}
-        for identity in identity_events.values():
-            kind, _, fields = windows_fields(identity)
-            if kind in {"1", "5"}:
-                identities_by_guid.setdefault(process_guid(fields), []).append(identity)
-        alerts_by_id = {alert.id: alert for alert in alerts}
-
-        observed_sources: set[str] = set()
-        used_processes: dict[str, dict[str, Any]] = {}
-        for alert in alerts:
-            if alert.agent.name != windows_agent:
-                continue
-            event_id, eventdata = _windows_fields(alert)
-            if event_id not in {"3", "22"}:
-                continue
-            guid = process_guid(eventdata)
-            timestamp = alert_event_time(alert)
-            processes = _process_creation_index(
-                identities_by_guid.get(guid, []),
-                windows_agent,
-                as_of=timestamp,
-                creation_tolerance=(
-                    _SYSMON_EVENT3_CREATION_TOLERANCE
-                    if event_id == "3" else timedelta(0)
-                ),
-            )
-            if guid not in processes:
-                continue
-            if not _process_observation_matches(event_id, eventdata, timestamp, processes[guid]):
-                continue
-            if event_id == "3":
-                source = normalize_ip(eventdata.get("sourceIp"))
-                if not network_is_outbound(eventdata) or (
-                    configured_sources and source not in configured_sources
-                ):
-                    continue
-                destination = normalize_ip(eventdata.get("destinationIp"))
-                try:
-                    port = int(eventdata.get("destinationPort"))
-                except (TypeError, ValueError):
-                    continue
-                if not destination or not 0 < port <= 65535:
-                    continue
-                network.append(
-                    NetworkObservation(
-                        timestamp,
-                        destination,
-                        port,
-                        source=source,
-                        source_port=_transport_port(eventdata.get("sourcePort")),
-                        protocol=str(eventdata.get("protocol", "")),
-                    )
-                )
-                observed_sources.add(source)
-                indicator = indicator or destination
-            else:
-                query = str(eventdata.get("queryName", "")).strip(".").casefold()
-                if not query:
-                    continue
-                network.append(NetworkObservation(timestamp, query, 53, query))
-                indicator = indicator or query
-            used_processes[guid] = processes[guid]
-            attributed.append(alert)
-        for guid in sorted(used_processes):
-            creation = used_processes[guid]
-            process = windows_fields(creation)[2]
-            if creation["id"] in alerts_by_id:
-                attributed.append(alerts_by_id[creation["id"]])
-            suspicious = suspicious or taxonomy_match(
-                process,
-                _process_taxonomy() if taxonomy is None else taxonomy,
-            )
-
-        sources = configured_sources or observed_sources
+        proof = derive_c2_network_evidence(alerts, config, taxonomy, process_context)
+        network = list(proof.observations)
+        attributed = list(proof.attributed)
+        suspicious, indicator = proof.suspicious_process, proof.indicator
+        _, sensor_agent = _collection_sources(config)
+        sources = set(proof.source_ips)
         seen_eve: set[str] = set()
         eve_payloads: list[dict[str, Any]] = []
         maximum_delta = float(config.get("correlation_window_seconds", 10.0))
@@ -501,7 +533,7 @@ def _derive_raw_group(
                     "flow_total_bytes_log1p",
                 ]
             )
-        if not used_processes:
+        if not proof.streams:
             missing.append("suspicious_process")
         return features, sorted(set(missing)), list(ACCOUNT_FEATURES), indicator, attributed
 

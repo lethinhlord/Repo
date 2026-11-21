@@ -23,6 +23,23 @@ class HealthResponse(StrictModel):
     api_version: Literal["4.0.0"] = "4.0.0"
 
 
+class IndicatorAttribution(StrictModel):
+    scope: Literal["dominant-tcp-conversation"] = "dominant-tcp-conversation"
+    destination: str = Field(min_length=1, max_length=512)
+    destination_port: int = Field(gt=0, le=65535)
+    observation_count: int = Field(gt=0)
+    history_known: bool
+    new_destination: bool | None
+    evidence_refs: list[str] = Field(min_length=1)
+    response_authorized: Literal[False] = False
+
+    @model_validator(mode="after")
+    def validate_known_history(self) -> "IndicatorAttribution":
+        if self.history_known != (self.new_destination is not None):
+            raise ValueError("indicator novelty must be unknown when history is unavailable")
+        return self
+
+
 class IncidentRequest(StrictModel):
     feature_schema_version: Literal["features-v3"] = "features-v3"
     context_status: Literal["AVAILABLE", "MISSING", "STALE", "FUTURE", "UNKNOWN"] = "MISSING"
@@ -55,6 +72,19 @@ class IncidentRequest(StrictModel):
             raise ValueError("evidence_sources must contain nonblank values")
         if len(set(self.evidence_sources)) != len(self.evidence_sources):
             raise ValueError("evidence_sources must be unique")
+        return self
+
+
+class StreamIncidentRequest(IncidentRequest):
+    feature_schema_version: Literal["features-v4-stream-v1"] = "features-v4-stream-v1"
+    indicator_attribution: IndicatorAttribution | None = None
+
+    @model_validator(mode="after")
+    def validate_indicator_target(self) -> "StreamIncidentRequest":
+        if self.indicator_attribution is not None and (
+            self.indicator != self.indicator_attribution.destination
+        ):
+            raise ValueError("indicator attribution requires the matching target")
         return self
 
 
@@ -168,12 +198,26 @@ class FeatureBatchResponse(StrictModel):
     incidents: list[FeaturePipelineResponse] = Field(min_length=1)
 
 
+class StreamFeaturePipelineResponse(FeaturePipelineResponse):
+    feature_schema_version: Literal["features-v4-stream-v1"] = "features-v4-stream-v1"
+    incident: StreamIncidentRequest
+
+
+class StreamFeatureBatchResponse(FeatureBatchResponse):
+    feature_schema_version: Literal["features-v4-stream-v1"] = "features-v4-stream-v1"
+    incidents: list[StreamFeaturePipelineResponse] = Field(min_length=1)
+
+
 class FeatureStateResponse(StrictModel):
     snapshot_revision: int | None = Field(default=None, ge=1)
     ingest_status: Literal["new", "duplicate"]
     stored_event_count: int = Field(ge=1)
     window_minutes: int = Field(ge=1, le=5)
     feature: FeaturePipelineResponse
+
+
+class StreamFeatureStateResponse(FeatureStateResponse):
+    feature: StreamFeaturePipelineResponse
 
 
 class FeatureWindowFinalizeRequest(StrictModel):
@@ -430,7 +474,7 @@ class ReadinessResponse(StrictModel):
     status: Literal["ready", "degraded"]
     service: Literal["datn-ai-soar-api"] = "datn-ai-soar-api"
     api_version: Literal["4.0.0"] = "4.0.0"
-    feature_schema_version: Literal["features-v3"] = "features-v3"
+    feature_schema_version: Literal["features-v3", "features-v4-stream-v1"] = "features-v3"
     asset_context_revision: Literal["asset-context-v1"] = "asset-context-v1"
     risk_policy_revision: Literal["risk-week2-v2"] = "risk-week2-v2"
     ti_policy_revision: Literal["ti-week2-v1"] = "ti-week2-v1"

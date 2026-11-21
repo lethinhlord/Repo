@@ -21,6 +21,7 @@ build/
 data/raw/
 data/quarantine/
 data/processed/
+data/processed-stream-v1/
 evidence/scenario-runs/
 evidence/.collection-operation.lock
 evidence/quarantine/
@@ -39,6 +40,7 @@ n8n/data/
 artifacts/runtime/
 ml/splits/*.txt
 ml/model-package/*
+ml/model-package-stream-v1/
 **/.model-evaluation-registry/
 **/.model-evaluation-evidence/
 !ml/model-package/README.md
