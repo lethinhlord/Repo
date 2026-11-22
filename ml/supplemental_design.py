@@ -57,6 +57,7 @@ def validate_design(value: dict) -> None:
         or value["version"] != "supplemental-design-v1"
         or value["evaluation_protocol"] != "known-template-new-host-day"
         or value["partition_contexts"] != dict(train=10, validation=4, locked_test=4)
+        or any(type(v) is not int for v in value["partition_contexts"].values())
         or type(value["repetitions_per_label"]) is not int
         or value["repetitions_per_label"] != 3
         or type(value["minimum_host_days_per_partition"]) is not int

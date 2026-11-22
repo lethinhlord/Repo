@@ -221,6 +221,9 @@ class RunDraft(BaseModel):
     scenario_parameters: dict[str, int | float | str | bool] = Field(min_length=1)
     expected_observables: list[str] = Field(min_length=1)
     clock_preflight: ClockPreflight
+    campaign_plan: dict[str, Any] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def validate_family_attribution(self) -> RunDraft:
@@ -263,6 +266,8 @@ class ScenarioDefinition(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     scenario_id: str = Field(min_length=1, max_length=128)
+    template_id: str | None = Field(default=None, min_length=1, max_length=128,
+                                    exclude_if=lambda value: value is None)
     family: Literal["account", "c2"]
     label: Literal["benign", "malicious"]
     purpose: Literal["trainable", "challenge", "pilot"] = "trainable"
@@ -280,15 +285,28 @@ class ScenarioDefinition(BaseModel):
 class ScenarioCatalog(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    version: Literal["scenario-catalog-v1"]
+    version: Literal["scenario-catalog-v1", "scenario-catalog-v2"]
     lab_only: Literal[True]
     scenarios: list[ScenarioDefinition] = Field(min_length=1)
+    campaign_design: dict[str, Any] | None = Field(default=None,
+                                                   exclude_if=lambda value: value is None)
+    design_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$",
+                                       exclude_if=lambda value: value is None)
+    template_definitions: dict[str, Any] | None = Field(default=None,
+                                                        exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def require_unique_ids(self) -> ScenarioCatalog:
         identifiers = [item.scenario_id for item in self.scenarios]
         if len(set(identifiers)) != len(identifiers):
             raise ValueError("scenario_id values must be unique")
+        if self.version == "scenario-catalog-v2":
+            from ml.supplemental_catalog import validate_catalog
+
+            validate_catalog(self.model_dump(mode="json"))
+        elif (self.campaign_design is not None or self.template_definitions is not None
+                or self.design_sha256 is not None or any(s.template_id for s in self.scenarios)):
+            raise ValueError("campaign metadata requires a versioned supplemental catalog")
         return self
 
 
@@ -366,7 +384,11 @@ def _release_snapshots(
     if not source.collection_release_path:
         raise CollectionError("official collection source requires collection_release_path")
     try:
-        design = _read_yaml(design_path)
+        catalog = ScenarioCatalog.model_validate(
+            _read_yaml(_resolve(root, source.scenario_catalog_path))
+        )
+        design = (catalog.campaign_design if catalog.version == "scenario-catalog-v2"
+                  else _read_yaml(design_path))
         candidate = capture_candidate(root, design["candidate_tag"])
         result = {"collection_candidate": candidate,
                   "collection_candidate_sha256": digest(candidate)}
@@ -389,6 +411,25 @@ def _validate_draft_against_catalog(draft: RunDraft, catalog_path: Path) -> None
     )
     if scenario is None:
         raise CollectionError(f"draft does not match scenario catalog: {draft.scenario_id}")
+    if catalog.version == "scenario-catalog-v2" and scenario.purpose == "trainable":
+        from ml.supplemental_design import verify_plan
+
+        try:
+            verify_plan(draft.campaign_plan, catalog.campaign_design)
+            row = next(r for r in draft.campaign_plan["runs"] if r["run_id"] == draft.run_id)
+            expected_row = {
+                "scenario_id": draft.scenario_id, "family": draft.family, "label": draft.label,
+                "cohort_id": draft.cohort_id, "collection_seed": draft.collection_seed,
+            }
+            if (any(row[k] != v for k, v in expected_row.items())
+                    or draft.host != row["context"]["host"]
+                    or draft.operator != row["context"]["operator"]
+                    or draft.purpose != "trainable"):
+                raise ValueError("draft differs from its registered campaign plan row")
+        except (ValueError, KeyError, TypeError, StopIteration) as exc:
+            raise CollectionError(f"invalid campaign plan binding: {exc}") from exc
+    elif draft.campaign_plan is not None:
+        raise CollectionError("campaign plan is only valid for supplemental trainable runs")
     expected = {
         "family": scenario.family,
         "label": scenario.label,
@@ -432,6 +473,16 @@ def _atomic_text(path: Path, text: str) -> None:
     temporary.replace(path)
 
 
+def _validate_campaign_date(draft: RunDraft, at: datetime) -> None:
+    if draft.campaign_plan is not None:
+        try:
+            row = next(r for r in draft.campaign_plan["runs"] if r["run_id"] == draft.run_id)
+            if _utc(at).date().isoformat() != row["context"]["collection_date"]:
+                raise ValueError("action must occur on the registered UTC date")
+        except (ValueError, KeyError, TypeError, StopIteration) as exc:
+            raise CollectionError(f"campaign registered UTC date mismatch: {exc}") from exc
+
+
 def _write_json(path: Path, payload: Any) -> None:
     _atomic_text(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
@@ -453,6 +504,7 @@ def create_run_draft(
     clock_preflight: ClockPreflight,
     purpose: Literal["trainable", "challenge", "pilot"] | None = None,
     source_config_path: Path | None = None,
+    campaign_plan: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     if output_path.exists():
         raise CollectionError(f"draft output already exists: {output_path}")
@@ -536,6 +588,7 @@ def create_run_draft(
             scenario_parameters=parameters,
             expected_observables=scenario.expected_observables,
             clock_preflight=clock_preflight,
+            campaign_plan=campaign_plan,
         )
     except ValueError as exc:
         raise CollectionError(f"invalid run draft values: {exc}") from exc
@@ -779,6 +832,7 @@ def start_run(
                 raise CollectionError(str(exc)) from exc
 
     started_at = _utc(now)
+    _validate_campaign_date(draft, started_at)
     if baseline and not baseline.captured_at <= started_at < baseline.valid_until:
         raise CollectionError("context baseline is stale or unavailable at collection start")
     clock_age = (started_at - _utc(draft.clock_preflight.captured_at)).total_seconds()
@@ -1436,6 +1490,16 @@ def _derive_c2(
             raise CollectionError(
                 "C2 actions require unique, complete Suricata EVE transaction coverage"
             )
+    if draft.scenario_parameters.get("execution_profile_version") == "lab-http-workflow-v2":
+        from ml.http_workflow import validate_http_transaction
+
+        for number, edge in enumerate(edges, 1):
+            try:
+                validate_http_transaction(
+                    transactions[edge[0]][0], draft.scenario_parameters, number,
+                )
+            except ValueError as exc:
+                raise CollectionError(f"HTTP workflow evidence: {exc}") from exc
     if draft.scenario_parameters.get("execution_profile_version") == "lab-action-profile-v1":
         transport = draft.scenario_parameters.get("transport")
         if not isinstance(expected_action_count, int) or transport not in {"http", "dns"}:
@@ -1518,6 +1582,16 @@ def _derive_c2(
         flow_issues = flow_counter_issues(suricata, window_start=start, window_end=end)
         if flow_issues:
             raise CollectionError("incomplete flow evidence: " + ",".join(flow_issues))
+
+    if draft.scenario_parameters.get("execution_profile_version") == "lab-http-workflow-v2":
+        from ml.http_workflow import action_rows
+
+        for edge, (_, sent, _) in zip(edges, action_rows(draft.scenario_parameters), strict=True):
+            transaction = transactions[edge[0]]
+            finals = [p for p in suricata if linked_flow(p, [transaction], maximum_delta)]
+            if (not finals or any(type(p["flow"].get("bytes_toserver")) is not int
+                                  or p["flow"]["bytes_toserver"] < sent for p in finals)):
+                raise CollectionError("HTTP upload lacks sufficient attributable final flow bytes")
 
     gates = draft.quality_gates
     observed_counts = {
@@ -2113,6 +2187,7 @@ def _validate_action_window(
     started = _parse_time(receipt.get("action_started_at"))
     if started is None:
         raise CollectionError("aggregation window is missing its action start")
+    _validate_campaign_date(draft, started)
     start, end = _aggregation_window(started)
     deadline = end - timedelta(seconds=draft.clock_preflight.maximum_skew_seconds)
     reservation = _reserved_action_seconds(draft)

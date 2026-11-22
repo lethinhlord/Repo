@@ -320,7 +320,7 @@ def _check_preflight_capture(path: Path, preflight: dict[str, Any]) -> None:
         raise ReleaseError("preflight report differs from raw recomputation")
 
 
-def _check_design(root: Path) -> None:
+def _check_design(root: Path, source_config_path: Path | None = None) -> None:
     """Enforce source-level prerequisites; human review remains a separate obligation."""
     from collections import defaultdict
     from types import SimpleNamespace
@@ -333,6 +333,27 @@ def _check_design(root: Path) -> None:
     from ml.scenario_collection import ScenarioCatalog
 
     try:
+        if source_config_path is not None:
+            selected = Path(source_config_path)
+            if not selected.is_absolute():
+                selected = root / selected
+            source_doc = yaml.safe_load(selected.read_text(encoding="utf-8"))
+            selected_catalog = Path(source_doc["scenario_catalog_path"])
+            if not selected_catalog.is_absolute():
+                selected_catalog = root / selected_catalog
+            selected_doc = yaml.safe_load(selected_catalog.read_text(encoding="utf-8"))
+            if selected_doc.get("version") == "scenario-catalog-v2":
+                from ml.supplemental_catalog import compile_catalog
+                from ml.supplemental_design import load_design
+
+                design = load_design(root / "config/supplemental-design.yaml")
+                expected_catalog = compile_catalog(design, yaml.safe_load(
+                    (root / "config/scenario-catalog.yaml").read_text(encoding="utf-8")
+                ))
+                ScenarioCatalog.model_validate(selected_doc)
+                if selected_doc != expected_catalog:
+                    raise ReleaseError("supplemental catalog differs from reviewed compiler/source")
+                return
         catalog = ScenarioCatalog.model_validate(
             yaml.safe_load((root / "config/scenario-catalog.yaml").read_text())
         )
@@ -498,7 +519,7 @@ def create_acceptance(
 
     root = Path(root).resolve()
     candidate = capture_candidate(root, tag)
-    _check_design(root)
+    _check_design(root, source_config_path)
     selected_source = None
     source_binding = None
     if source_config_path is not None:
@@ -521,12 +542,26 @@ def create_acceptance(
         }
     if len(pilot_ids) != 4 or len(set(pilot_ids)) != 4:
         raise ReleaseError("exactly four distinct pilot IDs are required")
+    contract_taxonomy = root / "config/suspicious-process-taxonomy.yaml"
+    contract_catalog = root / "config/scenario-catalog.yaml"
+    if selected_source is not None:
+        from ml.scenario_collection import ScenarioCatalog, _resolve
+
+        selected_catalog = _resolve(root, source_model.scenario_catalog_path)
+        catalog_model = ScenarioCatalog.model_validate(
+            yaml.safe_load(selected_catalog.read_text(encoding="utf-8"))
+        )
+        if catalog_model.version == "scenario-catalog-v2":
+            if tag != catalog_model.campaign_design["candidate_tag"]:
+                raise ReleaseError("candidate differs from supplemental design")
+            contract_taxonomy = _resolve(root, source_model.taxonomy_path)
+            contract_catalog = selected_catalog
     current_contract = {
         "source_config_sha256": _file_hash(
             selected_source or root / "config/collection-sources.yaml"
         ),
-        "taxonomy_sha256": _file_hash(root / "config/suspicious-process-taxonomy.yaml"),
-        "scenario_catalog_sha256": _file_hash(root / "config/scenario-catalog.yaml"),
+        "taxonomy_sha256": _file_hash(contract_taxonomy),
+        "scenario_catalog_sha256": _file_hash(contract_catalog),
         "feature_schema_sha256": _file_hash(root / "ml/feature_schema.json"),
     }
     pilots = []
