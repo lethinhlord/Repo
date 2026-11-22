@@ -10,7 +10,7 @@
 
 **/__pycache__/
 **/*.pyc
-ml/model-package/
+ml/model-package*/
 **/.model-evaluation-registry/
 **/.model-evaluation-evidence/
 ml/splits/*.txt

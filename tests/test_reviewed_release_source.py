@@ -31,8 +31,39 @@ def test_repository_production_tree_matches_reviewed_pilot_transition():
     }
     pilot = {**policy["from_candidate"], **runtime}
     commit = subprocess.check_output(
-        ["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True,
+        # This transition authorizes the immutable historical training release.
+        # Supplemental collection has a distinct, stricter precollection review;
+        # changing the old adoption policy would rewrite historical evidence.
+        ["git", "-C", str(ROOT), "rev-parse", "training-v2.0.0^{commit}"], text=True,
     ).strip()
     current = {"commit": commit, "origin": pilot["origin"], **runtime}
     proof = verify_pilot_adoption(ROOT, pilot, current)
     assert proof["collection_patch_sha256"] == digest(policy["reviewed_collection_changes"])
+
+
+def test_supplemental_source_preserves_historical_policies_and_compiles_exactly():
+    import yaml
+
+    from ml.supplemental_catalog import compile_catalog
+    from ml.supplemental_design import load_design
+
+    for relative in (
+        "config/collection-pilot-adoption.json",
+        "config/training-source-compatibility.json",
+        "config/stream-training-source-compatibility.json",
+    ):
+        historical = subprocess.check_output(
+            ["git", "-C", str(ROOT), "show", "training-v2.0.0:" + relative],
+        )
+        # Git text objects are LF, independent of local checkout autocrlf.
+        assert (ROOT / relative).read_text(encoding="utf-8") == historical.decode()
+    design = load_design(ROOT / "config/supplemental-design.yaml")
+    base = yaml.safe_load((ROOT / "config/scenario-catalog.yaml").read_bytes())
+    actual = yaml.safe_load((ROOT / "config/supplemental-catalog.yaml").read_bytes())
+    assert actual == compile_catalog(design, base)
+    review = json.loads((ROOT / "config/supplemental-training-review.json").read_bytes())
+    assert review["collection_candidate_tag"] == design["candidate_tag"]
+    assert review["status"] in {"PREPARATION_IN_PROGRESS", "COLLECTION_READY", "READY"}
+    # Future data approval cannot be inferred from preparation/collection approval.
+    if review["status"] != "READY":
+        assert review["approved_manifest_sha256"] is None

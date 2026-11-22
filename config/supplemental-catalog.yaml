@@ -5761,15 +5761,17 @@ scenarios:
   label: malicious
   purpose: pilot
   cohort_id: C2-PAIR-01
-  expected_behavior: 'Controlled C2-like activity profile: 8 HTTP actions at frozen
-    gaps [15, 15, 15, 15, 15, 15, 15] seconds. Same endpoint, identity and harmless
-    response as the opposite-label cohort member; label denotes this lab profile,
-    not inferable real-world intent.'
+  expected_behavior: Inert GET/POST transport canary for the supplemental HTTP evidence
+    contract.
   execution_profile:
+    profile_version: lab-http-workflow-v2
     transport: http
-    base_intervals_seconds: 15,15,15,15,15,15,15
-    expected_action_count: 8
     endpoint: http://10.40.0.10:8081/beacon
+    expected_action_count: 8
+    base_intervals_seconds: 10,10,10,10,10,10,10
+    http_methods_csv: GET,POST,GET,POST,GET,POST,GET,POST
+    request_body_bytes_csv: 0,1024,0,2048,0,4096,0,2048
+    response_body_bytes_csv: 256,256,256,256,256,256,256,256
   attribution:
     account_names: []
     process_names:
@@ -5807,13 +5809,7 @@ scenarios:
   - Freeze an AVAILABLE as-of baseline before either cohort member; native Sysmon
     clocks and full-bucket parity must pass.
   execution_steps:
-  - Execute the frozen profile using scripts/run_training_http.ps1 for HTTP or scripts/run_dns_scenario.ps1
-    for DNS; launch one nonce-traceable child powershell.exe for DNS.
-  - HTTP uses curl.exe, one fresh connection per action, identical /beacon URI template
-    and response content for both labels. DNS uses the same nonce-qualified unique-name
-    format and suffix for both labels.
-  - Stop at expected_action_count; retain real action receipts and raw telemetry.
-    Do not substitute generated feature rows.
+  - Use run_supplemental_http.ps1 with frozen parameters.
   expected_observables:
   - Sysmon process/network or DNS records plus matching Suricata records; identical
     canary signatures are evidence, never label-specific gates.

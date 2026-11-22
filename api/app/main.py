@@ -62,7 +62,8 @@ from ml.feature_pipeline import (
     collection_grace_seconds,
     extract_wazuh_features,
 )
-from ml.http_pipeline import aggregate_http_alerts
+from ml.http_features import HTTP_SCHEMA_VERSION
+from ml.http_pipeline import aggregate_http_alerts, http_collection_grace_seconds
 from ml.inference import InferenceInputError, ModelPackageError, ModelRuntime
 from ml.stream_pipeline import aggregate_stream_alerts
 
@@ -100,7 +101,10 @@ def load_feature_state_store(
 ) -> FeatureStateStore:
     return FeatureStateStore(
         Path(path), retention_seconds=retention_seconds,
-        late_arrival_grace_seconds=collection_grace_seconds(),
+        late_arrival_grace_seconds=(
+            http_collection_grace_seconds() if feature_profile == HTTP_SCHEMA_VERSION
+            else collection_grace_seconds()
+        ),
         feature_profile=feature_profile,
     )
 

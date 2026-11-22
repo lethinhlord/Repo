@@ -63,3 +63,25 @@ def test_compiled_tracked_catalog_and_source_pass_actual_design_gate():
     old = yaml.safe_load((ROOT / "config/scenario-catalog.yaml").read_bytes())
     assert actual == compile_catalog(design, old)
     _check_design(ROOT, ROOT / "config/supplemental-sources.yaml")
+
+
+def test_real_git_keeps_generated_campaign_artifacts_out_of_source_identity(tmp_path):
+    from test_training_sources import commit, git
+
+    git(tmp_path, "init", "-q")
+    git(tmp_path, "config", "core.autocrlf", "false")
+    (tmp_path / ".gitignore").write_bytes((ROOT / ".gitignore").read_bytes())
+    (tmp_path / "source.py").write_text("source = True\n")
+    commit(tmp_path)
+    for name in (
+        "evidence/supplemental-acceptance.json",
+        "data/processed-supplemental-v1/train.jsonl",
+        "ml/model-package-supplemental-v1/metadata.json",
+        "data/.tmp-supplemental-build-UNIT/complete/train.jsonl",
+    ):
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("synthetic generated artifact\n")
+    assert git(tmp_path, "status", "--porcelain", "--untracked-files=all") == ""
+    (tmp_path / "new_source.py").write_text("new = True\n")
+    assert "new_source.py" in git(tmp_path, "status", "--porcelain", "--untracked-files=all")

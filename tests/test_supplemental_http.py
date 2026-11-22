@@ -100,6 +100,32 @@ def test_lab_server_exchanges_only_bounded_non_executable_payloads():
         thread.join(timeout=3)
 
 
+def test_new_lab_server_keeps_neutral_canary_and_enrollment_routes():
+    import urllib.error
+
+    from ml.http_workflow import LabHTTPServer
+
+    server = LabHTTPServer(("127.0.0.1", 0))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base = f"http://127.0.0.1:{server.server_port}/beacon?"
+        for query in ("preflight=canary1234", "enrollment=1"):
+            with urllib.request.urlopen(base + query, timeout=3) as response:
+                assert response.status == 200 and response.read() == b"Z" * 16
+        for query in ("preflight=bad", "enrollment=2", "preflight=canary1234&n=1"):
+            with pytest.raises(urllib.error.HTTPError):
+                urllib.request.urlopen(base + query, timeout=3)
+        with pytest.raises(urllib.error.HTTPError):
+            urllib.request.urlopen(
+                urllib.request.Request(base + "enrollment=1", data=b"Z"), timeout=3,
+            )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
 @pytest.mark.skipif(os.name != "nt", reason="native Windows curl/PowerShell actor")
 def test_native_workflow_sends_frozen_methods_payloads_and_closes_connections(tmp_path):
     from ml.execution_profile import freeze_execution_profile

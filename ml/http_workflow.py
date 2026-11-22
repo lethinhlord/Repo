@@ -188,6 +188,25 @@ class LabHandler(BaseHTTPRequestHandler):
         self.close_connection = True
         uri = urlsplit(self.path)
         query = parse_qs(uri.query, keep_blank_values=True)
+        purpose = "planned-action"
+        if set(query) in ({"preflight"}, {"enrollment"}):
+            purpose = next(iter(query))
+            values = query[purpose]
+            valid = len(values) == 1 and (
+                re.fullmatch(r"[A-Za-z0-9_-]{8,64}", values[0]) is not None
+                if purpose == "preflight" else values == ["1"]
+            )
+            if (
+                not valid or self.command != "GET"
+                or self.headers.get("Content-Length", "0") != "0"
+                or self.headers.get("Transfer-Encoding")
+            ):
+                self.send_error(400)
+                return
+            # Neutral telemetry setup remains distinct from labelled actions.
+            # Original URI stays in EVE; no planned nonce/ordinal is fabricated.
+            query = {"run": [values[0] if purpose == "preflight" else "neutral-enrollment"],
+                     "v": ["0"], "n": ["1"], "z": ["16"]}
         if (
             len(self.path) > 1024
             or uri.path != "/beacon"
@@ -227,6 +246,7 @@ class LabHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"Z" * length)
         observation = {
+            "purpose": purpose,
             "at": datetime.now(UTC).isoformat(),
             "method": self.command,
             "request_bytes": len(body),

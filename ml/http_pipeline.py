@@ -1,16 +1,87 @@
 """Opt-in HTTP evidence profile; retain all44 legacy/stream observations."""
 
+import hashlib
+import json
+import os
+from pathlib import Path
+
+import yaml
+
 from api.app.contracts import (
     HttpFeatureBatchResponse,
     HttpFeaturePipelineResponse,
     HttpIncidentRequest,
 )
-from ml.feature_pipeline import _collection_config, derive_c2_network_evidence
+from ml.feature_pipeline import derive_c2_network_evidence
 from ml.http_features import HTTP_FEATURES, HTTP_SCHEMA_VERSION, derive_http_features
 from ml.stream_pipeline import STREAM_FEATURE_ORDER, aggregate_stream_alerts
 from ml.telemetry import event_time, windows_fields
 
 HTTP_FEATURE_ORDER = (*STREAM_FEATURE_ORDER, *HTTP_FEATURES)
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE_SEMANTIC_FIELDS = (
+    "windows_agent_name",
+    "suricata_agent_name",
+    "windows_source_ips",
+    "correlation_window_seconds",
+    "late_arrival_grace_seconds",
+    "require_clean_bucket",
+    "require_flow_counters",
+    "require_online_parity",
+    "feature_scope",
+    "taxonomy_path",
+)
+
+
+def _collection_config() -> dict:
+    # This opt-in profile has its own pinned source. Do not inherit the legacy
+    # default or cache a mutable file across calls to a durable state store.
+    from ml.scenario_collection import SourceConfig
+
+    return SourceConfig.model_validate(
+        yaml.safe_load(
+            (ROOT / "config/supplemental-sources.yaml").read_text(encoding="utf-8"),
+        )
+    ).model_dump()
+
+
+def http_collection_grace_seconds() -> int:
+    value = _collection_config().get("late_arrival_grace_seconds", 60)
+    if type(value) is not int or not 0 <= value <= 600:
+        raise ValueError("HTTP collection grace must be an integer in [0,600]")
+    return value
+
+
+def http_config_fingerprint() -> str:
+    config = _collection_config()
+    payload = {name: config.get(name) for name in SOURCE_SEMANTIC_FIELDS}
+    # A cache must not combine evidence derived with different taxonomy or
+    # enrolled context snapshots, including an environment-selected baseline.
+    for name in ("taxonomy_path", "context_baseline_path"):
+        path = os.getenv("CONTEXT_BASELINE_PATH") if name == "context_baseline_path" else None
+        path = path or config.get(name)
+        selected = ROOT / path if path else None
+        payload[name + "_sha256"] = (
+            hashlib.sha256(selected.read_bytes()).hexdigest()
+            if selected is not None and selected.is_file()
+            else None
+        )
+        if name == "context_baseline_path":
+            payload[name] = str(selected) if selected else None
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def require_http_source_semantics(source: dict, root: Path) -> None:
+    """A selected offline collector must match the source used by the HTTP API."""
+    from ml.scenario_collection import SourceConfig
+
+    expected = SourceConfig.model_validate(
+        yaml.safe_load(
+            (root / "config/supplemental-sources.yaml").read_text(encoding="utf-8"),
+        )
+    ).model_dump()
+    if any(source.get(name) != expected[name] for name in SOURCE_SEMANTIC_FIELDS):
+        raise ValueError("supplemental source semantics differ from the pinned HTTP API source")
 
 
 def aggregate_http_alerts(alerts, **kwargs) -> HttpFeatureBatchResponse:
@@ -18,6 +89,13 @@ def aggregate_http_alerts(alerts, **kwargs) -> HttpFeatureBatchResponse:
     config = kwargs.get("source_config")
     if config is None:
         config = _collection_config()
+    kwargs["source_config"] = config
+    if kwargs.get("taxonomy") is None:
+        kwargs["taxonomy"] = yaml.safe_load(
+            (
+                ROOT / config.get("taxonomy_path", "config/suspicious-process-taxonomy.yaml")
+            ).read_text(encoding="utf-8"),
+        )
     stream = aggregate_stream_alerts(alerts, **kwargs)
     by_id = {a.id: a for a in alerts}
     result = []

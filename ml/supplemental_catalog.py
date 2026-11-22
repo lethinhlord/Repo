@@ -71,6 +71,13 @@ def compile_catalog(design: dict, legacy_catalog: dict) -> dict:
                     ]
                 definitions[f"{pair['id']}:{label}"] = row
     pilots = [{**deepcopy(source[name]), "purpose": "pilot"} for name in PILOTS]
+    # G7's HTTP transport pilot exercises the new GET/POST wire contract too;
+    # a legacy GET-only smoke cannot certify the supplemental runner/telemetry.
+    pilots[-1]["execution_profile"] = declared_workflow("tcp-poll", "malicious")
+    pilots[-1]["execution_steps"] = ["Use run_supplemental_http.ps1 with frozen parameters."]
+    pilots[-1]["expected_behavior"] = (
+        "Inert GET/POST transport canary for the supplemental HTTP evidence contract."
+    )
     challenges = [deepcopy(s) for s in legacy["scenarios"] if s["purpose"] == "challenge"]
     result = {
         "version": "scenario-catalog-v2",

@@ -79,6 +79,7 @@ def create_backup(root: Path, tag: str, output: Path) -> dict:
                     "evidence/context-captures",
                     "evidence/context-baseline.json",
                     "evidence/collection-acceptance.json",
+                    "evidence/supplemental-acceptance.json",
                     "evidence/collection-candidate.json",
                     "run-drafts",
                     "operator-logs",

@@ -24,6 +24,25 @@ from ml.supplemental_design import load_design, make_plan
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_selected_source_cannot_disagree_with_http_api_defaults(tmp_path, monkeypatch):
+    from ml import collection_release as release
+    from ml.scenario_collection import SourceConfig, _release_snapshots
+
+    path, _ = campaign_fixture(tmp_path)
+    (tmp_path / "config").mkdir()
+    cfg = yaml.safe_load((ROOT / "config/supplemental-sources.yaml").read_bytes())
+    (tmp_path / "config/supplemental-sources.yaml").write_text(yaml.safe_dump(cfg))
+    monkeypatch.setattr(
+        "ml.supplemental_sources.require_collection_source", lambda *a: ({}, "a" * 40)
+    )
+    monkeypatch.setattr(release, "capture_candidate", lambda *a: {"commit": "a" * 40})
+    monkeypatch.setattr(release, "assert_collection_authorized", lambda *a: None)
+    cfg.update(scenario_catalog_path=str(path), correlation_window_seconds=5.0)
+    source = SourceConfig.model_validate(cfg)
+    with pytest.raises(CollectionError, match="source semantics"):
+        _release_snapshots(source, tmp_path, "pilot")
+
+
 def campaign_fixture(tmp_path, family="account", cohort_id=None):
     d = load_design(ROOT / "config/supplemental-design.yaml")
     catalog = compile_catalog(
@@ -122,13 +141,32 @@ def test_coordinated_catalog_changes_fail_source_check(tmp_path):
         _check_design(tmp_path, source)
 
 
-def http_events(tmp_path, cohort_id=None):
-    import json
+def test_unapproved_supplemental_source_cannot_capture_even_a_pilot(tmp_path, monkeypatch):
+    from ml import collection_release as release
+    from ml.scenario_collection import SourceConfig, _release_snapshots
 
+    path, _ = campaign_fixture(tmp_path)
+    source = SourceConfig.model_validate(
+        dict(
+            version="collection-sources-v1",
+            wazuh_archives_path="unused",
+            windows_agent_name="WIN11-TARGET",
+            suricata_agent_name="NET-SENSOR",
+            taxonomy_path="unused",
+            scenario_catalog_path=str(path),
+            collection_release_path="evidence/supplemental-acceptance.json",
+        )
+    )
+    monkeypatch.setattr(release, "capture_candidate", lambda *a: {"commit": "a" * 40})
+    # A candidate dict alone is not a committed COLLECTION_READY source review.
+    with pytest.raises(CollectionError, match="release gate"):
+        _release_snapshots(source, tmp_path, "pilot")
+
+
+def http_events(tmp_path, cohort_id=None):
     from test_collection_acceptance import _c2_events
     from test_official_collection_acceptance import _native
 
-    from ml.http_workflow import action_rows
     from ml.scenario_collection import SourceConfig
 
     path, draft = campaign_fixture(tmp_path, "c2", cohort_id)
@@ -140,20 +178,7 @@ def http_events(tmp_path, cohort_id=None):
     events, _ = _c2_events(
         draft.run_id, scenario, draft, datetime(2027, 1, 1, 0, 0, 10, tzinfo=UTC)
     )
-    actions = action_rows(draft.scenario_parameters)
-    for event in events:
-        if "full_log" not in event:
-            _native(event)
-            continue
-        payload = json.loads(event["full_log"])
-        number = int(payload["flow_id"].rsplit("-", 1)[-1])
-        method, sent, received = actions[number]
-        if payload["event_type"] == "http":
-            payload["http"].update(http_method=method, length=received)
-            payload["http"]["url"] += f"&z={received}"
-        elif payload["event_type"] == "flow":
-            payload["flow"].update(bytes_toserver=sent + 300, bytes_toclient=received + 200)
-        event["full_log"] = json.dumps(payload)
+    events = [_native(event) for event in events]
     source = SourceConfig.model_validate(
         yaml.safe_load((ROOT / "config/collection-sources.yaml").read_text())
     )

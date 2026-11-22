@@ -391,7 +391,16 @@ def _release_snapshots(
         )
         design = (catalog.campaign_design if catalog.version == "scenario-catalog-v2"
                   else _read_yaml(design_path))
+        approved_head = None
+        if catalog.version == "scenario-catalog-v2":
+            from ml.http_pipeline import require_http_source_semantics
+            from ml.supplemental_sources import require_collection_source
+
+            _, approved_head = require_collection_source(root, design["candidate_tag"])
+            require_http_source_semantics(source.model_dump(), root)
         candidate = capture_candidate(root, design["candidate_tag"])
+        if approved_head is not None and candidate["commit"] != approved_head:
+            raise CollectionError("supplemental source changed before candidate capture")
         result = {"collection_candidate": candidate,
                   "collection_candidate_sha256": digest(candidate)}
         release = assert_collection_authorized(source, root, purpose, source_config_path)
@@ -413,6 +422,8 @@ def _validate_draft_against_catalog(draft: RunDraft, catalog_path: Path) -> None
     )
     if scenario is None:
         raise CollectionError(f"draft does not match scenario catalog: {draft.scenario_id}")
+    if catalog.version == "scenario-catalog-v2" and draft.purpose != scenario.purpose:
+        raise CollectionError("supplemental purpose must match its declared catalog role")
     if catalog.version == "scenario-catalog-v2" and scenario.purpose == "trainable":
         from ml.supplemental_design import resolve_plan_run, verify_plan
 
@@ -2297,10 +2308,12 @@ def begin_action(
     if wait_for_window and now is not None:
         raise CollectionError("wait-for-window requires the live collector clock")
     action_started_at = _utc(now)
+    _validate_campaign_date(draft, action_started_at)
     collection_started_at = _parse_time(state.get("started_at"))
     if collection_started_at is None or action_started_at < collection_started_at:
         raise CollectionError("action start cannot precede collection start")
     while True:
+        _validate_campaign_date(draft, action_started_at)
         bucket_start, bucket_end = _aggregation_window(action_started_at)
         guarded_start = bucket_start + timedelta(seconds=guard)
         deadline = bucket_end - timedelta(seconds=guard)

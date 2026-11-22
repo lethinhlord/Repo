@@ -9,8 +9,6 @@ from collections import defaultdict
 from datetime import date
 from pathlib import Path
 
-import yaml
-
 from ml.training_sources import digest
 
 ROLES = ("train", "validation", "locked_test")
@@ -28,6 +26,8 @@ CONTEXT_FIELDS = {
 
 
 def load_design(path: Path) -> dict:
+    import yaml
+
     value = yaml.safe_load(path.read_text(encoding="utf-8"))
     validate_design(value)
     return value

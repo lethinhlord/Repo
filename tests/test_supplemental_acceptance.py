@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from shutil import copyfile
 
@@ -21,7 +21,10 @@ from ml.scenario_collection import (
     ScenarioCatalog,
     SourceConfig,
     abort_run,
+    begin_action,
+    complete_action,
     create_run_draft,
+    finalize_run,
     start_run,
 )
 from ml.supplemental_catalog import PILOTS, compile_catalog
@@ -33,13 +36,22 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_v3_acceptance_freezes_plan_and_restores_all_four_transport_pilots(tmp_path, monkeypatch):
     archive, source_path, _, candidate = prepare_official(tmp_path, monkeypatch)
     copyfile(ROOT / "config/supplemental-design.yaml", tmp_path / "config/supplemental-design.yaml")
+    copyfile(
+        ROOT / "config/supplemental-sources.yaml", tmp_path / "config/supplemental-sources.yaml",
+    )
     d = load_design(tmp_path / "config/supplemental-design.yaml")
     candidate["tag"] = d["candidate_tag"]
+    # This isolated protocol fixture has synthetic source authority, just as its
+    # capture_candidate above is synthetic. It never issues real VM acceptance.
+    monkeypatch.setattr(
+        "ml.supplemental_sources.require_collection_source",
+        lambda root, tag: ({"status": "COLLECTION_READY"}, candidate["commit"]),
+    )
     catalog = compile_catalog(
         d, yaml.safe_load((tmp_path / "config/scenario-catalog.yaml").read_bytes())
     )
     catalog_path = tmp_path / "config/supplemental-catalog.yaml"
-    catalog_path.write_text(yaml.safe_dump(catalog), encoding="utf-8")
+    catalog_path.write_bytes((ROOT / "config/supplemental-catalog.yaml").read_bytes())
     cfg = yaml.safe_load(source_path.read_bytes())
     cfg.update(
         scenario_catalog_path="config/supplemental-catalog.yaml",
@@ -124,9 +136,10 @@ def test_v3_acceptance_freezes_plan_and_restores_all_four_transport_pilots(tmp_p
         release.verify_frozen_acceptance(state)
     unit = plan["runs"][0]
 
-    def draft_attempt(number):
-        row = resolve_plan_run(plan, unit["attempts"][number - 1]["run_id"])
-        at = fixture.COLLECTION_BASE + timedelta(minutes=50 + number)
+    def draft_attempt(number, unit_row=None, at=None):
+        selected_unit = unit if unit_row is None else unit_row
+        row = resolve_plan_run(plan, selected_unit["attempts"][number - 1]["run_id"])
+        at = at or fixture.COLLECTION_BASE + timedelta(minutes=50 + number)
         path = tmp_path / "run-drafts" / (row["run_id"] + ".yaml")
         create_run_draft(
             catalog_path,
@@ -155,7 +168,56 @@ def test_v3_acceptance_freezes_plan_and_restores_all_four_transport_pilots(tmp_p
     )
     release.verify_frozen_acceptance(retry_state)
     assert RunDraft.model_validate(retry_state["draft"]).campaign_plan == plan
-    abort_run(second["run_id"], tmp_path, "SYNTHETIC test finished; no training evidence")
+    from ml.supplemental_dataset import project_run
+
+    def finish_and_project(planned, action_at):
+        rid = planned["run_id"]
+        started_state = json.loads(
+            (tmp_path / "evidence/scenario-runs" / rid / ".collection_state.json").read_bytes()
+        )
+        run_draft = RunDraft.model_validate(started_state["draft"])
+        scenario = next(s for s in parsed.scenarios if s.scenario_id == planned["scenario_id"])
+        begin_action(rid, tmp_path, now=action_at)
+        event_builder = (
+            fixture._account_events if scenario.family == "account" else fixture._c2_events
+        )
+        events, last = event_builder(
+            rid,
+            scenario,
+            run_draft,
+            action_at
+            + timedelta(seconds=run_draft.scenario_parameters["pre_action_delay_seconds"]),
+        )
+        with archive.open("a", encoding="utf-8") as stream:
+            stream.write("".join(json.dumps(e) + "\n" for e in events))
+        complete_action(rid, tmp_path, now=last + timedelta(seconds=2))
+        window_end = datetime.fromtimestamp((int(action_at.timestamp()) // 300 + 1) * 300, UTC)
+        finalize_run(rid, tmp_path, now=window_end + timedelta(seconds=60))
+        return project_run(tmp_path, planned, plan, parsed, ROOT)
+
+    projected = finish_and_project(
+        second, fixture.COLLECTION_BASE + timedelta(minutes=55, seconds=5)
+    )
+    assert len(projected["features"]) == 56
+    assert projected["evaluation_group_id"] == second["context"]["evaluation_group_id"]
+    assert projected["attempt_number"] == 2
+    assert projected["source_incident"]["feature_schema_version"] == "features-v3"
+    c2unit = next(r for r in plan["runs"] if r["family"] == "c2")
+    c2, c2path, c2start = draft_attempt(
+        1, c2unit, fixture.COLLECTION_BASE + timedelta(minutes=65, seconds=-20)
+    )
+    start_run(c2path, source_path, tmp_path, now=c2start)
+    network = finish_and_project(c2, fixture.COLLECTION_BASE + timedelta(minutes=65, seconds=5))
+    assert network["features"]["http_evidence_available"] == 1
+    assert network["features"]["flow_evidence_available"] == 1
+    assert len(network["features"]) == 56
+    assert network["incident_id"] == network["source_incident"]["incident_id"]
+    postbackup = tmp_path.parent / (tmp_path.name + "-post-g7-backup")
+    release.create_backup(tmp_path, candidate["tag"], postbackup)
+    import tarfile
+
+    with tarfile.open(next(postbackup.glob("collection-*.tar.gz")), "r:gz") as tar:
+        assert "evidence/supplemental-acceptance.json" in tar.getnames()
     plan_path.write_text("{}")
     with pytest.raises(release.ReleaseError):
         release.assert_collection_authorized(

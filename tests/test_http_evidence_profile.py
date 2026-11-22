@@ -235,3 +235,42 @@ def test_method_order_uses_native_connection_order_not_response_latency(tmp_path
             ).isoformat()
         row["full_log"] = json.dumps(p)
     assert enrich(tmp_path, events) == original
+
+
+def test_http_default_source_is_used_for_both_retained_and_added_features(tmp_path, monkeypatch):
+    from ml.http_pipeline import aggregate_http_alerts
+
+    _, source, events = http_events(tmp_path)
+    config = source.model_dump()
+    monkeypatch.setattr("ml.http_pipeline._collection_config", lambda: config)
+    wrong = {**config, "windows_agent_name": "OTHER-HOST"}
+    monkeypatch.setattr("ml.stream_pipeline._collection_config", lambda: wrong)
+    alerts = alerts_for(events)
+    expected = aggregate_http_alerts(
+        alerts, source_config=config, taxonomy={}, use_runtime_baseline=False
+    )
+    actual = aggregate_http_alerts(alerts, taxonomy={}, use_runtime_baseline=False)
+    assert [i.incident.features for i in actual.incidents] == [
+        i.incident.features for i in expected.incidents
+    ]
+
+
+def test_http_cache_uses_own_source_grace_and_refuses_configuration_reinterpretation(
+    tmp_path, monkeypatch
+):
+    from test_stream_feature_state import clock
+    from test_stream_pipeline import CONFIG, events
+
+    from api.app.feature_state import FeatureStateConflictError
+    from api.app.main import load_feature_state_store
+
+    config = {**CONFIG, "late_arrival_grace_seconds": 120}
+    clock(monkeypatch, 50)
+    monkeypatch.setattr("ml.http_pipeline._collection_config", lambda: config)
+    load_feature_state_store.cache_clear()
+    store = load_feature_state_store(str(tmp_path / "http.sqlite"), 86400, "features-v5-http-v1")
+    assert store.late_arrival_grace_seconds == 120
+    store.ingest(events()[0])
+    config["windows_agent_name"] = "CHANGED-HOST"
+    with pytest.raises(FeatureStateConflictError, match="source"):
+        store.ingest(events()[1])

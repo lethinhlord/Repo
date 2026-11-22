@@ -570,8 +570,14 @@ def create_acceptance(
             yaml.safe_load(selected_catalog.read_text(encoding="utf-8"))
         )
         if catalog_model.version == "scenario-catalog-v2":
+            from ml.http_pipeline import require_http_source_semantics
             from ml.supplemental_design import verify_plan
+            from ml.supplemental_sources import require_collection_source
 
+            _, approved_head = require_collection_source(root, tag)
+            require_http_source_semantics(source_model.model_dump(), root)
+            if candidate["commit"] != approved_head:
+                raise ReleaseError("supplemental source changed before G7 acceptance")
             if tag != catalog_model.campaign_design["candidate_tag"]:
                 raise ReleaseError("candidate differs from supplemental design")
             if not source_model.campaign_plan_path:
