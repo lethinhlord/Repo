@@ -1,5 +1,5 @@
 {
-  "collection_patch_sha256": "bff9bb5dfbeec2d2f87e21840e4dfb3aefed129d0618b18cf85e101963118ded",
+  "collection_patch_sha256": "a8a95ebef4c4a8ff9c1df999033260c621f4bc2a5c50a4f8f139fc8f8bdf964c",
   "from_candidate": {
     "commit": "db166d814857ef061982839a74a17af6e500625f",
     "origin": "https://github.com/lethinhlord/Repo.git",
@@ -13,12 +13,24 @@
     "The40-run training dataset remains exploratory; no strong response approval."
   ],
   "reviewed_collection_changes": {
+    ".gitignore": {
+      "after": "ad726fc3c808e83582e1f498de2feb380d26d628470e062e43e48c77a167a3da",
+      "before": "fdee38680a9cbbff45ace34179aad9ade82ee8bbb03328a6d2bfd9a684b6117a"
+    },
     "README.md": {
       "after": "e2b6e2ed8b257c1174251983abb812f8fc6efb3ef450acc216ae8dc96f6266ad",
       "before": "3b83bc0be9a7d72d6c96cc815485ac25d776e487512d446cc2ad0b1c450dd8e6"
     },
+    "api/app/contracts.py": {
+      "after": "d9d1c9393c57c8739925c17a1315556a880cc892a9038f491d88d1a08b531a4a",
+      "before": "e6ad66b683d98e1f58c89da6de6ca9a5ca23e6c60a08d16f65441e067a95efd9"
+    },
+    "api/app/feature_state.py": {
+      "after": "bb1ce7346664d3451890cc87b3aceefc3485430ad1ab43e53d4725a8c470d57a",
+      "before": "5b459e74a500a49ba818745693fe732b0669a543b50e330356fc3c74ed6103a2"
+    },
     "api/app/main.py": {
-      "after": "4a96d2a66c533200fd399e1be55e658b0b7a0fb8ba49728105b69f5a12705eed",
+      "after": "b6985218bcc57c63b39c7ed6237307dfb29f66c4f4e43caf6d9f27485fc5cf51",
       "before": "915ce7c5b0a480e8458334d00c58065b1c3a617ac60fe2fb5b5d614f1d2491f9"
     },
     "compose.yaml": {
@@ -30,7 +42,7 @@
       "before": "8d259fce297e4ce776149fdc0f7e4a7ae711081921fa8a96840d6c9b10dc2d2b"
     },
     "config/training-source-compatibility.json": {
-      "after": "e0b38ca3a8556b5fe3d4d38b2a66c605cae77933533a7fca4e35e39128989e13",
+      "after": "d81f54f5eceefb2811e685d53eb41454d282f5cbe1109fc153f11c07e29b81a5",
       "before": null
     },
     "ml/build_dataset.py": {
@@ -38,40 +50,108 @@
       "before": "a89e3b7c8e1b9e2adf5269cfed0d3b067f2f66bb04fefe08b0640b52cebf6541"
     },
     "ml/collection_adoption.py": {
-      "after": "fd4402ddf550661c0a8ded8def82917e9fa91e2561e19b377e0732c7c78c0260",
+      "after": "8eb5e0c90ea54e158e0151f24264a9f1406e2de389002adf219fe01a08cb4fe7",
       "before": "7a5920c89ac6aa8517832a728c21e75547c8e52200a4497601fa50d6de7eaa59"
     },
     "ml/command_logging.py": {
       "after": "992c67bbfad2aef98b2fceb5619206f810321556c4038b392c53272f8d8dbe72",
       "before": null
     },
+    "ml/dataset.py": {
+      "after": "916e549b8018546617277bef51fce7cfb64597774d25d97b650c0aea1f413f8f",
+      "before": "213061fc922ebabda0d3f820a2dfa7452d6ffcf86e42fb8b402ac252acd86a7c"
+    },
     "ml/dataset_audit.py": {
       "after": "9e4076f96625c72a1a3d36983fe8589299f630ef8a276236443791f0aed55a92",
       "before": "5a2d91cd0d45a6d24defe0e177920066a0b379407d94f30c8728af6af950d81c"
     },
     "ml/feature_pipeline.py": {
-      "after": "a5f2291c3d66b6aeb0ee6e65b7f3642fa0bbe574332682f7fe7e4b62af3078c2",
+      "after": "fe00839856edb8793e3044e5d2212414b8f7d8e716fdf0f8cab577ba38076b3a",
       "before": "33bcbb1f2e1edcebf7924b4b76a4a741f7a371cc4a8fb8b90216bfb19c8be5b0"
+    },
+    "ml/feature_profiles.py": {
+      "after": "bb5e07e1d2125b2d32bf63dec5207069d11f4b29f9f901004769c1f8fe20e7c6",
+      "before": null
+    },
+    "ml/feature_schema_stream.json": {
+      "after": "ee0f05ecac5f53e1e4ae2cfb156775a4b3033b69f097268eb9d1337bbcd9ec0b",
+      "before": null
+    },
+    "ml/inference.py": {
+      "after": "ca80a0a6d5ee88c5e1b9b03fa58aa17d860704904b892dab7df0d89f704458a0",
+      "before": "46f7eb044bae9b31a6c3d268f4ffaf30841566c3049d935d108cc055fa8ffcfe"
     },
     "ml/metrics.py": {
       "after": "3deebe5a6d1ddcb37017375eab18ebca35ff7227edc93ea3c931cbc73b66da4b",
       "before": "d9add6c02b555e9c1d7443fdf93f68a39396c765c1c4ac785ff0c1ae373bdcd2"
     },
+    "ml/scenario_collection.py": {
+      "after": "47cc621d3be2d8bd83bfdc910b4eae8c033a4e1b06012d2bd37b29afd38dafb2",
+      "before": "9a517de3fc81a3948bac7e461b462a8d74e14bc75da2623d08ba7bdce1a8b435"
+    },
+    "ml/stream_dataset.py": {
+      "after": "006df6c172b682e3efe7a33dc4b981eeb6facfb17f08706dfd388f2cea6cd0dd",
+      "before": null
+    },
+    "ml/stream_features.py": {
+      "after": "0e23de9ebe88fc53ed605d0beba5f4e75d702b2bbaada3a6af49d42fbdab4880",
+      "before": null
+    },
+    "ml/stream_pipeline.py": {
+      "after": "00a9da2ee9ca5db9a7b7b153ea6e86f86313207fb6485b0c6ded2badb50fda9d",
+      "before": null
+    },
+    "ml/stream_sources.py": {
+      "after": "2be5918a823a39ba7757d16a4acc3fd612c01bcfdf1cf602a9088ebb471d0949",
+      "before": null
+    },
     "ml/training.py": {
-      "after": "2546440450f59f4ed304a0beebe99964ac43c2e3715f6f022049a508da2a4951",
+      "after": "a534f4eae2b150c716d55d6e48a029996d03a22fc49b3930225e615803a8ffb2",
       "before": "e903233a6822d5fc62ba0f5292e6d4b1f389906adfa4c171fc8ed8f0d7cf6df1"
     },
     "ml/training_sources.py": {
-      "after": "821d614bf61bb02a87a892a96979410382ff775fcc6e5060d5d2b7e8cf637b6d",
+      "after": "196896389cdfb61ab3c3451cf33bd97cf548bfc495c2c8926a4fa454a730417b",
+      "before": null
+    },
+    "ml/training_stream_config.yaml": {
+      "after": "90b316a41daaacf7daf18f859585c2126d3207c3c188d0591e55e0982fb54290",
       "before": null
     },
     "notebooks/week3_train_colab.ipynb": {
       "after": "c5fa46768829b090e2872a708658bab1c3fbf9589c5917fefdcc3f487d21f46c",
       "before": "542cca82651e139e6ab3f5f8dadc1cfd159d2595c3b19a59465cb06de829355d"
     },
+    "notebooks/week3_train_stream_colab.ipynb": {
+      "after": "74ed5960099c799f1142afcb3fa66933b148da8d225dcd4bbfb6e6fabcee8504",
+      "before": null
+    },
+    "schemas/openapi-week2.json": {
+      "after": "8a7827fb343ed801828db05fd6564426767c1917b3d75dab38da8b82abd4e0f0",
+      "before": "eb299ed27079e95a6ea43de6b9179c9ada7c8b18b491a53db2154ceb97d64258"
+    },
+    "schemas/stream-feature-batch-response.schema.json": {
+      "after": "8d86cad79e76ecb7ff1fd7c5f1893dc47253b4a4c55c2f480e53700f5b01ce22",
+      "before": null
+    },
+    "schemas/stream-feature-pipeline-response.schema.json": {
+      "after": "28e666a52c83cf81a8189302d0d7312dff6c480b4980c4d67b6472e99a0b40a1",
+      "before": null
+    },
+    "schemas/stream-feature-state-response.schema.json": {
+      "after": "65f75384be8fa201635880478cf1ed2a745f9b30263932f68bd1a4153f807bb8",
+      "before": null
+    },
+    "schemas/stream-incident-request.schema.json": {
+      "after": "3dd297fe8942ccd6066bdf5e22f1f26b0c5c1ed8e5e4917e96e7d64f3bab05f9",
+      "before": null
+    },
     "scripts/audit_dataset.py": {
       "after": "7d85a3b0a53a0692e7e55848932b05d5408d6eef4add692af1a142b5afded4c3",
       "before": "ba1dac75c1a079530b8da35a7e881957e7acd0a59bdc2424f6759f25802b3783"
+    },
+    "scripts/export_week2_contracts.py": {
+      "after": "027d08d3a3c09c4095b3f53ed1c5afc62ff14bf0799092f83ada5e2d51a8d51f",
+      "before": "0964b2a36796febf1e86c3254bc9383f90b92c31d93a4839a1853ededc23a89b"
     }
   },
   "scope": "Reviewed source transition from original dev.2 through training reliability maintenance. It does not issue G7, relabel existing data, change collection-design candidate8 or move its immutable tag. Any future collection must independently capture and approve the exact executing candidate on the actual SOC lab.",

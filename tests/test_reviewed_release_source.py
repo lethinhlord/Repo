@@ -4,10 +4,19 @@ import json
 import subprocess
 from pathlib import Path
 
-from ml.collection_adoption import verify_pilot_adoption
+from ml.collection_adoption import _collection_changes, verify_pilot_adoption
 from ml.collection_release import digest
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_stream_review_is_separately_pinned_without_exempting_collector_code():
+    path = "config/stream-training-source-compatibility.json"
+    before = {path: b"BUILD_PENDING", "ml/stream_dataset.py": b"original"}
+    after = {**before, path: b"READY"}
+    assert _collection_changes(before, after) == {}
+    after["ml/stream_dataset.py"] = b"changed processing"
+    assert set(_collection_changes(before, after)) == {"ml/stream_dataset.py"}
 
 
 def test_repository_production_tree_matches_reviewed_pilot_transition():

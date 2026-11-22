@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from api.app.contracts import FeatureStateResponse, WazuhAlert
+from api.app.contracts import FeatureStateResponse, StreamFeatureStateResponse, WazuhAlert
 from ml.behavior_features import FEATURE_SCHEMA_VERSION
 from ml.feature_pipeline import (
     FEATURE_GROUPING_POLICY_VERSION,
@@ -18,6 +18,8 @@ from ml.feature_pipeline import (
     window_start,
 )
 from ml.intake_window import receipt_timely
+from ml.stream_features import STREAM_SCHEMA_VERSION
+from ml.stream_pipeline import aggregate_stream_alerts
 from ml.telemetry import EVENT_TIME_POLICY_VERSION, process_guid, windows_fields
 
 
@@ -31,7 +33,18 @@ class FeatureStateStore:
     def __init__(
         self, path: Path, *, retention_seconds: int = 86_400,
         late_arrival_grace_seconds: int = 60,
+        feature_profile: str = FEATURE_SCHEMA_VERSION,
     ) -> None:
+        if feature_profile not in {FEATURE_SCHEMA_VERSION, STREAM_SCHEMA_VERSION}:
+            raise ValueError("unsupported feature profile")
+        self.feature_schema_version = feature_profile
+        self.grouping_policy_version = FEATURE_GROUPING_POLICY_VERSION + (
+            ":stream-v1" if feature_profile == STREAM_SCHEMA_VERSION else ""
+        )
+        self.response_type = (
+            StreamFeatureStateResponse if feature_profile == STREAM_SCHEMA_VERSION
+            else FeatureStateResponse
+        )
         if retention_seconds < 300:
             raise ValueError("retention_seconds must be at least 300")
         self.path = path
@@ -41,6 +54,11 @@ class FeatureStateStore:
         self.late_arrival_grace_seconds = late_arrival_grace_seconds
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
+
+    def _aggregate_alerts(self, *args, **kwargs):
+        if self.feature_schema_version == STREAM_SCHEMA_VERSION:
+            return aggregate_stream_alerts(*args, **kwargs)
+        return aggregate_wazuh_alerts(*args, **kwargs)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=10)
@@ -138,7 +156,7 @@ class FeatureStateStore:
             # Upgrade from retained raw evidence only, never reconstructed features.
             for row in connection.execute(
                 "SELECT * FROM wazuh_alerts WHERE feature_schema_version=?",
-                (FEATURE_SCHEMA_VERSION,),
+                (self.feature_schema_version,),
             ).fetchall():
                 self._retain_process_identity(
                     connection, WazuhAlert.model_validate_json(row["payload_json"]),
@@ -160,11 +178,10 @@ class FeatureStateStore:
             )
             connection.execute(
                 "INSERT OR IGNORE INTO feature_grouping_policy VALUES (1,?)",
-                (FEATURE_GROUPING_POLICY_VERSION,),
+                (self.grouping_policy_version,),
             )
 
-    @staticmethod
-    def _check_state_policy(connection: sqlite3.Connection) -> None:
+    def _check_state_policy(self, connection: sqlite3.Connection) -> None:
         tables = {row[0] for row in connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table'",
         )}
@@ -184,7 +201,7 @@ class FeatureStateStore:
         grouping_verified = "feature_grouping_policy" in tables
         if grouping_verified:
             versions = connection.execute("SELECT version FROM feature_grouping_policy").fetchall()
-            if versions != [(FEATURE_GROUPING_POLICY_VERSION,)]:
+            if versions != [(self.grouping_policy_version,)]:
                 raise FeatureStateConflictError(grouping_error)
         if clock_verified and grouping_verified:
             return
@@ -340,14 +357,14 @@ class FeatureStateStore:
                 if (
                     existing["feature_response_json"] is None
                     or existing["window_minutes"] != window_minutes
-                    or existing["feature_schema_version"] != FEATURE_SCHEMA_VERSION
+                    or existing["feature_schema_version"] != self.feature_schema_version
                 ):
                     raise FeatureStateConflictError(
                         "original fixed-window response is unavailable for this legacy event "
                         "or the requested window has changed; use the persisted event outcome"
                     )
                 try:
-                    original = FeatureStateResponse.model_validate_json(
+                    original = self.response_type.model_validate_json(
                         existing["feature_response_json"]
                     )
                 except ValueError as exc:
@@ -371,7 +388,7 @@ class FeatureStateStore:
                     "received_at, window_minutes, feature_schema_version) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (alert.id, payload_hash, payload, event_time, now, window_minutes,
-                     FEATURE_SCHEMA_VERSION),
+                     self.feature_schema_version),
                 )
             rows = connection.execute(
                 """
@@ -381,11 +398,11 @@ class FeatureStateStore:
                   AND feature_schema_version = ?
                 ORDER BY event_timestamp, alert_id
                 """,
-                (bucket_start, bucket_start + horizon, window_minutes, FEATURE_SCHEMA_VERSION),
+                (bucket_start, bucket_start + horizon, window_minutes, self.feature_schema_version),
             ).fetchall()
             alerts = [WazuhAlert.model_validate_json(row["payload_json"]) for row in rows]
             identities = self._process_context(connection, alerts)
-            batch = aggregate_wazuh_alerts(
+            batch = self._aggregate_alerts(
                 alerts, window_minutes=window_minutes,
                 process_context=[
                     WazuhAlert.model_validate_json(row["payload_json"]) for row in identities
@@ -414,7 +431,7 @@ class FeatureStateStore:
                     ])),
                 }),
             })
-            result = FeatureStateResponse(
+            result = self.response_type(
                 snapshot_revision=self._next_revision(connection),
                 ingest_status="duplicate" if existing is not None else "new",
                 stored_event_count=sum(
@@ -443,7 +460,7 @@ class FeatureStateStore:
                 "SELECT * FROM wazuh_alerts WHERE alert_id=?", (alert_id,),
             ).fetchone()
             if anchor is None or (
-                anchor['feature_schema_version'] != FEATURE_SCHEMA_VERSION
+                anchor['feature_schema_version'] != self.feature_schema_version
                 or anchor['window_minutes'] != window_minutes
             ):
                 raise FeatureStateConflictError("window anchor is missing or uses a legacy schema")
@@ -454,7 +471,7 @@ class FeatureStateStore:
             if start < now - self.retention_seconds or connection.execute(
                 "SELECT 1 FROM evicted_feature_windows WHERE bucket_start=? "
                 "AND window_minutes=? AND feature_schema_version=?",
-                (start, window_minutes, FEATURE_SCHEMA_VERSION),
+                (start, window_minutes, self.feature_schema_version),
             ).fetchone() is not None:
                 raise FeatureStateConflictError(
                     "window exceeds raw retention or contains evicted input; recollect"
@@ -464,11 +481,11 @@ class FeatureStateStore:
             rows = connection.execute(
                 "SELECT * FROM wazuh_alerts WHERE event_timestamp>=? AND event_timestamp<? "
                 "AND window_minutes=? AND feature_schema_version=? ORDER BY alert_id",
-                (start, end, window_minutes, FEATURE_SCHEMA_VERSION),
+                (start, end, window_minutes, self.feature_schema_version),
             ).fetchall()
             alerts = [WazuhAlert.model_validate_json(row['payload_json']) for row in rows]
             identities = self._process_context(connection, alerts)
-            batch = aggregate_wazuh_alerts(
+            batch = self._aggregate_alerts(
                 alerts,
                 window_minutes=window_minutes,
                 process_context=[
@@ -501,13 +518,13 @@ class FeatureStateStore:
             if previous is not None:
                 if previous['input_hash'] != digest:
                     raise FeatureStateConflictError("raw input changed after window closure")
-                original = FeatureStateResponse.model_validate_json(previous['response_json'])
+                original = self.response_type.model_validate_json(previous['response_json'])
                 if original.snapshot_revision is not None:
                     return original.model_copy(update={'ingest_status': 'duplicate'})
                 # A legacy close may be migrated only after the same full raw
                 # digest and watermark checks above succeed. Rebuild its current
                 # facts rather than assigning a new revision to historical JSON.
-            result = FeatureStateResponse(
+            result = self.response_type(
                 snapshot_revision=self._next_revision(connection),
                 ingest_status='duplicate' if previous is not None else 'new',
                 stored_event_count=len(members),

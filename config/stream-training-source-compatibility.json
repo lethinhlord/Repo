@@ -1,0 +1,10 @@
+{
+  "approved_manifest_sha256": "6755620f32ebd4cc58665eeaca0bd8ef9db7247d7879f10c26ecea683ec1ce7c",
+  "builder_config_sha256": "90b316a41daaacf7daf18f859585c2126d3207c3c188d0591e55e0982fb54290",
+  "feature_schema_sha256": "ee0f05ecac5f53e1e4ae2cfb156775a4b3033b69f097268eb9d1337bbcd9ec0b",
+  "parent_manifest_sha256": "3081768547d6a14f09d1e8f79fe83f08d17fed52b4012285a57f219799807bca",
+  "processing_sha256": "ba217b1f85046d7ef3cf6e1356c5f229ba99c03103893ef2cc28c6d14064bd0d",
+  "scope": "Exact raw-verified additive40-run stream derivation for research training. Labels, cohorts, all24 legacy values and24/8/8 membership remain unchanged. Source/schema-export regression fixes verified; no collection G7 or automation approval.",
+  "status": "READY",
+  "version": "reviewed-stream-training-v1"
+}

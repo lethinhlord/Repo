@@ -9,10 +9,15 @@ from typing import Any
 import joblib
 import numpy as np
 
-from api.app.contracts import IncidentRequest, ModelMetricsResponse, PredictionResponse
-from ml.behavior_features import FEATURE_SCHEMA_VERSION
+from api.app.contracts import (
+    IncidentRequest,
+    ModelMetricsResponse,
+    PredictionResponse,
+    StreamIncidentRequest,
+)
 from ml.evaluation_evidence import evidence_directory
 from ml.evaluation_registry import check_output_evidence, registry_status
+from ml.feature_profiles import registered_schema, validate_stream_values
 from ml.freeze_model import PACKAGE_FILES, verify_evidence, verify_frozen_manifest
 from ml.model_monitoring import ModelMonitoringStore
 
@@ -67,10 +72,13 @@ class ModelRuntime:
             raise ModelPackageError("freeze and metadata versions do not match")
         if schema.get("version") != self.metadata.get("feature_schema_version"):
             raise ModelPackageError("feature schema and metadata versions do not match")
-        active_schema = json.loads(
-            Path(__file__).with_name("feature_schema.json").read_text(encoding="utf-8")
-        )
-        if schema.get("version") != FEATURE_SCHEMA_VERSION or schema != active_schema:
+        try:
+            active_schema = registered_schema(schema.get("version"))
+        except ValueError as exc:
+            raise ModelPackageError(
+                "model package schema is not the active runtime schema",
+            ) from exc
+        if schema != active_schema:
             raise ModelPackageError("model package schema is not the active runtime schema")
         if self.feature_profile.get("revision") != "feature-profile-v1":
             raise ModelPackageError("unsupported or missing feature profile")
@@ -225,7 +233,14 @@ class ModelRuntime:
         except (ModelPackageError, OSError, ValueError):
             return "EVIDENCE_INTEGRITY_ERROR"
 
-    def predict(self, incident: IncidentRequest) -> PredictionResponse:
+    def predict(self, incident: IncidentRequest | StreamIncidentRequest) -> PredictionResponse:
+        if incident.feature_schema_version != self.metadata["feature_schema_version"]:
+            raise InferenceInputError("incident feature profile differs from the model package")
+        if incident.feature_schema_version == "features-v4-stream-v1":
+            try:
+                validate_stream_values(incident.features, self.schema)
+            except ValueError as exc:
+                raise InferenceInputError(str(exc)) from exc
         family = incident.family_hint
         if family not in self.bundle["families"]:
             raise InferenceInputError(f"unsupported model family: {family}")
@@ -255,6 +270,23 @@ class ModelRuntime:
             self.thresholds["families"][family]["automation_eligible"]
         )
         reasons = list(incident.review_reasons)
+        if incident.feature_schema_version == "features-v4-stream-v1" and family == "c2":
+            if incident.features.get("tcp_connection_count", 0) <= 0:
+                reasons.append("model:unsupported_non_tcp_c2")
+            if incident.features.get("dominant_tcp_unique") != 1:
+                reasons.append("indicator:ambiguous_conversation")
+            if incident.features.get("dominant_tcp_context_known") != 1:
+                reasons.append("indicator:history_not_known")
+            attribution = incident.indicator_attribution
+            if attribution is None:
+                reasons.append("indicator:attribution_missing")
+            elif (attribution.observation_count != incident.features.get(
+                      "dominant_tcp_observation_count")
+                  or float(attribution.history_known) != incident.features.get(
+                      "dominant_tcp_context_known")
+                  or (attribution.history_known and float(attribution.new_destination)
+                      != incident.features.get("dominant_tcp_new_destination"))):
+                raise InferenceInputError("indicator attribution differs from the stream features")
         history_mask = (
             "source_history_known" if family == "account" else "destination_history_known"
         )

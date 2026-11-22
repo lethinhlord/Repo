@@ -31,10 +31,11 @@ def _archive_files(root: Path, commit: str) -> dict[str, bytes]:
 
 
 def _collection_changes(before: dict[str, bytes], after: dict[str, bytes]) -> dict:
-    """Bind every production change; exclude only the policy itself and documentation/tests."""
+    """Bind production changes; the stream review has its own exact Git/source verifier."""
     changes = {}
     for name in sorted(before.keys() | after.keys()):
-        if name == POLICY or name.startswith(("docs/", "tests/", "tasks/")):
+        if (name in {POLICY, "config/stream-training-source-compatibility.json"}
+                or name.startswith(("docs/", "tests/", "tasks/"))):
             continue
         if before.get(name) != after.get(name):
             changes[name] = {
