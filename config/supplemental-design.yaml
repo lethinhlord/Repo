@@ -1,0 +1,47 @@
+version: supplemental-design-v1
+campaign_id: SUPPLEMENTAL-20261122
+candidate_tag: supplemental-collection-v1.0.0-candidate.1
+scope: Controlled four-VM lab activity profiles; assisted research, not malicious intent or general C2 detection.
+evaluation_protocol: known-template-new-host-day
+raw_feature_schema: features-v3
+derived_feature_schema: features-v5-http-v1
+automation_eligible: false
+partition_contexts:
+  train: 10
+  validation: 4
+  locked_test: 4
+repetitions_per_label: 3
+minimum_host_days_per_partition: 3
+dependency_block: casefolded-host-and-utc-date
+http_endpoint: http://10.40.0.10:8081/beacon
+windows_host: WIN11-TARGET
+templates:
+  account:
+    - id: account-recovery
+      benign: ACCOUNT-BENIGN-TWO-TYPOS-THEN-SUCCESS
+      malicious: ACCOUNT-MALICIOUS-BURST-THEN-SUCCESS
+    - id: account-sessions
+      benign: ACCOUNT-BENIGN-REMOTE-SESSIONS
+      malicious: ACCOUNT-MALICIOUS-REPEATED-FAILURES-6
+    - id: account-maintenance
+      benign: ACCOUNT-BENIGN-MULTIACCOUNT-MAINTENANCE
+      malicious: ACCOUNT-MALICIOUS-PASSWORD-SPRAY
+    - id: account-retries
+      benign: ACCOUNT-BENIGN-STALE-CREDENTIAL
+      malicious: ACCOUNT-MALICIOUS-RAPID-GUESSING
+    - id: account-multiuser
+      benign: ACCOUNT-BENIGN-MULTIACCOUNT-RECOVERY
+      malicious: ACCOUNT-MALICIOUS-MULTIACCOUNT-GUESSING
+  c2:
+    - id: tcp-poll
+      benign: C2-BENIGN-HEALTH-POLL
+      malicious: C2-MALICIOUS-HTTP-BEACON
+    - id: tcp-transfer
+      benign: C2-BENIGN-SINGLE-DOWNLOAD
+      malicious: C2-MALICIOUS-STAGED-TRANSFER
+    - id: tcp-api
+      benign: C2-BENIGN-IRREGULAR-API
+      malicious: C2-MALICIOUS-JITTER-BEACON
+    - id: tcp-retry
+      benign: C2-BENIGN-API-BURST
+      malicious: C2-MALICIOUS-STAGED-TRANSFER-RETRY
