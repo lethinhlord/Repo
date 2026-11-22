@@ -61,6 +61,7 @@ from ml.telemetry import (
     linked_transaction,
     network_is_outbound,
     normalize_ip,
+    same_flow_direction,
     suricata_observations,
     sysmon_clock_issues,
     unambiguous_transactions,
@@ -255,6 +256,7 @@ class SourceConfig(BaseModel):
     scenario_catalog_path: str = Field(min_length=1)
     context_baseline_path: str | None = None
     collection_release_path: str | None = None
+    campaign_plan_path: str | None = Field(default=None, exclude_if=lambda value: value is None)
     require_clean_bucket: bool = False
     require_flow_counters: bool = False
     require_online_parity: bool = False
@@ -412,11 +414,11 @@ def _validate_draft_against_catalog(draft: RunDraft, catalog_path: Path) -> None
     if scenario is None:
         raise CollectionError(f"draft does not match scenario catalog: {draft.scenario_id}")
     if catalog.version == "scenario-catalog-v2" and scenario.purpose == "trainable":
-        from ml.supplemental_design import verify_plan
+        from ml.supplemental_design import resolve_plan_run, verify_plan
 
         try:
             verify_plan(draft.campaign_plan, catalog.campaign_design)
-            row = next(r for r in draft.campaign_plan["runs"] if r["run_id"] == draft.run_id)
+            row = resolve_plan_run(draft.campaign_plan, draft.run_id)
             expected_row = {
                 "scenario_id": draft.scenario_id, "family": draft.family, "label": draft.label,
                 "cohort_id": draft.cohort_id, "collection_seed": draft.collection_seed,
@@ -475,12 +477,53 @@ def _atomic_text(path: Path, text: str) -> None:
 
 def _validate_campaign_date(draft: RunDraft, at: datetime) -> None:
     if draft.campaign_plan is not None:
+        from ml.supplemental_design import resolve_plan_run
+
         try:
-            row = next(r for r in draft.campaign_plan["runs"] if r["run_id"] == draft.run_id)
+            row = resolve_plan_run(draft.campaign_plan, draft.run_id)
             if _utc(at).date().isoformat() != row["context"]["collection_date"]:
                 raise ValueError("action must occur on the registered UTC date")
         except (ValueError, KeyError, TypeError, StopIteration) as exc:
             raise CollectionError(f"campaign registered UTC date mismatch: {exc}") from exc
+
+
+def _validate_campaign_attempt(draft: RunDraft, project_root: Path) -> None:
+    if draft.campaign_plan is None:
+        return
+    from ml.supplemental_design import resolve_plan_run
+
+    row = resolve_plan_run(draft.campaign_plan, draft.run_id)
+    for number, attempt in enumerate(row["attempts"], 1):
+        folder = project_root / "evidence/scenario-runs" / attempt["run_id"]
+        if number == row["attempt_number"]:
+            continue
+        if number > row["attempt_number"]:
+            if folder.exists():
+                raise CollectionError("a later campaign attempt already exists")
+            continue
+        try:
+            state = json.loads((folder / ".collection_state.json").read_bytes())
+            _verify_start_snapshot(folder, state, project_root)
+            if state.get("status") != "ABORTED":
+                raise ValueError("previous attempt must be explicitly ABORTED")
+            previous = RunDraft.model_validate(state["draft"])
+            if (previous.campaign_plan != draft.campaign_plan
+                    or previous.run_id != attempt["run_id"]):
+                raise ValueError("previous attempt belongs to a different plan")
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise CollectionError(f"campaign retry predecessor is not proven: {exc}") from exc
+
+
+def _validate_campaign_authority(draft: RunDraft, snapshots: dict[str, Any]) -> None:
+    if draft.campaign_plan is not None:
+        from ml.collection_release import digest
+
+        accepted = snapshots.get("collection_release", {})
+        if (accepted.get("version") != "collection-acceptance-v3"
+                or accepted.get("campaign_registration", {}).get("plan") != draft.campaign_plan
+                or accepted["campaign_registration"].get("plan_sha256")
+                != digest(draft.campaign_plan)):
+            raise CollectionError("campaign plan differs from its precollection G7 registration")
 
 
 def _write_json(path: Path, payload: Any) -> None:
@@ -599,7 +642,10 @@ def create_run_draft(
         project_root = catalog_path.resolve().parent.parent
         selected_source = source_config_path or project_root / "config/collection-sources.yaml"
         official_source = SourceConfig.model_validate(_read_yaml(selected_source))
-        _release_snapshots(official_source, project_root, draft.purpose, selected_source)
+        snapshots = _release_snapshots(
+            official_source, project_root, draft.purpose, selected_source,
+        )
+        _validate_campaign_authority(draft, snapshots)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     _atomic_text(
         output_path,
@@ -793,6 +839,7 @@ def start_run(
             and not source.collection_release_path):
         raise CollectionError("official action profiles require collection_release_path")
     release_snapshots = _release_snapshots(source, project_root, draft.purpose, source_config_path)
+    _validate_campaign_authority(draft, release_snapshots)
     schema_path = project_root / "ml/feature_schema.json"
     if not schema_path.is_file():
         schema_path = Path(__file__).with_name("feature_schema.json")
@@ -833,6 +880,7 @@ def start_run(
 
     started_at = _utc(now)
     _validate_campaign_date(draft, started_at)
+    _validate_campaign_attempt(draft, project_root)
     if baseline and not baseline.captured_at <= started_at < baseline.valid_until:
         raise CollectionError("context baseline is stale or unavailable at collection start")
     clock_age = (started_at - _utc(draft.clock_preflight.captured_at)).total_seconds()
@@ -1586,11 +1634,17 @@ def _derive_c2(
     if draft.scenario_parameters.get("execution_profile_version") == "lab-http-workflow-v2":
         from ml.http_workflow import action_rows
 
-        for edge, (_, sent, _) in zip(edges, action_rows(draft.scenario_parameters), strict=True):
+        for edge, (_, sent, received) in zip(
+            edges, action_rows(draft.scenario_parameters), strict=True,
+        ):
             transaction = transactions[edge[0]]
             finals = [p for p in suricata if linked_flow(p, [transaction], maximum_delta)]
-            if (not finals or any(type(p["flow"].get("bytes_toserver")) is not int
-                                  or p["flow"]["bytes_toserver"] < sent for p in finals)):
+            if (not finals or any(not same_flow_direction(p, transaction[0])
+                                  or type(p["flow"].get("bytes_toserver")) is not int
+                                  or p["flow"]["bytes_toserver"] <= 0
+                                  or p["flow"]["bytes_toserver"] < sent
+                                  or type(p["flow"].get("bytes_toclient")) is not int
+                                  or p["flow"]["bytes_toclient"] < received for p in finals)):
                 raise CollectionError("HTTP upload lacks sufficient attributable final flow bytes")
 
     gates = draft.quality_gates
@@ -1753,7 +1807,7 @@ def _verify_full_capture_parity(
     baseline = load_baseline(evidence_dir / "context-baseline.json")
     taxonomy = _load_taxonomy(evidence_dir / "suspicious-process-taxonomy.yaml")
     aggregate = aggregate_wazuh_alerts
-    if feature_profile == "features-v4-stream-v1":
+    if feature_profile in {"features-v4-stream-v1", "features-v5-http-v1"}:
         from ml.stream_pipeline import aggregate_stream_alerts
 
         if compare:
@@ -1761,6 +1815,10 @@ def _verify_full_capture_parity(
                 "stream projection requires a separate legacy-vector verification",
             )
         aggregate = aggregate_stream_alerts
+        if feature_profile == "features-v5-http-v1":
+            from ml.http_pipeline import aggregate_http_alerts
+
+            aggregate = aggregate_http_alerts
     elif feature_profile != "features-v3":
         raise CollectionError("unsupported replay feature profile")
     try:

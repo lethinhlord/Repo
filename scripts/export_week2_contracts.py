@@ -15,6 +15,10 @@ from api.app.contracts import (  # noqa: E402 - repository root is bootstrapped 
     FeaturePipelineResponse,
     FeatureStateResponse,
     FeatureWindowFinalizeRequest,
+    HttpFeatureBatchResponse,
+    HttpFeaturePipelineResponse,
+    HttpFeatureStateResponse,
+    HttpIncidentRequest,
     IncidentRecordRequest,
     IncidentRecordResponse,
     ModelMetricsResponse,
@@ -79,6 +83,10 @@ if __name__ == "__main__":
     write_json("risk-evaluation-request.schema.json", RiskEvaluationRequest.model_json_schema())
     write_json("risk-evaluation.schema.json", RiskEvaluation.model_json_schema())
     for name, contract in (
+        ("http-incident-request.schema.json", HttpIncidentRequest),
+        ("http-feature-pipeline-response.schema.json", HttpFeaturePipelineResponse),
+        ("http-feature-batch-response.schema.json", HttpFeatureBatchResponse),
+        ("http-feature-state-response.schema.json", HttpFeatureStateResponse),
         ("stream-incident-request.schema.json", StreamIncidentRequest),
         ("stream-feature-pipeline-response.schema.json", StreamFeaturePipelineResponse),
         ("stream-feature-batch-response.schema.json", StreamFeatureBatchResponse),

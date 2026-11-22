@@ -24,7 +24,7 @@ from ml.supplemental_design import load_design, make_plan
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def campaign_fixture(tmp_path, family="account"):
+def campaign_fixture(tmp_path, family="account", cohort_id=None):
     d = load_design(ROOT / "config/supplemental-design.yaml")
     catalog = compile_catalog(
         d, yaml.safe_load((ROOT / "config/scenario-catalog.yaml").read_text())
@@ -32,7 +32,11 @@ def campaign_fixture(tmp_path, family="account"):
     path = tmp_path / "catalog.yaml"
     path.write_text(yaml.safe_dump(catalog), encoding="utf-8")
     plan = make_plan(d, registration(d), seed=42)
-    row = next(r for r in plan["runs"] if r["family"] == family)
+    row = next(
+        r
+        for r in plan["runs"]
+        if r["family"] == family and (cohort_id is None or r["cohort_id"] == cohort_id)
+    )
     scenario = next(
         s
         for s in ScenarioCatalog.model_validate(catalog).scenarios
@@ -118,7 +122,7 @@ def test_coordinated_catalog_changes_fail_source_check(tmp_path):
         _check_design(tmp_path, source)
 
 
-def http_events(tmp_path):
+def http_events(tmp_path, cohort_id=None):
     import json
 
     from test_collection_acceptance import _c2_events
@@ -127,7 +131,7 @@ def http_events(tmp_path):
     from ml.http_workflow import action_rows
     from ml.scenario_collection import SourceConfig
 
-    path, draft = campaign_fixture(tmp_path, "c2")
+    path, draft = campaign_fixture(tmp_path, "c2", cohort_id)
     scenario = next(
         s
         for s in ScenarioCatalog.model_validate(yaml.safe_load(path.read_text())).scenarios

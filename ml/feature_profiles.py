@@ -8,6 +8,7 @@ from pathlib import Path
 SCHEMA_FILES = {
     "features-v3": "feature_schema.json",
     "features-v4-stream-v1": "feature_schema_stream.json",
+    "features-v5-http-v1": "feature_schema_http.json",
 }
 
 

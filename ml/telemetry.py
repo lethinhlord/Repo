@@ -459,6 +459,15 @@ def linked_flow(
     )
 
 
+def same_flow_direction(payload: dict[str, Any], reference: dict[str, Any]) -> bool:
+    """Full tuple equality with direction retained for directional byte counters."""
+    return (flow_connection_key(payload) is not None
+            and flow_connection_key(payload) == flow_connection_key(reference)
+            and all(normalize_ip(payload.get(f)) == normalize_ip(reference.get(f))
+                    for f in ("src_ip", "dest_ip"))
+            and all(payload.get(f) == reference.get(f) for f in ("src_port", "dest_port")))
+
+
 def flow_counter_issues(
     payloads: list[dict[str, Any]],
     *,

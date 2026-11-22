@@ -11,6 +11,7 @@ partition_contexts:
   validation: 4
   locked_test: 4
 repetitions_per_label: 3
+maximum_attempts_per_run: 3
 minimum_host_days_per_partition: 3
 dependency_block: casefolded-host-and-utc-date
 http_endpoint: http://10.40.0.10:8081/beacon

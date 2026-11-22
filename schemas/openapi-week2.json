@@ -344,6 +344,158 @@
         }
       }
     },
+    "/features/wazuh/http/batch": {
+      "post": {
+        "summary": "Features From Wazuh Http Batch",
+        "operationId": "features_from_wazuh_http_batch_features_wazuh_http_batch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WazuhAlertBatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpFeatureBatchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/predict/http": {
+      "post": {
+        "summary": "Predict Http",
+        "operationId": "predict_http_predict_http_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HttpIncidentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PredictionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/features/wazuh/http/stateful": {
+      "post": {
+        "summary": "Http Features Stateful",
+        "operationId": "http_features_stateful_features_wazuh_http_stateful_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WazuhAlert"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpFeatureStateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/features/wazuh/http/finalize-window": {
+      "post": {
+        "summary": "Http Features Finalize",
+        "operationId": "http_features_finalize_features_wazuh_http_finalize_window_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeatureWindowFinalizeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpFeatureStateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/features/wazuh/stream/stateful": {
       "post": {
         "summary": "Stream Features Stateful",
@@ -1295,6 +1447,313 @@
         "type": "object",
         "title": "HealthResponse"
       },
+      "HttpFeatureBatchResponse": {
+        "properties": {
+          "feature_schema_version": {
+            "type": "string",
+            "const": "features-v5-http-v1",
+            "title": "Feature Schema Version",
+            "default": "features-v5-http-v1"
+          },
+          "input_alert_count": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Input Alert Count"
+          },
+          "unique_alert_count": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Unique Alert Count"
+          },
+          "duplicate_alert_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Duplicate Alert Count"
+          },
+          "incidents": {
+            "items": {
+              "$ref": "#/components/schemas/HttpFeaturePipelineResponse"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Incidents"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "input_alert_count",
+          "unique_alert_count",
+          "duplicate_alert_count",
+          "incidents"
+        ],
+        "title": "HttpFeatureBatchResponse"
+      },
+      "HttpFeaturePipelineResponse": {
+        "properties": {
+          "feature_schema_version": {
+            "type": "string",
+            "const": "features-v5-http-v1",
+            "title": "Feature Schema Version",
+            "default": "features-v5-http-v1"
+          },
+          "feature_order": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Feature Order"
+          },
+          "ordered_vector": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Ordered Vector"
+          },
+          "quality_status": {
+            "type": "string",
+            "enum": [
+              "COMPLETE",
+              "PARTIAL"
+            ],
+            "title": "Quality Status"
+          },
+          "missing_required_features": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Missing Required Features"
+          },
+          "structural_zero_features": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Structural Zero Features"
+          },
+          "evidence_quality": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Evidence Quality"
+          },
+          "evidence_quality_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Evidence Quality Reasons"
+          },
+          "incident": {
+            "$ref": "#/components/schemas/HttpIncidentRequest"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "feature_order",
+          "ordered_vector",
+          "quality_status",
+          "missing_required_features",
+          "structural_zero_features",
+          "evidence_quality",
+          "evidence_quality_reasons",
+          "incident"
+        ],
+        "title": "HttpFeaturePipelineResponse"
+      },
+      "HttpFeatureStateResponse": {
+        "properties": {
+          "snapshot_revision": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Revision"
+          },
+          "ingest_status": {
+            "type": "string",
+            "enum": [
+              "new",
+              "duplicate"
+            ],
+            "title": "Ingest Status"
+          },
+          "stored_event_count": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Stored Event Count"
+          },
+          "window_minutes": {
+            "type": "integer",
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Window Minutes"
+          },
+          "feature": {
+            "$ref": "#/components/schemas/HttpFeaturePipelineResponse"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "ingest_status",
+          "stored_event_count",
+          "window_minutes",
+          "feature"
+        ],
+        "title": "HttpFeatureStateResponse"
+      },
+      "HttpIncidentRequest": {
+        "properties": {
+          "feature_schema_version": {
+            "type": "string",
+            "const": "features-v5-http-v1",
+            "title": "Feature Schema Version",
+            "default": "features-v5-http-v1"
+          },
+          "context_status": {
+            "type": "string",
+            "enum": [
+              "AVAILABLE",
+              "MISSING",
+              "STALE",
+              "FUTURE",
+              "UNKNOWN"
+            ],
+            "title": "Context Status",
+            "default": "MISSING"
+          },
+          "context_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Revision"
+          },
+          "review_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Review Reasons"
+          },
+          "observation_quality": {
+            "type": "string",
+            "enum": [
+              "COMPLETE",
+              "PARTIAL"
+            ],
+            "title": "Observation Quality",
+            "default": "PARTIAL"
+          },
+          "incident_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Incident Id"
+          },
+          "asset_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Asset Id"
+          },
+          "start_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Start Time"
+          },
+          "end_time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "End Time"
+          },
+          "family_hint": {
+            "type": "string",
+            "enum": [
+              "account",
+              "c2",
+              "unknown"
+            ],
+            "title": "Family Hint",
+            "default": "unknown"
+          },
+          "features": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Features"
+          },
+          "evidence_sources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Evidence Sources"
+          },
+          "base_severity": {
+            "type": "integer",
+            "maximum": 15.0,
+            "minimum": 0.0,
+            "title": "Base Severity"
+          },
+          "raw_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Raw Refs"
+          },
+          "indicator": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Indicator"
+          },
+          "indicator_attribution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IndicatorAttribution"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "incident_id",
+          "asset_id",
+          "start_time",
+          "end_time",
+          "evidence_sources",
+          "base_severity"
+        ],
+        "title": "HttpIncidentRequest"
+      },
       "IncidentRecordRequest": {
         "properties": {
           "snapshot_revision": {
@@ -2040,7 +2499,8 @@
             "type": "string",
             "enum": [
               "features-v3",
-              "features-v4-stream-v1"
+              "features-v4-stream-v1",
+              "features-v5-http-v1"
             ],
             "title": "Feature Schema Version",
             "default": "features-v3"

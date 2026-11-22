@@ -52,12 +52,31 @@ def test_plan_freezes_complete_inventory_and_named_roles(tmp_path):
     } == {"train": 120, "validation": 48, "locked_test": 48}
     assert len({r["run_id"] for r in plan["runs"]}) == 216
     assert len({r["collection_seed"] for r in plan["runs"]}) == 216
+    attempts = [a for r in plan["runs"] for a in r["attempts"]]
+    assert len(attempts) == len({a["run_id"] for a in attempts}) == 648
+    assert len({a["collection_seed"] for a in attempts}) == 648
     assert make_plan(design, registered, seed=42) == plan
     assert any(
         r["template_id"] == plan["runs"][0]["template_id"]
         and r["cohort_id"] != plan["runs"][0]["cohort_id"]
         for r in plan["runs"]
     )
+
+
+def test_retries_are_predeclared_attempts_of_one_statistical_unit():
+    from ml.supplemental_design import load_design, make_plan, resolve_plan_run
+
+    d = load_design(ROOT / "config/supplemental-design.yaml")
+    p = make_plan(d, registration(d), seed=42)
+    unit = p["runs"][0]
+    retry = resolve_plan_run(p, unit["attempts"][1]["run_id"])
+    assert retry["planned_run_id"] == unit["run_id"]
+    assert retry["attempt_number"] == 2
+    assert retry["collection_seed"] == unit["attempts"][1]["collection_seed"]
+    assert retry["partition"] == unit["partition"]
+    assert retry["context"] == unit["context"]
+    with pytest.raises(ValueError):
+        resolve_plan_run(p, unit["run_id"] + "-UNPLANNED")
 
 
 @pytest.mark.parametrize("mutation", ["role", "template", "duplicate", "seed", "registration"])

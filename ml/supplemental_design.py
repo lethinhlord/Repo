@@ -45,6 +45,7 @@ def validate_design(value: dict) -> None:
         "automation_eligible",
         "partition_contexts",
         "repetitions_per_label",
+        "maximum_attempts_per_run",
         "minimum_host_days_per_partition",
         "dependency_block",
         "http_endpoint",
@@ -60,6 +61,8 @@ def validate_design(value: dict) -> None:
         or any(type(v) is not int for v in value["partition_contexts"].values())
         or type(value["repetitions_per_label"]) is not int
         or value["repetitions_per_label"] != 3
+        or type(value["maximum_attempts_per_run"]) is not int
+        or value["maximum_attempts_per_run"] != 3
         or type(value["minimum_host_days_per_partition"]) is not int
         or value["minimum_host_days_per_partition"] != 3
         or value["automation_eligible"] is not False
@@ -181,20 +184,29 @@ def make_plan(design: dict, registration: dict, *, seed: int) -> dict:
         labels = ["benign", "malicious"] * design["repetitions_per_label"]
         rng.shuffle(labels)
         for repetition, label in enumerate(labels, 1):
-            run_seed = rng.getrandbits(32)
-            while run_seed in used:
-                run_seed = rng.getrandbits(32)
-            used.add(run_seed)
             run_id = f"SUP-{design['campaign_id']}-{slot['cohort_id']}-{repetition:02d}"
-            if len(run_id) > 128:
+            if len(run_id) > 124:
                 raise ValueError("planned collector identity exceeds its boundary")
+            attempts = []
+            for attempt in range(1, design["maximum_attempts_per_run"] + 1):
+                run_seed = rng.getrandbits(32)
+                while run_seed in used:
+                    run_seed = rng.getrandbits(32)
+                used.add(run_seed)
+                attempts.append(
+                    {
+                        "run_id": run_id if attempt == 1 else f"{run_id}-A{attempt:02d}",
+                        "collection_seed": run_seed,
+                    }
+                )
             runs.append(
                 {
                     **slot,
                     "run_id": run_id,
                     "label": label,
                     "scenario_id": f"{slot['cohort_id']}-{label[0].upper()}",
-                    "collection_seed": run_seed,
+                    "collection_seed": attempts[0]["collection_seed"],
+                    "attempts": attempts,
                     "context": context,
                 }
             )
@@ -218,6 +230,14 @@ def verify_plan(plan: dict, design: dict) -> None:
         or plan != make_plan(design, plan.get("registration"), seed=plan.get("plan_seed"))
     ):
         raise ValueError("plan differs from deterministic design/registration commitments")
+
+
+def resolve_plan_run(plan: dict, run_id: str) -> dict:
+    for row in plan["runs"]:
+        for number, attempt in enumerate(row["attempts"], 1):
+            if attempt["run_id"] == run_id:
+                return {**row, **attempt, "planned_run_id": row["run_id"], "attempt_number": number}
+    raise ValueError("run ID is not a predeclared campaign attempt")
 
 
 def write_plan(path: Path, plan: dict) -> None:

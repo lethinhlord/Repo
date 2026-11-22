@@ -413,13 +413,14 @@ def _collect_run(
     sequence: int,
     repeat: int,
     purpose: str | None = None,
+    catalog_path: Path | None = None,
 ) -> str:
     run_id = f"ACCEPT-{scenario.scenario_id}-R{repeat + 1}"
     action_started_at = COLLECTION_BASE + sequence * RUN_SPACING + timedelta(seconds=5)
     collection_started_at = COLLECTION_BASE + sequence * RUN_SPACING - timedelta(seconds=10)
     draft_path = root / "run-drafts" / f"{run_id}.yaml"
     create_run_draft(
-        root / "config/scenario-catalog.yaml",
+        catalog_path or root / "config/scenario-catalog.yaml",
         scenario.scenario_id,
         run_id,
         "synthetic-acceptance",
@@ -427,6 +428,7 @@ def _collect_run(
         collection_seed=20_261_027 + sequence,
         clock_preflight=_clock_preflight(collection_started_at),
         purpose=purpose,
+        source_config_path=source_path if catalog_path is not None else None,
     )
     draft = RunDraft.model_validate(
         yaml.safe_load(draft_path.read_text(encoding="utf-8"))

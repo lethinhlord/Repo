@@ -88,6 +88,10 @@ class StreamIncidentRequest(IncidentRequest):
         return self
 
 
+class HttpIncidentRequest(StreamIncidentRequest):
+    feature_schema_version: Literal["features-v5-http-v1"] = "features-v5-http-v1"
+
+
 class WazuhRule(ExternalModel):
     id: str | int
     level: int = Field(ge=0, le=15)
@@ -218,6 +222,20 @@ class FeatureStateResponse(StrictModel):
 
 class StreamFeatureStateResponse(FeatureStateResponse):
     feature: StreamFeaturePipelineResponse
+
+
+class HttpFeaturePipelineResponse(StreamFeaturePipelineResponse):
+    feature_schema_version: Literal["features-v5-http-v1"] = "features-v5-http-v1"
+    incident: HttpIncidentRequest
+
+
+class HttpFeatureBatchResponse(StreamFeatureBatchResponse):
+    feature_schema_version: Literal["features-v5-http-v1"] = "features-v5-http-v1"
+    incidents: list[HttpFeaturePipelineResponse] = Field(min_length=1)
+
+
+class HttpFeatureStateResponse(FeatureStateResponse):
+    feature: HttpFeaturePipelineResponse
 
 
 class FeatureWindowFinalizeRequest(StrictModel):
@@ -474,7 +492,9 @@ class ReadinessResponse(StrictModel):
     status: Literal["ready", "degraded"]
     service: Literal["datn-ai-soar-api"] = "datn-ai-soar-api"
     api_version: Literal["4.0.0"] = "4.0.0"
-    feature_schema_version: Literal["features-v3", "features-v4-stream-v1"] = "features-v3"
+    feature_schema_version: Literal[
+        "features-v3", "features-v4-stream-v1", "features-v5-http-v1",
+    ] = "features-v3"
     asset_context_revision: Literal["asset-context-v1"] = "asset-context-v1"
     risk_policy_revision: Literal["risk-week2-v2"] = "risk-week2-v2"
     ti_policy_revision: Literal["ti-week2-v1"] = "ti-week2-v1"

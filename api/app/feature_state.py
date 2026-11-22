@@ -9,7 +9,12 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from api.app.contracts import FeatureStateResponse, StreamFeatureStateResponse, WazuhAlert
+from api.app.contracts import (
+    FeatureStateResponse,
+    HttpFeatureStateResponse,
+    StreamFeatureStateResponse,
+    WazuhAlert,
+)
 from ml.behavior_features import FEATURE_SCHEMA_VERSION
 from ml.feature_pipeline import (
     FEATURE_GROUPING_POLICY_VERSION,
@@ -17,6 +22,8 @@ from ml.feature_pipeline import (
     alert_event_time,
     window_start,
 )
+from ml.http_features import HTTP_SCHEMA_VERSION
+from ml.http_pipeline import aggregate_http_alerts
 from ml.intake_window import receipt_timely
 from ml.stream_features import STREAM_SCHEMA_VERSION
 from ml.stream_pipeline import aggregate_stream_alerts
@@ -35,13 +42,17 @@ class FeatureStateStore:
         late_arrival_grace_seconds: int = 60,
         feature_profile: str = FEATURE_SCHEMA_VERSION,
     ) -> None:
-        if feature_profile not in {FEATURE_SCHEMA_VERSION, STREAM_SCHEMA_VERSION}:
+        if feature_profile not in {
+            FEATURE_SCHEMA_VERSION, STREAM_SCHEMA_VERSION, HTTP_SCHEMA_VERSION,
+        }:
             raise ValueError("unsupported feature profile")
         self.feature_schema_version = feature_profile
         self.grouping_policy_version = FEATURE_GROUPING_POLICY_VERSION + (
+            ":http-v1" if feature_profile == HTTP_SCHEMA_VERSION else
             ":stream-v1" if feature_profile == STREAM_SCHEMA_VERSION else ""
         )
         self.response_type = (
+            HttpFeatureStateResponse if feature_profile == HTTP_SCHEMA_VERSION else
             StreamFeatureStateResponse if feature_profile == STREAM_SCHEMA_VERSION
             else FeatureStateResponse
         )
@@ -56,6 +67,8 @@ class FeatureStateStore:
         self._initialize()
 
     def _aggregate_alerts(self, *args, **kwargs):
+        if self.feature_schema_version == HTTP_SCHEMA_VERSION:
+            return aggregate_http_alerts(*args, **kwargs)
         if self.feature_schema_version == STREAM_SCHEMA_VERSION:
             return aggregate_stream_alerts(*args, **kwargs)
         return aggregate_wazuh_alerts(*args, **kwargs)
