@@ -15,6 +15,45 @@ Tổng 12 context/family, mỗi context chạy mỗi nhãn một lần. Một đ
 attempt định trước, nhưng chỉ một attempt hợp lệ được tính. Giữ toàn bộ lỗi.
 Bốn pilot G7 và canary/enrollment không tính vào 48. Không thay bằng dữ liệu cũ.
 
+Mục tiêu vận hành: hoàn tất dưới 72 giờ tính từ khi bắt đầu buổi thu ngày 1.
+Lịch khuyến nghị giờ Việt Nam: ngày 1 08:00–15:00 gồm preflight/pilot/G7 và quota;
+ngày 2 và ngày 3 08:00–12:00. Như vậy khoảng 52 giờ theo đồng hồ từ đầu đến cuối,
+không phải 72 giờ máy chạy liên tục. Kiểm/cài sẵn lab trước ngày 1; lỗi thực tế
+phải dừng an toàn và báo ngay để xử lý trong ngày, không ghi đủ quota giả.
+
+### 0.1 Ma trận bao phủ bắt buộc trong 48 run
+
+Không chỉ chạy lặp bốn pilot. Compiler đã phân đều chín cặp template dưới đây.
+Cả hai nhãn trong một cặp dùng cùng công cụ, đích, user inventory và context.
+Không dùng IP, tên user, scenario_id, nhãn hoặc nonce làm feature để phân biệt.
+
+| Cặp | Benign khó dễ nhầm | Profile malicious của lab | Run mỗi nhãn |
+|---|---|---|---|
+| account-recovery | Hai lần gõ sai rồi thành công | Chuỗi thất bại dồn rồi thành công | 3 |
+| account-sessions | Các phiên đăng nhập remote hợp lệ | Sáu thất bại remote | 3 |
+| account-maintenance | Bảo trì nhiều tài khoản | Password spray qua nhiều tài khoản lab | 2 |
+| account-retries | Credential cũ gây retry hợp lệ | Đoán nhanh liên tiếp | 2 |
+| account-multiuser | Nhiều user khôi phục sau lỗi gõ | Đoán qua nhiều user | 2 |
+| tcp-poll | Health polling đều, gồm GET/POST | Beacon đều, upload biến đổi | 3 |
+| tcp-transfer | Tải xuống/upload hợp lệ theo đợt | Trao đổi staging theo thứ tự khác | 3 |
+| tcp-api | API không đều, gồm POST hợp lệ | Beacon có jitter | 3 |
+| tcp-retry | API burst/retry hợp lệ | Staging/retry lặp | 3 |
+
+Account không gán benign=thành công, malicious=thất bại. Cần đủ Security4624/4625,
+tỷ lệ remote, số tài khoản, tốc độ/cửa sổ thất bại và history thật. C2 không gán
+đều=malicious hoặc POST=malicious: cần thứ tự method, transaction, response,
+flow upload/dispersion, TCP timing và process/parent proof. Giữ nguyên frozen
+schedule; không tự điều chỉnh actor để tạo đầu vào đẹp. Bản này bao phủ các
+profile lab đã khai báo; không tuyên bố bao phủ mọi hành vi Account/C2 ngoài thực tế.
+
+Sau mỗi run kiểm VALID/evidence/checksum theo mục14. Sau mỗi ngày bàn giao backup
+cho Thịnh kiểm ngay, không chờ hết ba ngày mới xem dữ liệu. Cuối đợt audit tự
+kiểm đủ toàn bộ plan/48 đơn vị và báo TRAIN_SELECTED_REPRESENTATION_AMBIGUITY nếu
+hai nhãn trùng đúng vector đầu vào của model. Báo cáo giữ cả collision ở 24
+feature cũ. Không xóa mẫu, đổi label hoặc bỏ feature để làm mất cảnh báo. Chỉ
+được stage/train khi raw audit và exact review đạt; khả năng phân biệt thực tế
+phải đọc sau train, không bảo đảm bằng số lượng run.
+
 Đây là dữ liệu TRAIN/development để bắt đầu train và kiểm khả năng phân biệt.
 Không thu tập validation hay locked test trong ngân sách này. Chỉ có ba nhóm
 hostname/ngày UTC độc lập cho mỗi family; 48 run không phải 48 nhóm độc lập.
@@ -2135,6 +2174,7 @@ chỉ ngoài run và phải kiểm giờ/Agent/enrollment lại. Giữ và khai 
 sha256sum operator-logs/development-registration.json operator-logs/development-plan.json
 jq '[.runs[]|.partition]|group_by(.)|map({partition:.[0],units:length})' operator-logs/development-plan.json
 jq '[.runs[]|{day:.context.collection_date,family,label}]|sort_by(.day,.family,.label)|group_by([.day,.family,.label])|map({day:.[0].day,family:.[0].family,label:.[0].label,units:length})' operator-logs/development-plan.json
+jq '[.runs[]|{family,template_id,label}]|sort_by(.family,.template_id,.label)|group_by([.family,.template_id,.label])|map({family:.[0].family,template:.[0].template_id,label:.[0].label,units:length})' operator-logs/development-plan.json
 ```
 
 Phải PLAN_VERIFIED, 48 đơn vị TRAIN, 12 mỗi nhóm; ba ngày, mỗi ngày bốn mỗi nhóm.
@@ -2463,6 +2503,28 @@ tiếp cùng đơn vị và đúng ngày. Ba lần lỗi/qua ngày cần quyết
 không tự thay plan. Raw của attempt không có state là lỗi, không bỏ qua thư mục.
 
 ## 15. Kiểm kê mỗi buổi và điều kiện đủ bộ
+
+Sau khi hoàn tất hai thành viên của cặp template đầu tiên, sau mỗi block bốn run
+và cuối buổi, chạy replay sớm trên SOC-AI. Không có run active khi kiểm. Lệnh
+này kiểm lại raw/evidence và dựng đủ feature của các run đã hoàn tất; không chỉ
+đếm thư mục hay nhìn status FINALIZED. Không đổi Python/source đang thu.
+
+```bash
+set -euo pipefail
+cd "$HOME/datn-ai-soar-development-3day"
+EARLY_REPORT="operator-logs/development-progress-$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM.json"
+.venv-ml/bin/python -m ml.development_dataset review-progress \
+ --input-project "$PWD" --plan operator-logs/development-plan.json --output "$EARLY_REPORT"
+jq '{status,utc_date,dataset_ready,blocking_issues,uncollected_units,template_coverage}' "$EARLY_REPORT"
+```
+
+DEVELOPMENT_PROGRESS_REPLAY_IN_PROGRESS chỉ nói đã replay phần thu xong, còn
+đơn vị chưa thu đúng lịch. Báo cáo giữ nguyên full_audit và mọi issue: thiếu đơn
+vị của hôm nay/ngày sau được liệt kê uncollected, không giả là đủ dataset. Thiếu
+đơn vị của ngày UTC đã qua, raw lỗi, clock/parity lỗi, active run hoặc vector hai
+nhãn trùng nhau đều BLOCKED với exit khác0: dừng xử lý, không bỏ lệnh cho qua.
+Sau đủ48, inspector có thể COMPLETE nhưng dataset_ready vẫn false; còn cần
+audit/build/exact review mục17. Kiểm template_coverage với ma trận mục0.1.
 
 Không còn active run. Dùng progress ở mục 14.1 rồi đối chiếu từng ID với validate,
 verify_run_evidence và checksum. Kết thúc ngày 1 cần 16, ngày 2 lũy kế 32, ngày 3

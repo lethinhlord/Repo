@@ -1,5 +1,6 @@
 """Three-day minimum is a development experiment, never external validation."""
 
+from collections import Counter
 from copy import deepcopy
 from datetime import date
 from pathlib import Path
@@ -42,6 +43,17 @@ def test_three_real_days_generate_48_balanced_development_units():
         assert len({r["template_id"] for r in plan["runs"] if r["family"] == family}) == (
             5 if family == "account" else 4
         )
+    coverage = Counter((r["template_id"], r["label"]) for r in plan["runs"])
+    for label in ("benign", "malicious"):
+        assert {k: n for (k, y), n in coverage.items() if y == label} == {
+            "account-recovery": 3, "account-sessions": 3,
+            "account-maintenance": 2, "account-retries": 2, "account-multiuser": 2,
+            "tcp-poll": 3, "tcp-transfer": 3, "tcp-api": 3, "tcp-retry": 3,
+        }
+    assert set(Counter(
+        (r["context"]["collection_date"], r["family"], r["label"])
+        for r in plan["runs"]
+    ).values()) == {4}
 
 
 @pytest.mark.parametrize("mutation", ["one-day", "four-days", "role", "missing", "smaller"])

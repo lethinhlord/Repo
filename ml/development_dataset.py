@@ -6,6 +6,8 @@ import argparse
 import hashlib
 import json
 import tempfile
+from collections import Counter
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from ml import development_sources as source
@@ -28,6 +30,45 @@ def audit_collection(root: Path, plan_path: Path, *, processor_root: Path = sour
         processor_root=processor_root,
         source_module=source,
         catalog_relative=source.CATALOG_RELATIVE,
+    )
+
+
+def review_progress(root: Path, plan_path: Path, *, today: date | None = None) -> dict:
+    """Replay completed runs early; retain the full incomplete audit, never issue READY."""
+    today = datetime.now(UTC).date() if today is None else today
+    report, parts, _, _, _, plan = audit_collection(root, plan_path)
+    dates = {r["run_id"]: r["context"]["collection_date"] for r in plan["runs"]}
+    uncollected, blocking = [], []
+    for issue in report["issues"]:
+        if issue["code"] == "MISSING_PLANNED_UNIT" and issue["run_id"] in dates:
+            missing = {**issue, "registered_date": dates[issue["run_id"]]}
+            uncollected.append(missing)
+            if date.fromisoformat(missing["registered_date"]) < today:
+                blocking.append({**missing, "reason": "registered UTC day has elapsed"})
+        else:
+            blocking.append(issue)
+    coverage = Counter((r["family"], r["template_id"], r["label"]) for r in parts["train"])
+    complete = report["status"] == "SUPPLEMENTAL_COLLECTION_AUDIT_PASS"
+    return dict(
+        status=(
+            "DEVELOPMENT_PROGRESS_REPLAY_BLOCKED"
+            if blocking
+            else "DEVELOPMENT_PROGRESS_REPLAY_COMPLETE"
+            if complete
+            else "DEVELOPMENT_PROGRESS_REPLAY_IN_PROGRESS"
+        ),
+        checked_at_utc=datetime.now(UTC).isoformat(),
+        utc_date=today.isoformat(),
+        dataset_ready=False,
+        automation_eligible=False,
+        blocking_issues=blocking,
+        uncollected_units=uncollected,
+        template_coverage=[
+            dict(family=f, template_id=t, label=y, verified_runs=n)
+            for (f, t, y), n in sorted(coverage.items())
+        ],
+        full_audit=report,
+        interpretation="Partial replay only; full build and exact Git review are still required",
     )
 
 
@@ -211,7 +252,7 @@ def main(argv=None):
 
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("audit", "build", "propose-review", "stage"):
+    for name in ("review-progress", "audit", "build", "propose-review", "stage"):
         item = sub.add_parser(name)
         item.add_argument("--output", type=Path, required=True)
         if name != "stage":
@@ -228,12 +269,22 @@ def main(argv=None):
         elif a.command == "propose-review":
             result = propose_review(a.input_project, a.plan, a.processed, a.output)
         else:
-            result = audit_collection(a.input_project, a.plan)[0]
+            result = (
+                review_progress(a.input_project, a.plan)
+                if a.command == "review-progress"
+                else audit_collection(a.input_project, a.plan)[0]
+            )
             a.output.parent.mkdir(parents=True, exist_ok=True)
             with a.output.open("x", encoding="utf-8") as stream:
                 json.dump(result, stream, indent=2)
         print(json.dumps(result, indent=2))
-        return int(result.get("status") == "SUPPLEMENTAL_COLLECTION_AUDIT_FAIL")
+        return int(
+            result.get("status")
+            in {
+                "SUPPLEMENTAL_COLLECTION_AUDIT_FAIL",
+                "DEVELOPMENT_PROGRESS_REPLAY_BLOCKED",
+            }
+        )
     except (CollectionError, OSError, ValueError, KeyError, TypeError) as exc:
         print(json.dumps(dict(status="ERROR", detail=str(exc))))
         return 1

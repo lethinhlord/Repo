@@ -36,4 +36,15 @@ tagged checkout; do not repeat the old-worktree CRLF fingerprint issue.
 
 Slices: design/registration → source/G7/capture → dataset/review/stage →
 development CV/artifact/notebook → guide/cross-model checks → GitHub release.
-State: implementation in progress; no real48-run dataset or G7 exists here.
+Software implemented and cross-model reviewed. Full Windows regression:
+1420 passed,2 skipped in2610.67s. Full isolated CPython3.12.15 Linux regression:
+1354 passed,61 skipped in1020.03s. Ruff passed. Dual-protocol synthetic native
+G7/backup/projection passed. Real training/export tests and notebook guards pass.
+Heartbeat wording corrected; nested threshold eligibility reporting reproduced
+and fixed, numerical precision target kept separate from automation eligibility.
+
+Latest constraint is under72 elapsed hours. Guide specifies a52-hour calendar
+schedule,48 runs, nine paired template variants, balanced labels/family/day,
+and full raw/evidence plus model-input collision checks. No real48-run dataset,
+remote VM/G7 approval or model-quality claim exists here. Future exact dataset
+review remains null. GitHub publication/fresh-tag verification follows tests.
