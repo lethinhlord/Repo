@@ -149,7 +149,9 @@ def assert_collection_authorized(
         path = Path(root) / path
     record = _read_json(path)
     if (
-        record.get("version") not in {"collection-acceptance-v1", "collection-acceptance-v2"}
+        record.get("version") not in {
+            "collection-acceptance-v1", "collection-acceptance-v2", "collection-acceptance-v3",
+        }
         or record.get("record_sha256")
         != digest({k: v for k, v in record.items() if k != "record_sha256"})
         or not isinstance(record.get("candidate"), dict)
@@ -161,7 +163,7 @@ def assert_collection_authorized(
     if capture_candidate(root, candidate.get("tag", "")) != candidate:
         raise ReleaseError("source or runtime differs from the accepted candidate")
     options = {}
-    if record["version"] == "collection-acceptance-v2":
+    if record["version"] in {"collection-acceptance-v2", "collection-acceptance-v3"}:
         from ml.scenario_collection import SourceConfig, _source_document
 
         binding = record.get("source_config", {})
@@ -200,14 +202,16 @@ def verify_frozen_acceptance(state: dict[str, Any]) -> None:
     snapshot = state.get("collection_release")
     if (
         not isinstance(snapshot, dict)
-        or snapshot.get("version") not in {"collection-acceptance-v1", "collection-acceptance-v2"}
+        or snapshot.get("version") not in {
+            "collection-acceptance-v1", "collection-acceptance-v2", "collection-acceptance-v3",
+        }
         or snapshot.get("record_sha256")
         != digest({k: v for k, v in snapshot.items() if k != "record_sha256"})
         or state.get("collection_release_sha256") != digest(snapshot)
         or snapshot.get("candidate") != state.get("collection_candidate", snapshot.get("candidate"))
     ):
         raise ReleaseError("missing or altered frozen collection release")
-    if snapshot["version"] == "collection-acceptance-v2":
+    if snapshot["version"] in {"collection-acceptance-v2", "collection-acceptance-v3"}:
         contract = snapshot.get("collection_contract", {})
         keys = {"source_config_sha256", "taxonomy_sha256",
                 "scenario_catalog_sha256", "feature_schema_sha256"}
@@ -217,6 +221,18 @@ def verify_frozen_acceptance(state: dict[str, Any]) -> None:
             or contract["source_config_sha256"] != snapshot.get("source_config", {}).get("sha256")
         ):
             raise ReleaseError("frozen collection source contract differs from acceptance")
+    if snapshot["version"] == "collection-acceptance-v3":
+        from ml.supplemental_design import verify_plan
+
+        registration = snapshot.get("campaign_registration", {})
+        try:
+            verify_plan(registration["plan"], registration["design"])
+            if (registration.get("version") != "collection-campaign-registration-v1"
+                    or registration.get("plan_sha256") != digest(registration["plan"])
+                    or state.get("draft", {}).get("campaign_plan") != registration["plan"]):
+                raise ValueError("frozen run differs from its precollection registered plan")
+        except (ValueError, KeyError, TypeError) as exc:
+            raise ReleaseError(f"frozen campaign registration is invalid: {exc}") from exc
 
 
 def summarize_candidates(evidence_dir: Path, run_ids: list[str], tag: str) -> dict | None:
@@ -320,7 +336,7 @@ def _check_preflight_capture(path: Path, preflight: dict[str, Any]) -> None:
         raise ReleaseError("preflight report differs from raw recomputation")
 
 
-def _check_design(root: Path) -> None:
+def _check_design(root: Path, source_config_path: Path | None = None) -> None:
     """Enforce source-level prerequisites; human review remains a separate obligation."""
     from collections import defaultdict
     from types import SimpleNamespace
@@ -333,6 +349,27 @@ def _check_design(root: Path) -> None:
     from ml.scenario_collection import ScenarioCatalog
 
     try:
+        if source_config_path is not None:
+            selected = Path(source_config_path)
+            if not selected.is_absolute():
+                selected = root / selected
+            source_doc = yaml.safe_load(selected.read_text(encoding="utf-8"))
+            selected_catalog = Path(source_doc["scenario_catalog_path"])
+            if not selected_catalog.is_absolute():
+                selected_catalog = root / selected_catalog
+            selected_doc = yaml.safe_load(selected_catalog.read_text(encoding="utf-8"))
+            if selected_doc.get("version") == "scenario-catalog-v2":
+                from ml.supplemental_catalog import compile_catalog
+                from ml.supplemental_design import load_design
+
+                design = load_design(root / "config/supplemental-design.yaml")
+                expected_catalog = compile_catalog(design, yaml.safe_load(
+                    (root / "config/scenario-catalog.yaml").read_text(encoding="utf-8")
+                ))
+                ScenarioCatalog.model_validate(selected_doc)
+                if selected_doc != expected_catalog:
+                    raise ReleaseError("supplemental catalog differs from reviewed compiler/source")
+                return
         catalog = ScenarioCatalog.model_validate(
             yaml.safe_load((root / "config/scenario-catalog.yaml").read_text())
         )
@@ -498,7 +535,7 @@ def create_acceptance(
 
     root = Path(root).resolve()
     candidate = capture_candidate(root, tag)
-    _check_design(root)
+    _check_design(root, source_config_path)
     selected_source = None
     source_binding = None
     if source_config_path is not None:
@@ -521,12 +558,50 @@ def create_acceptance(
         }
     if len(pilot_ids) != 4 or len(set(pilot_ids)) != 4:
         raise ReleaseError("exactly four distinct pilot IDs are required")
+    contract_taxonomy = root / "config/suspicious-process-taxonomy.yaml"
+    contract_catalog = root / "config/scenario-catalog.yaml"
+    campaign_registration = None
+    campaign_plan_relative = None
+    if selected_source is not None:
+        from ml.scenario_collection import ScenarioCatalog, _resolve
+
+        selected_catalog = _resolve(root, source_model.scenario_catalog_path)
+        catalog_model = ScenarioCatalog.model_validate(
+            yaml.safe_load(selected_catalog.read_text(encoding="utf-8"))
+        )
+        if catalog_model.version == "scenario-catalog-v2":
+            from ml.http_pipeline import require_http_source_semantics
+            from ml.supplemental_design import verify_plan
+            from ml.supplemental_sources import require_collection_source
+
+            _, approved_head = require_collection_source(root, tag)
+            require_http_source_semantics(source_model.model_dump(), root)
+            if candidate["commit"] != approved_head:
+                raise ReleaseError("supplemental source changed before G7 acceptance")
+            if tag != catalog_model.campaign_design["candidate_tag"]:
+                raise ReleaseError("candidate differs from supplemental design")
+            if not source_model.campaign_plan_path:
+                raise ReleaseError(
+                    "supplemental acceptance requires its precollection campaign plan",
+                )
+            plan_path = _resolve(root, source_model.campaign_plan_path).resolve()
+            if not plan_path.is_relative_to((root / "operator-logs").resolve()):
+                raise ReleaseError("campaign plan must be retained under project operator-logs")
+            plan = _read_json(plan_path)
+            verify_plan(plan, catalog_model.campaign_design)
+            campaign_registration = {
+                "version": "collection-campaign-registration-v1",
+                "design": catalog_model.campaign_design, "plan": plan, "plan_sha256": digest(plan),
+            }
+            campaign_plan_relative = plan_path.relative_to(root)
+            contract_taxonomy = _resolve(root, source_model.taxonomy_path)
+            contract_catalog = selected_catalog
     current_contract = {
         "source_config_sha256": _file_hash(
             selected_source or root / "config/collection-sources.yaml"
         ),
-        "taxonomy_sha256": _file_hash(root / "config/suspicious-process-taxonomy.yaml"),
-        "scenario_catalog_sha256": _file_hash(root / "config/scenario-catalog.yaml"),
+        "taxonomy_sha256": _file_hash(contract_taxonomy),
+        "scenario_catalog_sha256": _file_hash(contract_catalog),
         "feature_schema_sha256": _file_hash(root / "ml/feature_schema.json"),
     }
     pilots = []
@@ -663,6 +738,10 @@ def create_acceptance(
     with tempfile.TemporaryDirectory(prefix="datn-release-restore-") as temp:
         restored = Path(temp)
         _extract_backup(archive, restored)
+        if campaign_registration is not None:
+            restored_plan = _read_json(restored / campaign_plan_relative)
+            if restored_plan != campaign_registration["plan"]:
+                raise ReleaseError("backup did not retain the registered campaign plan")
         for item in pilots:
             run_id = item["run_id"]
             for rel, key in (
@@ -695,6 +774,9 @@ def create_acceptance(
             collection_contract=current_contract, pilot_candidate=pilot_candidate,
             pilot_adoption=adoption,
         )
+    if campaign_registration is not None:
+        record.update(version="collection-acceptance-v3",
+                      campaign_registration=campaign_registration)
     record["record_sha256"] = digest(record)
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)

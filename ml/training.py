@@ -81,6 +81,13 @@ def verify_training_partitions(
     manifest = json.loads((processed_dir / "dataset_manifest.json").read_text(encoding="utf-8"))
     if not isinstance(manifest, dict):
         raise ValueError("dataset manifest must be a mapping")
+    if manifest.get("manifest_version") == "dataset-manifest-v5-supplemental-v1":
+        from ml.supplemental_sources import load_partitions
+
+        return load_partitions(
+            processed_dir, schema_path, config_path=config_path,
+            collection_design_path=collection_design_path, expected_commit=expected_commit,
+        )
     if manifest.get("manifest_version") == "dataset-manifest-v4-stream-v1":
         from ml.stream_sources import load_stream_partitions
 
@@ -213,8 +220,24 @@ def leakage_audit(
             & {"asset_criticality", "asset_score", "ground_truth", "label", "ti_score"}
         ),
     }
+    all_rows = train_rows + validation_rows
+    prospective = any(r.get("incident", {}).get("feature_schema_version")
+                      == "features-v5-http-v1" for r in all_rows)
+    details = {}
+    if prospective:
+        checks["missing_or_mixed_dependency_protocol"] = [r["run_id"] for r in all_rows if (
+            r.get("incident", {}).get("feature_schema_version") != "features-v5-http-v1"
+            or not r.get("evaluation_group_id") or not r.get("template_id"))]
+        checks["evaluation_group_overlap"] = sorted(
+            {r["evaluation_group_id"] for r in train_rows if r.get("evaluation_group_id")}
+            & {r["evaluation_group_id"] for r in validation_rows if r.get("evaluation_group_id")}
+        )
+        details = dict(protocol="known-template-new-host-day", template_overlap_diagnostic=sorted(
+            {r["template_id"] for r in train_rows if r.get("template_id")}
+            & {r["template_id"] for r in validation_rows if r.get("template_id")}
+        ))
     passed = not any(checks.values())
-    return {"passed": passed, "checks": checks}
+    return {"passed": passed, "checks": checks, **details}
 
 
 def exploratory_summary(rows: list[dict[str, Any]], schema: dict[str, Any]) -> dict[str, Any]:
@@ -280,7 +303,17 @@ def _matrix(rows: list[dict[str, Any]], family: str, feature_order: list[str]):
     subset = [row for row in rows if row["family"] == family]
     x = np.asarray([[row["features"][name] for name in feature_order] for row in subset])
     y = np.asarray([row["label"] for row in subset], dtype=int)
-    groups = np.asarray([row.get("cohort_id") or row["scenario_id"] for row in subset])
+    prospective = any(r.get("incident", {}).get("feature_schema_version")
+                      == "features-v5-http-v1" for r in subset)
+    if prospective:
+        if any(r.get("incident", {}).get("feature_schema_version") != "features-v5-http-v1"
+               or re.fullmatch(r"[0-9a-f]{64}", str(r.get("evaluation_group_id", ""))) is None
+               for r in subset):
+            raise ValueError("prospective matrix requires every registered dependency group")
+        # Host/UTC-day blocks, including every related execution, stay in one CV fold.
+        groups = np.asarray([r["evaluation_group_id"] for r in subset])
+    else:
+        groups = np.asarray([row.get("cohort_id") or row["scenario_id"] for row in subset])
     if len(np.unique(y)) != 2:
         raise ValueError(f"{family} partition must contain benign and malicious records")
     return x, y, groups
@@ -427,6 +460,11 @@ def train(config_path: Path) -> dict[str, Any]:
             else None
         ),
     )
+    source_guard = None
+    if manifest["manifest_version"] == "dataset-manifest-v5-supplemental-v1":
+        from ml import supplemental_sources
+
+        source_guard = supplemental_sources.policy(supplemental_sources.ROOT, require_ready=True)
     audit = leakage_audit(train_rows, validation_rows)
     if not audit["passed"]:
         raise ValueError(f"leakage audit failed: {audit['checks']}")
@@ -573,6 +611,10 @@ def train(config_path: Path) -> dict[str, Any]:
             if any(reason != "minimum_precision_not_met" for reason in gate_failures):
                 selected_threshold["selection_reason"] = "calibration_or_stability_gate_failed"
         selected_threshold["gate_failures"] = gate_failures
+        if manifest["manifest_version"] == "dataset-manifest-v5-supplemental-v1":
+            gate_failures.append("scope_research_only")
+            selected_threshold["automation_eligible"] = False
+            selected_threshold["selection_reason"] = "research_scope_requires_review"
         selected_threshold["uncertainty_status"] = metrics["uncertainty"]["status"]
         selected_threshold["inner_cv_threshold"] = inner_threshold["threshold"]
         selected_threshold["threshold_delta"] = threshold_delta
@@ -618,6 +660,10 @@ def train(config_path: Path) -> dict[str, Any]:
             flush=True,
         )
 
+    if source_guard is not None and supplemental_sources.policy(
+        supplemental_sources.ROOT, require_ready=True,
+    ) != source_guard:
+        raise ValueError("prospective processing source changed during training")
     trained_at = datetime.now(UTC)
     packages = {
         re.sub(r"[-_.]+", "-", distribution.metadata["Name"]).lower(): distribution.version
@@ -667,10 +713,21 @@ def train(config_path: Path) -> dict[str, Any]:
             "threadpoolctl": importlib.metadata.version("threadpoolctl"),
         },
     }
-    if manifest["manifest_version"] in {"dataset-manifest-v3", "dataset-manifest-v4-stream-v1"}:
+    if manifest["manifest_version"] in {
+        "dataset-manifest-v3", "dataset-manifest-v4-stream-v1",
+        "dataset-manifest-v5-supplemental-v1",
+    }:
         metadata["dataset_source_compatibility"] = manifest["collection_audit"][
             "source_compatibility"
         ]
+    if manifest["manifest_version"] == "dataset-manifest-v5-supplemental-v1":
+        metadata["evaluation_protocol"] = manifest["evaluation_protocol"]
+        metadata["dependency_group_key"] = "evaluation_group_id"
+        metadata["supplemental_scope"] = {
+            "representation": "verified HTTP lab activity profiles",
+            "unsupported_behavior": "unproven HTTP/flow or intent-only cases require REVIEW",
+            "raw_and_legacy_features_preserved": True, "automation_eligible": False,
+        }
     if manifest["manifest_version"] == "dataset-manifest-v4-stream-v1":
         metadata["parent_manifest_sha256"] = manifest["parent_manifest_sha256"]
         metadata["stream_scope"] = {

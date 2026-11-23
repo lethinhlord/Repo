@@ -236,7 +236,7 @@ class ModelRuntime:
     def predict(self, incident: IncidentRequest | StreamIncidentRequest) -> PredictionResponse:
         if incident.feature_schema_version != self.metadata["feature_schema_version"]:
             raise InferenceInputError("incident feature profile differs from the model package")
-        if incident.feature_schema_version == "features-v4-stream-v1":
+        if incident.feature_schema_version in {"features-v4-stream-v1", "features-v5-http-v1"}:
             try:
                 validate_stream_values(incident.features, self.schema)
             except ValueError as exc:
@@ -270,7 +270,14 @@ class ModelRuntime:
             self.thresholds["families"][family]["automation_eligible"]
         )
         reasons = list(incident.review_reasons)
-        if incident.feature_schema_version == "features-v4-stream-v1" and family == "c2":
+        if incident.feature_schema_version == "features-v5-http-v1":
+            reasons.append("model:prospective_lab_profile_research_only")
+            if family == "c2":
+                for name in ("http_evidence_available", "flow_evidence_available"):
+                    if incident.features.get(name) != 1:
+                        reasons.append(f"model:{name}:unknown")
+        if (incident.feature_schema_version in {"features-v4-stream-v1", "features-v5-http-v1"}
+                and family == "c2"):
             if incident.features.get("tcp_connection_count", 0) <= 0:
                 reasons.append("model:unsupported_non_tcp_c2")
             if incident.features.get("dominant_tcp_unique") != 1:

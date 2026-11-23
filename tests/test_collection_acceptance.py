@@ -320,6 +320,12 @@ def _c2_events(
             else scenario.attribution.command_contains_any[0]
         )
         uri = f"{path}?run={nonce}&v={draft.scenario_parameters['variant_index']}&n={number + 1}"
+        method, sent, received = "GET", 0, 16
+        if draft.scenario_parameters.get("execution_profile_version") == "lab-http-workflow-v2":
+            from ml.http_workflow import action_rows
+
+            method, sent, received = action_rows(draft.scenario_parameters)[number]
+            uri += f"&z={received}"
         events.extend(
             [
                 _windows_event(
@@ -360,8 +366,10 @@ def _c2_events(
             "dest_ip": "10.40.0.10",
             "dest_port": port,
             "flow_id": f"{run_id}-{number}",
-            "http": {"url": uri, "http_method": "GET", "status": 200},
+            "http": {"url": uri, "http_method": method, "status": 200},
         }
+        if draft.scenario_parameters.get("execution_profile_version") == "lab-http-workflow-v2":
+            payload["http"]["length"] = received
         events.append(_suricata_event(event_at, payload))
         if scenario.quality_gates.required_suricata_signature_ids:
             events.append(
@@ -393,8 +401,10 @@ def _c2_events(
                     "flow": {
                         "start": event_at.isoformat(),
                         "end": (event_at + timedelta(milliseconds=10)).isoformat(),
-                        "bytes_toserver": 40,
-                        "bytes_toclient": 60,
+                        "bytes_toserver": (sent + 300 if draft.scenario_parameters.get(
+                            "execution_profile_version") == "lab-http-workflow-v2" else 40),
+                        "bytes_toclient": (received + 200 if draft.scenario_parameters.get(
+                            "execution_profile_version") == "lab-http-workflow-v2" else 60),
                     },
                 },
             )
@@ -413,13 +423,14 @@ def _collect_run(
     sequence: int,
     repeat: int,
     purpose: str | None = None,
+    catalog_path: Path | None = None,
 ) -> str:
     run_id = f"ACCEPT-{scenario.scenario_id}-R{repeat + 1}"
     action_started_at = COLLECTION_BASE + sequence * RUN_SPACING + timedelta(seconds=5)
     collection_started_at = COLLECTION_BASE + sequence * RUN_SPACING - timedelta(seconds=10)
     draft_path = root / "run-drafts" / f"{run_id}.yaml"
     create_run_draft(
-        root / "config/scenario-catalog.yaml",
+        catalog_path or root / "config/scenario-catalog.yaml",
         scenario.scenario_id,
         run_id,
         "synthetic-acceptance",
@@ -427,6 +438,7 @@ def _collect_run(
         collection_seed=20_261_027 + sequence,
         clock_preflight=_clock_preflight(collection_started_at),
         purpose=purpose,
+        **({"source_config_path": source_path} if catalog_path is not None else {}),
     )
     draft = RunDraft.model_validate(
         yaml.safe_load(draft_path.read_text(encoding="utf-8"))

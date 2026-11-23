@@ -61,6 +61,7 @@ from ml.telemetry import (
     linked_transaction,
     network_is_outbound,
     normalize_ip,
+    same_flow_direction,
     suricata_observations,
     sysmon_clock_issues,
     unambiguous_transactions,
@@ -221,6 +222,9 @@ class RunDraft(BaseModel):
     scenario_parameters: dict[str, int | float | str | bool] = Field(min_length=1)
     expected_observables: list[str] = Field(min_length=1)
     clock_preflight: ClockPreflight
+    campaign_plan: dict[str, Any] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def validate_family_attribution(self) -> RunDraft:
@@ -252,6 +256,7 @@ class SourceConfig(BaseModel):
     scenario_catalog_path: str = Field(min_length=1)
     context_baseline_path: str | None = None
     collection_release_path: str | None = None
+    campaign_plan_path: str | None = Field(default=None, exclude_if=lambda value: value is None)
     require_clean_bucket: bool = False
     require_flow_counters: bool = False
     require_online_parity: bool = False
@@ -263,6 +268,8 @@ class ScenarioDefinition(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     scenario_id: str = Field(min_length=1, max_length=128)
+    template_id: str | None = Field(default=None, min_length=1, max_length=128,
+                                    exclude_if=lambda value: value is None)
     family: Literal["account", "c2"]
     label: Literal["benign", "malicious"]
     purpose: Literal["trainable", "challenge", "pilot"] = "trainable"
@@ -280,15 +287,28 @@ class ScenarioDefinition(BaseModel):
 class ScenarioCatalog(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    version: Literal["scenario-catalog-v1"]
+    version: Literal["scenario-catalog-v1", "scenario-catalog-v2"]
     lab_only: Literal[True]
     scenarios: list[ScenarioDefinition] = Field(min_length=1)
+    campaign_design: dict[str, Any] | None = Field(default=None,
+                                                   exclude_if=lambda value: value is None)
+    design_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$",
+                                       exclude_if=lambda value: value is None)
+    template_definitions: dict[str, Any] | None = Field(default=None,
+                                                        exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def require_unique_ids(self) -> ScenarioCatalog:
         identifiers = [item.scenario_id for item in self.scenarios]
         if len(set(identifiers)) != len(identifiers):
             raise ValueError("scenario_id values must be unique")
+        if self.version == "scenario-catalog-v2":
+            from ml.supplemental_catalog import validate_catalog
+
+            validate_catalog(self.model_dump(mode="json"))
+        elif (self.campaign_design is not None or self.template_definitions is not None
+                or self.design_sha256 is not None or any(s.template_id for s in self.scenarios)):
+            raise ValueError("campaign metadata requires a versioned supplemental catalog")
         return self
 
 
@@ -366,8 +386,21 @@ def _release_snapshots(
     if not source.collection_release_path:
         raise CollectionError("official collection source requires collection_release_path")
     try:
-        design = _read_yaml(design_path)
+        catalog = ScenarioCatalog.model_validate(
+            _read_yaml(_resolve(root, source.scenario_catalog_path))
+        )
+        design = (catalog.campaign_design if catalog.version == "scenario-catalog-v2"
+                  else _read_yaml(design_path))
+        approved_head = None
+        if catalog.version == "scenario-catalog-v2":
+            from ml.http_pipeline import require_http_source_semantics
+            from ml.supplemental_sources import require_collection_source
+
+            _, approved_head = require_collection_source(root, design["candidate_tag"])
+            require_http_source_semantics(source.model_dump(), root)
         candidate = capture_candidate(root, design["candidate_tag"])
+        if approved_head is not None and candidate["commit"] != approved_head:
+            raise CollectionError("supplemental source changed before candidate capture")
         result = {"collection_candidate": candidate,
                   "collection_candidate_sha256": digest(candidate)}
         release = assert_collection_authorized(source, root, purpose, source_config_path)
@@ -389,6 +422,27 @@ def _validate_draft_against_catalog(draft: RunDraft, catalog_path: Path) -> None
     )
     if scenario is None:
         raise CollectionError(f"draft does not match scenario catalog: {draft.scenario_id}")
+    if catalog.version == "scenario-catalog-v2" and draft.purpose != scenario.purpose:
+        raise CollectionError("supplemental purpose must match its declared catalog role")
+    if catalog.version == "scenario-catalog-v2" and scenario.purpose == "trainable":
+        from ml.supplemental_design import resolve_plan_run, verify_plan
+
+        try:
+            verify_plan(draft.campaign_plan, catalog.campaign_design)
+            row = resolve_plan_run(draft.campaign_plan, draft.run_id)
+            expected_row = {
+                "scenario_id": draft.scenario_id, "family": draft.family, "label": draft.label,
+                "cohort_id": draft.cohort_id, "collection_seed": draft.collection_seed,
+            }
+            if (any(row[k] != v for k, v in expected_row.items())
+                    or draft.host != row["context"]["host"]
+                    or draft.operator != row["context"]["operator"]
+                    or draft.purpose != "trainable"):
+                raise ValueError("draft differs from its registered campaign plan row")
+        except (ValueError, KeyError, TypeError, StopIteration) as exc:
+            raise CollectionError(f"invalid campaign plan binding: {exc}") from exc
+    elif draft.campaign_plan is not None:
+        raise CollectionError("campaign plan is only valid for supplemental trainable runs")
     expected = {
         "family": scenario.family,
         "label": scenario.label,
@@ -432,6 +486,57 @@ def _atomic_text(path: Path, text: str) -> None:
     temporary.replace(path)
 
 
+def _validate_campaign_date(draft: RunDraft, at: datetime) -> None:
+    if draft.campaign_plan is not None:
+        from ml.supplemental_design import resolve_plan_run
+
+        try:
+            row = resolve_plan_run(draft.campaign_plan, draft.run_id)
+            if _utc(at).date().isoformat() != row["context"]["collection_date"]:
+                raise ValueError("action must occur on the registered UTC date")
+        except (ValueError, KeyError, TypeError, StopIteration) as exc:
+            raise CollectionError(f"campaign registered UTC date mismatch: {exc}") from exc
+
+
+def _validate_campaign_attempt(draft: RunDraft, project_root: Path) -> None:
+    if draft.campaign_plan is None:
+        return
+    from ml.supplemental_design import resolve_plan_run
+
+    row = resolve_plan_run(draft.campaign_plan, draft.run_id)
+    for number, attempt in enumerate(row["attempts"], 1):
+        folder = project_root / "evidence/scenario-runs" / attempt["run_id"]
+        if number == row["attempt_number"]:
+            continue
+        if number > row["attempt_number"]:
+            if folder.exists():
+                raise CollectionError("a later campaign attempt already exists")
+            continue
+        try:
+            state = json.loads((folder / ".collection_state.json").read_bytes())
+            _verify_start_snapshot(folder, state, project_root)
+            if state.get("status") != "ABORTED":
+                raise ValueError("previous attempt must be explicitly ABORTED")
+            previous = RunDraft.model_validate(state["draft"])
+            if (previous.campaign_plan != draft.campaign_plan
+                    or previous.run_id != attempt["run_id"]):
+                raise ValueError("previous attempt belongs to a different plan")
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise CollectionError(f"campaign retry predecessor is not proven: {exc}") from exc
+
+
+def _validate_campaign_authority(draft: RunDraft, snapshots: dict[str, Any]) -> None:
+    if draft.campaign_plan is not None:
+        from ml.collection_release import digest
+
+        accepted = snapshots.get("collection_release", {})
+        if (accepted.get("version") != "collection-acceptance-v3"
+                or accepted.get("campaign_registration", {}).get("plan") != draft.campaign_plan
+                or accepted["campaign_registration"].get("plan_sha256")
+                != digest(draft.campaign_plan)):
+            raise CollectionError("campaign plan differs from its precollection G7 registration")
+
+
 def _write_json(path: Path, payload: Any) -> None:
     _atomic_text(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
@@ -453,6 +558,7 @@ def create_run_draft(
     clock_preflight: ClockPreflight,
     purpose: Literal["trainable", "challenge", "pilot"] | None = None,
     source_config_path: Path | None = None,
+    campaign_plan: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     if output_path.exists():
         raise CollectionError(f"draft output already exists: {output_path}")
@@ -536,6 +642,7 @@ def create_run_draft(
             scenario_parameters=parameters,
             expected_observables=scenario.expected_observables,
             clock_preflight=clock_preflight,
+            campaign_plan=campaign_plan,
         )
     except ValueError as exc:
         raise CollectionError(f"invalid run draft values: {exc}") from exc
@@ -546,7 +653,10 @@ def create_run_draft(
         project_root = catalog_path.resolve().parent.parent
         selected_source = source_config_path or project_root / "config/collection-sources.yaml"
         official_source = SourceConfig.model_validate(_read_yaml(selected_source))
-        _release_snapshots(official_source, project_root, draft.purpose, selected_source)
+        snapshots = _release_snapshots(
+            official_source, project_root, draft.purpose, selected_source,
+        )
+        _validate_campaign_authority(draft, snapshots)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     _atomic_text(
         output_path,
@@ -740,6 +850,7 @@ def start_run(
             and not source.collection_release_path):
         raise CollectionError("official action profiles require collection_release_path")
     release_snapshots = _release_snapshots(source, project_root, draft.purpose, source_config_path)
+    _validate_campaign_authority(draft, release_snapshots)
     schema_path = project_root / "ml/feature_schema.json"
     if not schema_path.is_file():
         schema_path = Path(__file__).with_name("feature_schema.json")
@@ -779,6 +890,8 @@ def start_run(
                 raise CollectionError(str(exc)) from exc
 
     started_at = _utc(now)
+    _validate_campaign_date(draft, started_at)
+    _validate_campaign_attempt(draft, project_root)
     if baseline and not baseline.captured_at <= started_at < baseline.valid_until:
         raise CollectionError("context baseline is stale or unavailable at collection start")
     clock_age = (started_at - _utc(draft.clock_preflight.captured_at)).total_seconds()
@@ -1436,6 +1549,16 @@ def _derive_c2(
             raise CollectionError(
                 "C2 actions require unique, complete Suricata EVE transaction coverage"
             )
+    if draft.scenario_parameters.get("execution_profile_version") == "lab-http-workflow-v2":
+        from ml.http_workflow import validate_http_transaction
+
+        for number, edge in enumerate(edges, 1):
+            try:
+                validate_http_transaction(
+                    transactions[edge[0]][0], draft.scenario_parameters, number,
+                )
+            except ValueError as exc:
+                raise CollectionError(f"HTTP workflow evidence: {exc}") from exc
     if draft.scenario_parameters.get("execution_profile_version") == "lab-action-profile-v1":
         transport = draft.scenario_parameters.get("transport")
         if not isinstance(expected_action_count, int) or transport not in {"http", "dns"}:
@@ -1518,6 +1641,22 @@ def _derive_c2(
         flow_issues = flow_counter_issues(suricata, window_start=start, window_end=end)
         if flow_issues:
             raise CollectionError("incomplete flow evidence: " + ",".join(flow_issues))
+
+    if draft.scenario_parameters.get("execution_profile_version") == "lab-http-workflow-v2":
+        from ml.http_workflow import action_rows
+
+        for edge, (_, sent, received) in zip(
+            edges, action_rows(draft.scenario_parameters), strict=True,
+        ):
+            transaction = transactions[edge[0]]
+            finals = [p for p in suricata if linked_flow(p, [transaction], maximum_delta)]
+            if (not finals or any(not same_flow_direction(p, transaction[0])
+                                  or type(p["flow"].get("bytes_toserver")) is not int
+                                  or p["flow"]["bytes_toserver"] <= 0
+                                  or p["flow"]["bytes_toserver"] < sent
+                                  or type(p["flow"].get("bytes_toclient")) is not int
+                                  or p["flow"]["bytes_toclient"] < received for p in finals)):
+                raise CollectionError("HTTP upload lacks sufficient attributable final flow bytes")
 
     gates = draft.quality_gates
     observed_counts = {
@@ -1679,7 +1818,7 @@ def _verify_full_capture_parity(
     baseline = load_baseline(evidence_dir / "context-baseline.json")
     taxonomy = _load_taxonomy(evidence_dir / "suspicious-process-taxonomy.yaml")
     aggregate = aggregate_wazuh_alerts
-    if feature_profile == "features-v4-stream-v1":
+    if feature_profile in {"features-v4-stream-v1", "features-v5-http-v1"}:
         from ml.stream_pipeline import aggregate_stream_alerts
 
         if compare:
@@ -1687,6 +1826,10 @@ def _verify_full_capture_parity(
                 "stream projection requires a separate legacy-vector verification",
             )
         aggregate = aggregate_stream_alerts
+        if feature_profile == "features-v5-http-v1":
+            from ml.http_pipeline import aggregate_http_alerts
+
+            aggregate = aggregate_http_alerts
     elif feature_profile != "features-v3":
         raise CollectionError("unsupported replay feature profile")
     try:
@@ -2113,6 +2256,7 @@ def _validate_action_window(
     started = _parse_time(receipt.get("action_started_at"))
     if started is None:
         raise CollectionError("aggregation window is missing its action start")
+    _validate_campaign_date(draft, started)
     start, end = _aggregation_window(started)
     deadline = end - timedelta(seconds=draft.clock_preflight.maximum_skew_seconds)
     reservation = _reserved_action_seconds(draft)
@@ -2164,10 +2308,12 @@ def begin_action(
     if wait_for_window and now is not None:
         raise CollectionError("wait-for-window requires the live collector clock")
     action_started_at = _utc(now)
+    _validate_campaign_date(draft, action_started_at)
     collection_started_at = _parse_time(state.get("started_at"))
     if collection_started_at is None or action_started_at < collection_started_at:
         raise CollectionError("action start cannot precede collection start")
     while True:
+        _validate_campaign_date(draft, action_started_at)
         bucket_start, bucket_end = _aggregation_window(action_started_at)
         guarded_start = bucket_start + timedelta(seconds=guard)
         deadline = bucket_end - timedelta(seconds=guard)

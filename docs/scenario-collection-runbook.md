@@ -1,4 +1,9 @@
 # HƯỚNG DẪN THU DATASET SOC–AI–SOAR — 4 VM
+
+> Tài liệu lịch sử cho thiết kế40 run. Đợt thu bổ sung mới sử dụng toàn bộ
+> [hướng dẫn supplemental](supplemental-collection-runbook.md) và source mới riêng;
+> không trộn quota, source, pilot hoặc lệnh của hai thiết kế.
+
 Bản vận hành 14/11/2026. Mọi code/resource lấy từ GitHub:
 https://github.com/lethinhlord/Repo/tree/collection-v4.0.0-candidate.7
 

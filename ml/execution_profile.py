@@ -18,6 +18,10 @@ LAB_ACCOUNTS = frozenset({"datn_lab01", "datn_lab02", "datn_lab03"})
 
 
 def profile_intervals(profile: dict[str, Any]) -> list[float]:
+    if profile.get("profile_version") == "lab-http-workflow-v2":
+        from ml.http_workflow import workflow_intervals
+
+        return workflow_intervals(profile)
     transport = profile.get("transport")
     if transport not in _ALLOWED or set(profile) != _ALLOWED[transport]:
         raise ValueError("execution profile has missing, unknown or unsupported fields")
@@ -71,7 +75,10 @@ def freeze_execution_profile(
     return {
         **common,
         **profile,
-        "execution_profile_version": "lab-action-profile-v1",
+        "execution_profile_version": (
+            "lab-http-workflow-v2" if profile.get("profile_version") == "lab-http-workflow-v2"
+            else "lab-action-profile-v1"
+        ),
         "interval_jitter_percent": percent,
         "interval_jitter_direction": direction,
         "variant_index": rng.randint(0, 999_999),
@@ -94,7 +101,10 @@ def validate_frozen_profile(profile: dict[str, Any], parameters: dict[str, Any])
         or not 10 <= percent <= 30
         or isinstance(direction, bool)
         or direction not in {-1, 1}
-        or parameters.get("execution_profile_version") != "lab-action-profile-v1"
+        or parameters.get("execution_profile_version") != (
+            "lab-http-workflow-v2" if profile.get("profile_version") == "lab-http-workflow-v2"
+            else "lab-action-profile-v1"
+        )
     ):
         raise ValueError("invalid frozen profile jitter/version")
     expected = ",".join(str(round(x * (1 + direction * percent / 100), 3)) for x in gaps)

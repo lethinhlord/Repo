@@ -9,13 +9,24 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from api.app.contracts import FeatureStateResponse, StreamFeatureStateResponse, WazuhAlert
+from api.app.contracts import (
+    FeatureStateResponse,
+    HttpFeatureStateResponse,
+    StreamFeatureStateResponse,
+    WazuhAlert,
+)
 from ml.behavior_features import FEATURE_SCHEMA_VERSION
 from ml.feature_pipeline import (
     FEATURE_GROUPING_POLICY_VERSION,
     aggregate_wazuh_alerts,
     alert_event_time,
     window_start,
+)
+from ml.http_features import HTTP_SCHEMA_VERSION
+from ml.http_pipeline import (
+    aggregate_http_alerts,
+    http_collection_grace_seconds,
+    http_config_fingerprint,
 )
 from ml.intake_window import receipt_timely
 from ml.stream_features import STREAM_SCHEMA_VERSION
@@ -32,16 +43,23 @@ class FeatureStateStore:
 
     def __init__(
         self, path: Path, *, retention_seconds: int = 86_400,
-        late_arrival_grace_seconds: int = 60,
+        late_arrival_grace_seconds: int | None = None,
         feature_profile: str = FEATURE_SCHEMA_VERSION,
     ) -> None:
-        if feature_profile not in {FEATURE_SCHEMA_VERSION, STREAM_SCHEMA_VERSION}:
+        if feature_profile not in {
+            FEATURE_SCHEMA_VERSION, STREAM_SCHEMA_VERSION, HTTP_SCHEMA_VERSION,
+        }:
             raise ValueError("unsupported feature profile")
         self.feature_schema_version = feature_profile
+        self.source_fingerprint = (
+            http_config_fingerprint() if feature_profile == HTTP_SCHEMA_VERSION else None
+        )
         self.grouping_policy_version = FEATURE_GROUPING_POLICY_VERSION + (
+            ":http-v1:" + self.source_fingerprint if feature_profile == HTTP_SCHEMA_VERSION else
             ":stream-v1" if feature_profile == STREAM_SCHEMA_VERSION else ""
         )
         self.response_type = (
+            HttpFeatureStateResponse if feature_profile == HTTP_SCHEMA_VERSION else
             StreamFeatureStateResponse if feature_profile == STREAM_SCHEMA_VERSION
             else FeatureStateResponse
         )
@@ -49,16 +67,34 @@ class FeatureStateStore:
             raise ValueError("retention_seconds must be at least 300")
         self.path = path
         self.retention_seconds = retention_seconds
+        if late_arrival_grace_seconds is None:
+            late_arrival_grace_seconds = (
+                http_collection_grace_seconds() if feature_profile == HTTP_SCHEMA_VERSION else 60
+            )
         if not 0 <= late_arrival_grace_seconds <= 600:
             raise ValueError("late_arrival_grace_seconds must be in [0,600]")
         self.late_arrival_grace_seconds = late_arrival_grace_seconds
+        if feature_profile == HTTP_SCHEMA_VERSION:
+            self.grouping_policy_version += f":grace={late_arrival_grace_seconds}"
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
     def _aggregate_alerts(self, *args, **kwargs):
+        if self.feature_schema_version == HTTP_SCHEMA_VERSION:
+            self._check_source()
+            return aggregate_http_alerts(*args, **kwargs)
         if self.feature_schema_version == STREAM_SCHEMA_VERSION:
             return aggregate_stream_alerts(*args, **kwargs)
         return aggregate_wazuh_alerts(*args, **kwargs)
+
+    def _check_source(self) -> None:
+        if (
+            self.source_fingerprint is not None
+            and self.source_fingerprint != http_config_fingerprint()
+        ):
+            raise FeatureStateConflictError(
+                "HTTP source changed; preserve this cache and start a new one",
+            )
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=10)
@@ -300,6 +336,7 @@ class FeatureStateStore:
         return payload, hashlib.sha256(payload.encode()).hexdigest()
 
     def ingest(self, alert: WazuhAlert, *, window_minutes: int = 5) -> FeatureStateResponse:
+        self._check_source()
         if not 1 <= window_minutes <= 5:
             raise ValueError("window_minutes must be between 1 and 5")
         payload, payload_hash = self._serialize(alert)
@@ -453,6 +490,7 @@ class FeatureStateStore:
         still be inspected through ingest, but must not silently rewrite an
         already approved close result.
         """
+        self._check_source()
         now = time.time()
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")

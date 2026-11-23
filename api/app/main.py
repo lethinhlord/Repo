@@ -21,6 +21,9 @@ from api.app.contracts import (
     FeatureStateResponse,
     FeatureWindowFinalizeRequest,
     HealthResponse,
+    HttpFeatureBatchResponse,
+    HttpFeatureStateResponse,
+    HttpIncidentRequest,
     IncidentRecordRequest,
     IncidentRecordResponse,
     IncidentRequest,
@@ -59,6 +62,8 @@ from ml.feature_pipeline import (
     collection_grace_seconds,
     extract_wazuh_features,
 )
+from ml.http_features import HTTP_SCHEMA_VERSION
+from ml.http_pipeline import aggregate_http_alerts, http_collection_grace_seconds
 from ml.inference import InferenceInputError, ModelPackageError, ModelRuntime
 from ml.stream_pipeline import aggregate_stream_alerts
 
@@ -96,7 +101,10 @@ def load_feature_state_store(
 ) -> FeatureStateStore:
     return FeatureStateStore(
         Path(path), retention_seconds=retention_seconds,
-        late_arrival_grace_seconds=collection_grace_seconds(),
+        late_arrival_grace_seconds=(
+            http_collection_grace_seconds() if feature_profile == HTTP_SCHEMA_VERSION
+            else collection_grace_seconds()
+        ),
         feature_profile=feature_profile,
     )
 
@@ -300,6 +308,48 @@ def predict_stream(incident: StreamIncidentRequest) -> PredictionResponse:
     if not os.getenv("MODEL_PACKAGE_DIR", "").strip():
         raise HTTPException(status_code=503, detail="a reviewed stream model package is required")
     return predict(incident)
+
+
+@app.post("/features/wazuh/http/batch", response_model=HttpFeatureBatchResponse)
+def features_from_wazuh_http_batch(batch: WazuhAlertBatch) -> HttpFeatureBatchResponse:
+    return aggregate_http_alerts(batch.alerts, window_minutes=batch.window_minutes)
+
+
+@app.post("/predict/http", response_model=PredictionResponse)
+def predict_http(incident: HttpIncidentRequest) -> PredictionResponse:
+    if not os.getenv("MODEL_PACKAGE_DIR", "").strip():
+        raise HTTPException(status_code=503, detail="a reviewed HTTP model package is required")
+    return predict(incident)
+
+
+@app.post("/features/wazuh/http/stateful", response_model=HttpFeatureStateResponse)
+def http_features_stateful(alert: WazuhAlert) -> HttpFeatureStateResponse:
+    path = os.getenv("FEATURE_HTTP_STATE_DB", "/tmp/datn-feature-state-http-v1.sqlite3").strip()
+    try:
+        retention = int(os.getenv("FEATURE_STATE_RETENTION_SECONDS", "86400"))
+        return load_feature_state_store(path, retention, "features-v5-http-v1").ingest(alert)
+    except FeatureStateConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        raise HTTPException(
+            status_code=503, detail=f"HTTP feature state unavailable: {exc}",
+        ) from exc
+
+
+@app.post("/features/wazuh/http/finalize-window", response_model=HttpFeatureStateResponse)
+def http_features_finalize(request: FeatureWindowFinalizeRequest) -> HttpFeatureStateResponse:
+    path = os.getenv("FEATURE_HTTP_STATE_DB", "/tmp/datn-feature-state-http-v1.sqlite3").strip()
+    try:
+        retention = int(os.getenv("FEATURE_STATE_RETENTION_SECONDS", "86400"))
+        return load_feature_state_store(path, retention, "features-v5-http-v1").finalize_window(
+            request.alert_id, window_minutes=request.window_minutes,
+        )
+    except FeatureStateConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        raise HTTPException(
+            status_code=503, detail=f"HTTP feature state unavailable: {exc}",
+        ) from exc
 
 
 @app.post("/features/wazuh/stream/stateful", response_model=StreamFeatureStateResponse)

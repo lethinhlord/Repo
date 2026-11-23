@@ -2,6 +2,16 @@
 
 Repository for the AI and SOAR workstream of the graduation project.
 
+For the new supplemental collection campaign, use the complete Vietnamese
+[four-VM supplemental runbook](docs/supplemental-collection-runbook.md).
+It predeclares 216 execution units and host/UTC-day split groups before G7 v3,
+retains the original raw features, and adds a separate HTTP evidence profile.
+Collection approval does not approve a future dataset: the new
+[Colab notebook](notebooks/supplemental_train_colab.ipynb) requires an exact
+committed READY dataset review. This candidate still needs real lab acceptance;
+tests do not certify Kiên's VMs or model quality. Existing40 releases below remain
+available for reproduction and must not be mixed with the supplemental campaign.
+
 Week 1 establishes a reproducible development environment, Interface Contract v1,
 a mock FastAPI inference service and the first n8n vertical slice. Week 2 adds a
 versioned fixture feature pipeline, incident-window aggregation, a fail-safe

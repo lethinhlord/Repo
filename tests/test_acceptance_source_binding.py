@@ -45,7 +45,11 @@ def test_g7_binds_selected_source_and_trainable_start_uses_it(tmp_path, monkeypa
     create = official.fixture.create_run_draft
 
     def draft(*args, **kwargs):
-        return create(*args, source_config_path=source, **kwargs)
+        # The shared collector fixture now passes its selected source explicitly.
+        # Retain this test's injection without supplying the keyword twice.
+        assert kwargs.get("source_config_path") in (None, source)
+        kwargs["source_config_path"] = source
+        return create(*args, **kwargs)
 
     monkeypatch.setattr(official.fixture, "create_run_draft", draft)
     scenario = next(s for s in catalog.scenarios if s.scenario_id == selected[0])
