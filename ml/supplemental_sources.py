@@ -110,6 +110,17 @@ def require_collection_source(root: Path, tag: str) -> tuple[dict, str]:
     return review, head
 
 
+def source_policy_for_design(design: dict):
+    """Keep the three-day approval separate from formal216 collection/data review."""
+    if design.get("version") == "development-design-v1":
+        from ml import development_sources
+
+        return development_sources
+    import sys
+
+    return sys.modules[__name__]
+
+
 def verify_candidate(candidate: dict, review: dict, root: Path = ROOT) -> None:
     from ml.training_sources import source_tree_hash
 

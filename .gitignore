@@ -23,6 +23,7 @@ data/quarantine/
 data/processed/
 data/processed-stream-v1/
 data/processed-supplemental-v1/
+data/processed-development-v1/
 evidence/scenario-runs/
 evidence/.collection-operation.lock
 evidence/quarantine/
@@ -37,6 +38,7 @@ evidence/operator-parameter-exports/
 evidence/collection-source-commit.txt
 evidence/collection-acceptance*.json
 evidence/supplemental-acceptance.json
+evidence/development-acceptance.json
 evidence/collection-candidate*.json
 n8n/data/
 artifacts/runtime/
@@ -44,6 +46,7 @@ ml/splits/*.txt
 ml/model-package/*
 ml/model-package-stream-v1/
 ml/model-package-supplemental-v1/
+ml/development-model-v1/
 **/.model-evaluation-registry/
 **/.model-evaluation-evidence/
 !ml/model-package/README.md

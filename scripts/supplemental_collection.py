@@ -33,7 +33,9 @@ def registration_template(design: dict, start: date, operator: str) -> dict:
             dict(
                 cohort_id=slot["cohort_id"],
                 partition=slot["partition"],
-                collection_date=(start + timedelta(days=ordinal)).isoformat(),
+                collection_date=(start + timedelta(days=(
+                    ordinal // 4 if design["version"] == "development-design-v1" else ordinal
+                ))).isoformat(),
                 host=design["windows_host"],
                 operator=operator,
                 environment_id="TODO record real VM image/configuration",

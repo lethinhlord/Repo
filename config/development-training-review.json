@@ -1,0 +1,8 @@
+{
+  "version": "reviewed-development-training-v1",
+  "status": "PREPARATION_IN_PROGRESS",
+  "collection_candidate_tag": "development-collection-v1.0.0-candidate.1",
+  "processing_sha256": null,
+  "processing_runtimes": [],
+  "approved_manifest_sha256": null
+}

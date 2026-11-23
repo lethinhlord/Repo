@@ -11,6 +11,7 @@
 **/__pycache__/
 **/*.pyc
 ml/model-package*/
+ml/development-model*/
 **/.model-evaluation-registry/
 **/.model-evaluation-evidence/
 ml/splits/*.txt

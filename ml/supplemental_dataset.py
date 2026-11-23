@@ -126,7 +126,10 @@ def input_inventory(root: Path, plan_path: Path) -> dict[str, str]:
     return files
 
 
-def project_run(root: Path, planned: dict, plan: dict, catalog, processor_root: Path) -> dict:
+def project_run(
+    root: Path, planned: dict, plan: dict, catalog, processor_root: Path,
+    *, catalog_relative: str = "config/supplemental-catalog.yaml",
+) -> dict:
     """Keep all native/raw24 checks before deriving the separate HTTP vector."""
     from ml.dataset_audit import _audit_run
     from ml.scenario_collection import (
@@ -166,7 +169,7 @@ def project_run(root: Path, planned: dict, plan: dict, catalog, processor_root: 
         root / "evidence/scenario-runs",
         raw_schema,
         {s.scenario_id: s for s in catalog.scenarios},
-        sha(processor_root / "config/supplemental-catalog.yaml"),
+        sha(processor_root / catalog_relative),
         sha(processor_root / "ml/feature_schema.json"),
         sha(evidence / "collection-sources.yaml"),
         sha(processor_root / "config/suspicious-process-taxonomy.yaml"),
@@ -227,18 +230,22 @@ def project_run(root: Path, planned: dict, plan: dict, catalog, processor_root: 
     return row
 
 
-def audit_collection(root: Path, plan_path: Path, *, processor_root: Path = lineage.ROOT):
+def audit_collection(
+    root: Path, plan_path: Path, *, processor_root: Path = lineage.ROOT,
+    source_module=None, catalog_relative: str = "config/supplemental-catalog.yaml",
+):
     """Return report + private records; callers must never print the locked records."""
     import yaml
 
     from ml.collection_release import verify_frozen_acceptance
     from ml.scenario_collection import CollectionError, ScenarioCatalog
 
-    review, head = lineage.policy(processor_root)
+    authority = lineage if source_module is None else source_module
+    review, head = authority.policy(processor_root)
     root, plan_path = root.resolve(), plan_path.resolve()
     catalog = ScenarioCatalog.model_validate(
         yaml.safe_load(
-            (processor_root / "config/supplemental-catalog.yaml").read_bytes(),
+            (processor_root / catalog_relative).read_bytes(),
         )
     )
     design = catalog.campaign_design
@@ -248,7 +255,7 @@ def audit_collection(root: Path, plan_path: Path, *, processor_root: Path = line
     selected, issues = select_attempts(plan, root)
     if (root / "evidence/scenario-runs/.active-run.json").exists():
         issues.append(dict(code="ACTIVE_COLLECTION", run_id="CAMPAIGN"))
-    parts = {role: [] for role in lineage.ROLES}
+    parts = {role: [] for role in authority.ROLES}
     candidate = accepted = None
     expected_attempts = {a["run_id"] for r in plan["runs"] for a in r["attempts"]}
     for directory in (root / "data/raw").iterdir():
@@ -272,7 +279,7 @@ def audit_collection(root: Path, plan_path: Path, *, processor_root: Path = line
             verify_frozen_acceptance(state)
             origin, registration = state["collection_candidate"], state["collection_release"]
             if candidate is None:
-                lineage.verify_candidate(origin, review, processor_root)
+                authority.verify_candidate(origin, review, processor_root)
             if (
                 registration.get("version") != "collection-acceptance-v3"
                 or registration["campaign_registration"]["plan"] != plan
@@ -286,7 +293,10 @@ def audit_collection(root: Path, plan_path: Path, *, processor_root: Path = line
                 )
             candidate, accepted = origin, registration
             parts[planned["partition"]].append(
-                project_run(root, planned, plan, catalog, processor_root)
+                project_run(
+                    root, planned, plan, catalog, processor_root,
+                    catalog_relative=catalog_relative,
+                )
             )
         except (CollectionError, OSError, ValueError, KeyError, TypeError) as exc:
             issues.append(
@@ -320,13 +330,13 @@ def audit_collection(root: Path, plan_path: Path, *, processor_root: Path = line
         issues.append(dict(code="TRAIN_SELECTED_REPRESENTATION_AMBIGUITY", run_id="CAMPAIGN"))
     if input_inventory(root, plan_path) != before:
         raise ValueError("collection inputs changed during native replay/audit")
-    if lineage.policy(processor_root) != (review, head):
+    if authority.policy(processor_root) != (review, head):
         raise ValueError("processing code or review changed during collection audit")
     report = dict(
         status="SUPPLEMENTAL_COLLECTION_AUDIT_FAIL"
         if issues
         else "SUPPLEMENTAL_COLLECTION_AUDIT_PASS",
-        planned_units=216,
+        planned_units=len(plan["runs"]),
         verified_units=sum(len(v) for v in parts.values()),
         issues=issues,
         counts={r: len(v) for r, v in parts.items()},

@@ -394,9 +394,11 @@ def _release_snapshots(
         approved_head = None
         if catalog.version == "scenario-catalog-v2":
             from ml.http_pipeline import require_http_source_semantics
-            from ml.supplemental_sources import require_collection_source
+            from ml.supplemental_sources import source_policy_for_design
 
-            _, approved_head = require_collection_source(root, design["candidate_tag"])
+            _, approved_head = source_policy_for_design(design).require_collection_source(
+                root, design["candidate_tag"],
+            )
             require_http_source_semantics(source.model_dump(), root)
         candidate = capture_candidate(root, design["candidate_tag"])
         if approved_head is not None and candidate["commit"] != approved_head:
