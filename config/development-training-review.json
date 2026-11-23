@@ -1,8 +1,13 @@
 {
   "version": "reviewed-development-training-v1",
-  "status": "PREPARATION_IN_PROGRESS",
+  "status": "COLLECTION_READY",
   "collection_candidate_tag": "development-collection-v1.0.0-candidate.1",
-  "processing_sha256": null,
-  "processing_runtimes": [],
+  "processing_sha256": "852baef6f8e9b68e1a14be82321526370065225ca9c7b115942eba14f5251d40",
+  "processing_runtimes": [
+    {
+      "python_version": "3.12.14 (main, Aug 25 2026, 14:01:42) [MSC v.1944 64 bit (AMD64)]",
+      "installed_packages_sha256": "2cd678155bd2f54087487703e1a74f008e88b926dc197eb8e9ea9697fa2976e8"
+    }
+  ],
   "approved_manifest_sha256": null
 }
