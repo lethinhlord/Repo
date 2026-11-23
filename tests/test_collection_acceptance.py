@@ -438,7 +438,7 @@ def _collect_run(
         collection_seed=20_261_027 + sequence,
         clock_preflight=_clock_preflight(collection_started_at),
         purpose=purpose,
-        source_config_path=source_path if catalog_path is not None else None,
+        **({"source_config_path": source_path} if catalog_path is not None else {}),
     )
     draft = RunDraft.model_validate(
         yaml.safe_load(draft_path.read_text(encoding="utf-8"))

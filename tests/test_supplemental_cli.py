@@ -85,3 +85,22 @@ def test_real_git_keeps_generated_campaign_artifacts_out_of_source_identity(tmp_
     assert git(tmp_path, "status", "--porcelain", "--untracked-files=all") == ""
     (tmp_path / "new_source.py").write_text("new = True\n")
     assert "new_source.py" in git(tmp_path, "status", "--porcelain", "--untracked-files=all")
+
+
+def test_native_collection_error_is_reported_without_partial_parameter_export(
+    tmp_path, monkeypatch, capsys,
+):
+    from ml.scenario_collection import CollectionError
+
+    def corrupt_snapshot(*args):
+        raise CollectionError("frozen start contract differs")
+
+    monkeypatch.setattr("scripts.export_run_parameters.load_frozen_parameters", corrupt_snapshot)
+    output = tmp_path / "parameters.json"
+    assert main([
+        "--project-root", str(ROOT), "parameters", "--run-id", "test-run",
+        "--output", str(output),
+    ]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "ERROR" and "start contract" in result["detail"]
+    assert not output.exists()

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import yaml
 
-from ml.scenario_collection import ClockPreflight, SourceConfig, create_run_draft
+from ml.scenario_collection import ClockPreflight, CollectionError, SourceConfig, create_run_draft
 from ml.supplemental_design import (
     load_design,
     make_plan,
@@ -176,7 +176,7 @@ def main(argv=None) -> int:
                         )
                     ),
                 )
-    except (OSError, ValueError, KeyError, TypeError) as exc:
+    except (CollectionError, OSError, ValueError, KeyError, TypeError) as exc:
         print(json.dumps({"status": "ERROR", "detail": str(exc)}))
         return 1
     print(json.dumps(result, sort_keys=True, indent=2))
