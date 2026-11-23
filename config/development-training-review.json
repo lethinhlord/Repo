@@ -2,7 +2,7 @@
   "version": "reviewed-development-training-v1",
   "status": "COLLECTION_READY",
   "collection_candidate_tag": "development-collection-v1.0.0-candidate.1",
-  "processing_sha256": "852baef6f8e9b68e1a14be82321526370065225ca9c7b115942eba14f5251d40",
+  "processing_sha256": "bc0379218b046ffd84027c9e0bed516588fd1441b68716f8b5818725a55b4c00",
   "processing_runtimes": [
     {
       "python_version": "3.12.14 (main, Aug 25 2026, 14:01:42) [MSC v.1944 64 bit (AMD64)]",
