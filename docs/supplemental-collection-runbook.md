@@ -1,6 +1,6 @@
 # HƯỚNG DẪN THU BỔ SUNG DATASET SOC–AI–SOAR — 4 VM
 
-Thiết kế supplemental-http-v1, ngày 22/11/2026. Đọc toàn bộ trước khi thu.
+Thiết kế supplemental-http-v1, ngày 23/11/2026. Đọc toàn bộ trước khi thu.
 Nguồn code duy nhất: https://github.com/lethinhlord/Repo.git
 Tag mới: supplemental-collection-v1.0.0-candidate.1.
 Chỉ bắt đầu khi tag annotated đã được công bố và review nguồn báo COLLECTION_READY.
@@ -103,7 +103,7 @@ khoản thật trong lab.
 Tài nguyên khởi điểm:
 
 - SOC-AI: tối thiểu 4 vCPU, 8 GB RAM, 80 GB disk cho Wazuh all-in-one; khuyến nghị
-  12–16 GB RAM nếu chạy đồng thời Docker, n 8 n và API. Trong lúc thu dữ liệu nên dừng
+  12–16 GB RAM nếu chạy đồng thời Docker, n8n và API. Trong lúc thu dữ liệu nên dừng
   dịch vụ Week 2 không cần thiết để tránh OOM và I/O contention.
 - Windows 11: 4 vCPU, 8 GB RAM, 80 GB disk.
 - NET-SENSOR: 2 vCPU, 4 GB RAM, 40 GB disk.
@@ -604,8 +604,8 @@ logrotate. Không mở run qua vùng 23:45–00:15 UTC.
 
 Không git pull trong checkout đang thu. Đóng/abort run có lý do, backup rồi dùng
 checkout/tag mới nếu cần thay code/config. Không ghép raw các release vào quota
-mới. a 82705 d, pilot-v 3.8, data-collection-v 2 là lịch sử. Tài liệu phục hồi pilot
-lịch sử không thay quy trình hiện hành mục 11.
+mới. Các release và pilot trước đây chỉ là bằng chứng lịch sử. Phục hồi pilot
+cũ không thay quy trình hiện hành mục14 hoặc acceptance mới của đợt này.
 
 
 ### 6.4 Phân biệt collector và dịch vụ AI
