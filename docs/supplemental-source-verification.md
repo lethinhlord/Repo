@@ -11,8 +11,17 @@ replace the candidate identity.
 | Collection commit | `70ac35d6a2b028189512879fb37e13747ffdf202` |
 | Annotated tag object | `d39486d20b2bba01661c0ce1bbbb10b5f5915a29` |
 | Processing SHA-256 | `58c4cf68e676b690268aafc2f719e9449b186f4827cc9a982fc20e2ef8f80399` |
-| Candidate tracked-tree SHA-256 | `573ddc8e6df92119af837ca189de855514d6c75dd20a7107c0c77e975134b5b5` |
+| Candidate tracked-tree SHA-256 | `0a7c4d85faaf528261a8f9ee1febf705e123b51ee00d013dc6bf696199040a98` |
 | Source policy | `COLLECTION_READY`; approved future manifest is null |
+
+The candidate fingerprint above was captured from a fresh checkout of the
+published GitHub tag, checked against the remote annotated tag and accepted by
+the prospective source verifier. An older Windows worktree retained CRLF bytes
+in eight files despite Git reporting it clean. Its byte fingerprint was correctly
+rejected by the verifier. Those local line endings were restored to the tracked
+LF bytes without changing file contents or the published tag. Use the fresh
+tagged checkout required by the operator guide; a clean status alone is not a
+substitute for the candidate fingerprint check.
 
 Validation completed:
 
