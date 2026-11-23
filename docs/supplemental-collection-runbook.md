@@ -644,6 +644,32 @@ copy và đối chiếu hai SHA trước khi cài. Sai một byte thì dừng, c
 đã pin. Tương tự helper Test-DatnWindowsPreflight.ps1 phải khớp SHA hiển thị ở SOC.
 
 
+Trước G7, kiểm curl.exe mà runner sẽ tìm thấy đầu tiên trên PATH. HTTP v2 dùng
+--rate/--next và giao thức FILE để giữ process sống đủ cho Sysmon, bên cạnh HTTP.
+Windows11 cũ có thể thiếu tùy chọn; không chờ đến khi thu mới phát hiện:
+
+```powershell
+$ErrorActionPreference='Stop'
+$CurlExe=@(Get-Command curl.exe -CommandType Application -ErrorAction Stop)[0].Source
+$CurlHelp=(& $CurlExe --help all | Out-String)
+if ($LASTEXITCODE -ne 0) { throw 'curl help failed' }
+foreach ($flag in '--rate','--next','--fail-early','--http1.0','--data-binary') {
+  if ($CurlHelp -notmatch [regex]::Escape($flag)) { throw "curl lacks required option $flag" }
+}
+$CurlVersion=(& $CurlExe --version | Out-String)
+if ($LASTEXITCODE -ne 0 -or $CurlVersion -notmatch '\bfile\b' -or $CurlVersion -notmatch '\bhttp\b') { throw 'curl must support FILE and HTTP' }
+if (-not (Test-Path -LiteralPath C:\Windows\win.ini -PathType Leaf)) { throw 'Expected process-hold file is missing' }
+$CurlVersion | Set-Content C:\DATN\curl-version.txt -Encoding ascii
+Get-FileHash -LiteralPath $CurlExe -Algorithm SHA256
+Get-Content C:\DATN\curl-version.txt
+```
+
+Nếu thiếu, cài Windows Updates chính thức trên VM trước cô lập/G7 để cập nhật
+curl đi kèm hệ điều hành, reboot rồi chạy lại kiểm tra. Tài liệu tùy chọn chuẩn:
+https://curl.se/docs/manpage.html . Không tải curl từ link không rõ nguồn, không
+thay executable/PATH trong đợt đã đóng băng. Lưu path/version/hash trong inventory
+toolchain và gửi cùng bàn giao; SYS/HTTP canary vẫn phải kiểm thật sau đó.
+
 ### 7.1 Tài khoản lab và audit policy
 
 Mở PowerShell bằng quyền Administrator. Tạo các tài khoản **chỉ dùng trong lab** bằng
