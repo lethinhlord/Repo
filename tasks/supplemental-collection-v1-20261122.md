@@ -85,6 +85,15 @@ No new dependencies or package changes to the approved local processing env.
 
 ## State
 
-Base c5c2b68e3ba9087aa5a04fa87c416bb9f127d303. Specification/implementation in
-progress. Final paths, commands, test evidence and remaining lab operations will
-be written in the release handoff before declaring this collection path ready.
+Software and handoff completed on 23 November 2026; PR25 merged at
+70ac35d6a2b028189512879fb37e13747ffdf202. Annotated collection tag:
+supplemental-collection-v1.0.0-candidate.1. Source approval is COLLECTION_READY;
+there is no future dataset READY approval. See
+[release verification](../docs/supplemental-source-verification.md) and the
+[complete operator guide](../docs/supplemental-collection-runbook.md).
+
+Remaining real operations: Kiên executes four fresh transport pilots and G7 v3
+once on that tag, collects the preregistered 216 units on actual host/UTC-day
+blocks, and hands off sealed evidence. Thịnh audits/builds the new data and commits
+its exact manifest review before Colab training. These are not certified by
+software tests and have not been performed on this computer.
