@@ -1,0 +1,17 @@
+version: collection-sources-v1
+wazuh_archives_path: /var/ossec/logs/archives/archives.json
+windows_agent_name: WIN11-TARGET
+windows_source_ips:
+- 10.20.0.10
+correlation_window_seconds: 10.0
+suricata_agent_name: NET-SENSOR
+taxonomy_path: config/suspicious-process-taxonomy.yaml
+scenario_catalog_path: config/development-catalog.yaml
+context_baseline_path: evidence/context-baseline.json
+collection_release_path: evidence/development-acceptance.json
+require_clean_bucket: true
+require_flow_counters: true
+require_online_parity: true
+late_arrival_grace_seconds: 60
+feature_scope: full-window
+campaign_plan_path: operator-logs/development-plan.json

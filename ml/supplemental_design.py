@@ -34,6 +34,11 @@ def load_design(path: Path) -> dict:
 
 
 def validate_design(value: dict) -> None:
+    if isinstance(value, dict) and value.get("version") == "development-design-v1":
+        from ml.development_design import validate_development_design
+
+        validate_development_design(value)
+        return
     expected = {
         "version",
         "campaign_id",
@@ -156,6 +161,11 @@ def validate_registration(design: dict, registration: dict) -> dict[str, dict]:
         contexts[key] = {**context, "evaluation_group_id": block}
     if set(contexts) != set(expected):
         raise ValueError("prospective registration is incomplete")
+    if design["version"] == "development-design-v1":
+        from ml.development_design import validate_development_days
+
+        validate_development_days(contexts, expected)
+        return contexts
     for family in FAMILIES:
         for role in ROLES:
             if len(dates[(family, role)]) < design["minimum_host_days_per_partition"]:

@@ -33,34 +33,49 @@ from ml.supplemental_design import load_design, make_plan, resolve_plan_run, wri
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_v3_acceptance_freezes_plan_and_restores_all_four_transport_pilots(tmp_path, monkeypatch):
+@pytest.mark.parametrize("development", [False, True])
+def test_v3_acceptance_freezes_plan_and_restores_all_four_transport_pilots(
+    tmp_path, monkeypatch, development,
+):
     archive, source_path, _, candidate = prepare_official(tmp_path, monkeypatch)
-    copyfile(ROOT / "config/supplemental-design.yaml", tmp_path / "config/supplemental-design.yaml")
+    prefix = "development" if development else "supplemental"
+    design_relative = f"config/{prefix}-design.yaml"
+    copyfile(ROOT / design_relative, tmp_path / design_relative)
     copyfile(
         ROOT / "config/supplemental-sources.yaml", tmp_path / "config/supplemental-sources.yaml",
     )
-    d = load_design(tmp_path / "config/supplemental-design.yaml")
+    d = load_design(tmp_path / design_relative)
     candidate["tag"] = d["candidate_tag"]
     # This isolated protocol fixture has synthetic source authority, just as its
     # capture_candidate above is synthetic. It never issues real VM acceptance.
     monkeypatch.setattr(
-        "ml.supplemental_sources.require_collection_source",
+        f"ml.{prefix}_sources.require_collection_source",
         lambda root, tag: ({"status": "COLLECTION_READY"}, candidate["commit"]),
     )
     catalog = compile_catalog(
         d, yaml.safe_load((tmp_path / "config/scenario-catalog.yaml").read_bytes())
     )
-    catalog_path = tmp_path / "config/supplemental-catalog.yaml"
-    catalog_path.write_bytes((ROOT / "config/supplemental-catalog.yaml").read_bytes())
+    catalog_relative = f"config/{prefix}-catalog.yaml"
+    catalog_path = tmp_path / catalog_relative
+    catalog_path.write_bytes((ROOT / catalog_relative).read_bytes())
     cfg = yaml.safe_load(source_path.read_bytes())
     cfg.update(
-        scenario_catalog_path="config/supplemental-catalog.yaml",
-        collection_release_path="evidence/supplemental-acceptance.json",
-        campaign_plan_path="operator-logs/supplemental-plan.json",
+        scenario_catalog_path=catalog_relative,
+        collection_release_path=f"evidence/{prefix}-acceptance.json",
+        campaign_plan_path=f"operator-logs/{prefix}-plan.json",
         feature_scope="full-window",
     )
     source_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
     registered = registration(d)
+    if development:
+        from scripts.supplemental_collection import registration_template
+
+        registered = registration_template(d, date(2027, 1, 1), "Kien")
+        for context in registered["contexts"]:
+            context.update(
+                environment_id="SYNTHETIC image", application_context="SYNTHETIC lab session",
+                reset_reference="SYNTHETIC continuous session",
+            )
     for context in registered["contexts"]:
         delta = date.fromisoformat(context["collection_date"]) - date(2027, 1, 1)
         context["collection_date"] = (fixture.COLLECTION_BASE.date() + delta).isoformat()
@@ -193,7 +208,9 @@ def test_v3_acceptance_freezes_plan_and_restores_all_four_transport_pilots(tmp_p
         complete_action(rid, tmp_path, now=last + timedelta(seconds=2))
         window_end = datetime.fromtimestamp((int(action_at.timestamp()) // 300 + 1) * 300, UTC)
         finalize_run(rid, tmp_path, now=window_end + timedelta(seconds=60))
-        return project_run(tmp_path, planned, plan, parsed, ROOT)
+        return project_run(
+            tmp_path, planned, plan, parsed, ROOT, catalog_relative=catalog_relative,
+        )
 
     projected = finish_and_project(
         second, fixture.COLLECTION_BASE + timedelta(minutes=55, seconds=5)
@@ -217,7 +234,7 @@ def test_v3_acceptance_freezes_plan_and_restores_all_four_transport_pilots(tmp_p
     import tarfile
 
     with tarfile.open(next(postbackup.glob("collection-*.tar.gz")), "r:gz") as tar:
-        assert "evidence/supplemental-acceptance.json" in tar.getnames()
+        assert f"evidence/{prefix}-acceptance.json" in tar.getnames()
     plan_path.write_text("{}")
     with pytest.raises(release.ReleaseError):
         release.assert_collection_authorized(

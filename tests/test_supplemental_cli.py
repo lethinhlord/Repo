@@ -78,6 +78,10 @@ def test_real_git_keeps_generated_campaign_artifacts_out_of_source_identity(tmp_
         "data/processed-supplemental-v1/train.jsonl",
         "ml/model-package-supplemental-v1/metadata.json",
         "data/.tmp-supplemental-build-UNIT/complete/train.jsonl",
+        "evidence/development-acceptance.json",
+        "data/processed-development-v1/train.jsonl",
+        "ml/development-model-v1/metadata.json",
+        "ml/.tmp-development-model-UNIT/complete/metadata.json",
     ):
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -1,0 +1,38 @@
+project: datn-ai-soar
+experiment_name: development-three-day-v1
+random_seed: 42
+feature_schema: ml/feature_schema_http.json
+data:
+  processed_dir: data/processed-development-v1
+  group_key: evaluation_group_id
+  require_collection_audit: true
+  collection_design: config/development-design.yaml
+split:
+  protocol: development-three-day-grouped-cv
+  assignment: all-development-grouped-by-real-day
+selection:
+  minimum_precision: 0.9
+  inner_cv_folds: 3
+  calibration_method: sigmoid
+  calibration_bins: 10
+  maximum_brier: 0.2
+  maximum_ece: 0.15
+  maximum_threshold_delta: 0.25
+  bootstrap_iterations: 300
+  bootstrap_confidence: 0.95
+  latency_repeats: 50
+models:
+  logistic_regression:
+    C: 1.0
+    max_iter: 2000
+  random_forest:
+    n_estimators: 300
+    min_samples_leaf: 2
+    max_features: sqrt
+  xgboost:
+    n_estimators: 300
+    max_depth: 4
+    learning_rate: 0.05
+    subsample: 0.9
+    colsample_bytree: 0.9
+package_dir: ml/development-model-v1

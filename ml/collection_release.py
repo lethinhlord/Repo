@@ -362,7 +362,12 @@ def _check_design(root: Path, source_config_path: Path | None = None) -> None:
                 from ml.supplemental_catalog import compile_catalog
                 from ml.supplemental_design import load_design
 
-                design = load_design(root / "config/supplemental-design.yaml")
+                design_file = (
+                    "development-design.yaml"
+                    if selected_doc.get("campaign_design", {}).get("version")
+                    == "development-design-v1" else "supplemental-design.yaml"
+                )
+                design = load_design(root / "config" / design_file)
                 expected_catalog = compile_catalog(design, yaml.safe_load(
                     (root / "config/scenario-catalog.yaml").read_text(encoding="utf-8")
                 ))
@@ -572,9 +577,11 @@ def create_acceptance(
         if catalog_model.version == "scenario-catalog-v2":
             from ml.http_pipeline import require_http_source_semantics
             from ml.supplemental_design import verify_plan
-            from ml.supplemental_sources import require_collection_source
+            from ml.supplemental_sources import source_policy_for_design
 
-            _, approved_head = require_collection_source(root, tag)
+            _, approved_head = source_policy_for_design(
+                catalog_model.campaign_design,
+            ).require_collection_source(root, tag)
             require_http_source_semantics(source_model.model_dump(), root)
             if candidate["commit"] != approved_head:
                 raise ReleaseError("supplemental source changed before G7 acceptance")

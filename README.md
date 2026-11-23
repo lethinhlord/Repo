@@ -2,7 +2,18 @@
 
 Repository for the AI and SOAR workstream of the graduation project.
 
-For the new supplemental collection campaign, use the complete Vietnamese
+For the current three-day constraint, start with the complete Vietnamese
+[48-run development runbook](docs/development-three-day-runbook.md) and
+[development Colab notebook](notebooks/development_train_colab.ipynb).
+It collects12 runs per stratum,16 daily across three real consecutive UTC dates,
+with all native capture/source/G7 guards retained. All48 are development TRAIN;
+external validation/test are NOT_COLLECTED, uncertainty is insufficient and the
+separate artifact is ineligible for deployment/automation. Exact dataset review
+is still required before training. Tests cannot certify the remote lab or model
+quality. The new immutable source is `development-collection-v1.0.0-candidate.1`.
+
+For reproduction of the separate formal216-run protocol, use its pinned
+`supplemental-collection-v1.0.0-candidate.1` source and complete Vietnamese
 [four-VM supplemental runbook](docs/supplemental-collection-runbook.md).
 It predeclares 216 execution units and host/UTC-day split groups before G7 v3,
 retains the original raw features, and adds a separate HTTP evidence profile.
