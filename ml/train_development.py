@@ -31,6 +31,16 @@ from ml.training import (
 from ml.training_sources import digest
 
 
+def _development_threshold(labels, probabilities) -> dict:
+    selected = select_threshold(labels, probabilities, minimum_precision=0.9)
+    return {
+        **selected,
+        "precision_target_met": bool(selected["automation_eligible"]),
+        "automation_eligible": False,
+        "scope": "DEVELOPMENT_THRESHOLD_SELECTION_ONLY",
+    }
+
+
 def train(*, root: Path | None = None, expected_commit: str | None = None) -> dict:
     root = source.ROOT if root is None else root.resolve()
     review, head = guard = source.policy(root, require_ready=True)
@@ -65,7 +75,7 @@ def train(*, root: Path | None = None, expected_commit: str | None = None) -> di
                 method="predict_proba",
                 n_jobs=1,
             )[:, 1]
-            selected = select_threshold(y, probabilities, minimum_precision=0.9)
+            selected = _development_threshold(y, probabilities)
             candidate_results[name] = dict(
                 partition="TRAIN_GROUPED_CV_SELECTION",
                 threshold=selected,
@@ -93,7 +103,7 @@ def train(*, root: Path | None = None, expected_commit: str | None = None) -> di
             minimum_precision=0.9,
             calibration_bins=int(config["selection"]["calibration_bins"]),
         )
-        threshold = select_threshold(y, oof, minimum_precision=0.9)
+        threshold = _development_threshold(y, oof)
         diagnostic = classification_metrics(
             y,
             oof,

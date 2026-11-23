@@ -67,3 +67,21 @@ def test_supplemental_source_preserves_historical_policies_and_compiles_exactly(
     # Future data approval cannot be inferred from preparation/collection approval.
     if review["status"] != "READY":
         assert review["approved_manifest_sha256"] is None
+
+
+def test_development_scope_preserves_formal_policy_and_compiles_its_own_catalog():
+    import yaml
+
+    from ml.supplemental_catalog import compile_catalog
+    from ml.supplemental_design import load_design
+
+    historical = subprocess.check_output([
+        "git", "-C", str(ROOT), "show",
+        "supplemental-collection-v1.0.0-candidate.1:config/supplemental-training-review.json",
+    ])
+    assert (ROOT / "config/supplemental-training-review.json").read_bytes() == historical
+    design = load_design(ROOT / "config/development-design.yaml")
+    base = yaml.safe_load((ROOT / "config/scenario-catalog.yaml").read_bytes())
+    assert yaml.safe_load((ROOT / "config/development-catalog.yaml").read_bytes()) == (
+        compile_catalog(design, base)
+    )

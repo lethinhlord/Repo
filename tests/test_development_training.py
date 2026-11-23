@@ -33,6 +33,10 @@ def test_development_fit_records_day_folds_and_cannot_become_production(developm
     for family, artifact in bundle["families"].items():
         m = metrics["families"][family]
         assert m["confidence_intervals"] is None
+        assert m["threshold_selection"]["automation_eligible"] is False
+        for candidate in m["candidates"].values():
+            assert candidate["threshold"]["automation_eligible"] is False
+            assert isinstance(candidate["threshold"]["precision_target_met"], bool)
         assert m["uncertainty_status"] == "INSUFFICIENT_EXTERNAL_ASSESSMENT"
         assert len(m["nested_grouped_cv"]["folds"]) == 3
         for fold in m["nested_grouped_cv"]["folds"]:
