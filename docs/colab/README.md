@@ -40,4 +40,12 @@ The original source notebook and its immutable release remain available.
 Neither the approved processing hash nor the exact dataset manifest, source
 policy, feature schema, model selection or split is changed by this client.
 
+Save the running client and its outputs to Drive. Saving a Colab session over
+the processing notebook on GitHub can rewrite its bytes, including JSON
+formatting and the default SHA, which changes the pinned processing identity.
+The concurrent Colab save in `cd57a794d84d937886be06867d6342f41523767c` is retained
+in Git history; its default approved SHA is preserved in this client. The
+processing notebook is restored byte-for-byte to the approved source rather
+than accepting a new dataset or weakening the identity check.
+
 The client does not establish external validation or automation readiness.
