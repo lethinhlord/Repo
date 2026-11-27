@@ -2634,12 +2634,20 @@ chứa đúng 48 TRAIN row, không tạo validation/test rỗng hoặc giả. St
 
 Upload ba file staging vào
 MyDrive/DATN/development-3day-data/processed-development-v1.
-Mở notebooks/development_train_colab.ipynb từ đúng SHA review READY trên GitHub,
-sao chép Drive, điền SHA đó, chọn CPU và phiên mới. Không dùng week3/stream/
+Mở docs/colab/development_48runs_colab.ipynb trên GitHub và sao chép Drive.
+Bản khởi chạy này đã ghim SHA review READY
+0fcacb145146eb9657739e76b56a870f75818ac1 và đặt MPLBACKEND=Agg cho Python riêng.
+Chọn CPU và phiên mới. Không dùng week3/stream/
 supplemental notebook cho bộ 48 này. Chạy từng cell theo thứ tự: kiểm checksum/
 source/manifest trước cài, CPython3.12.15 cô lập, dependency lock, EDA TRAIN,
 Ruff/toàn bộ pytest có log tiến độ, grouped development training, đọc metric,
 xuất artifact. Không ngắt chỉ vì bước kiểm chạy lâu; xem tên test đang chạy và log thật.
+
+Nếu phiên đang chạy chỉ lỗi backend matplotlib_inline ở bước EDA, thêm một
+cell mới với train_env["MPLBACKEND"] = "Agg", chạy cell đó rồi chạy lại cell
+EDA đã lỗi và các bước sau theo thứ tự. Không chạy lại bước tạo venv trong
+phiên cũ vì bootstrap chủ động từ chối môi trường đã tồn tại. Bản sửa backend
+không yêu cầu upload hoặc build lại dataset; giữ nguyên mọi gate dữ liệu/train.
 
 Model so sánh Logistic Regression, Random Forest và XGBoost, grouped theo đúng
 ba host/day. Account có 24 row; C2 có 24 row. OOF threshold là lựa chọn trên
