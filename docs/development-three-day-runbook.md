@@ -2664,6 +2664,11 @@ production model-package, không freeze_model/đưa vào /predict/http/n8n respo
 Không có chỉ tiêu automation đạt trong đợt này; giữ false ở mọi tầng báo cáo.
 Thu external validation/test độc lập là công việc sau nếu cần nghiệm thu vận hành.
 
+Để nạp và chạy suy luận artifact Colab trên laptop Windows qua Docker Linux,
+làm theo [hướng dẫn Docker offline](development-runtime/README.md). Lệnh kiểm
+SHA archive trước khi nạp, dùng nguyên calibration/threshold và xuất JSON dự
+đoán phát triển. Không cần train lại hoặc thu lại vì khác môi trường Windows.
+
 API/caches HTTP hiện hữu vẫn giữ nguyên tính năng. Trong đợt thu không thay n8n
 production hoặc gắn artifact phát triển vào API. Không cần OpenAI key/GPU để thu.
 
